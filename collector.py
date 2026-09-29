@@ -87,6 +87,13 @@ class BybitCollector:
             return {
                 "collector": {
                     "connected": self.connected,
+                    "thread_alive": bool(
+    self.thread and self.thread.is_alive()
+),
+"thread_name": (
+    self.thread.name
+    if self.thread else None
+),
                     "symbol": self.symbol,
                     "session_id": self.session_id,
                     "session_started_at": self.session_started_at,
