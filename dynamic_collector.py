@@ -754,7 +754,7 @@ class DynamicMarketManager:
 
     # -----------------------------------------------------
 
-    def _driver_analysis(
+        def _driver_analysis(
         self,
         linear,
         spot,
@@ -776,6 +776,18 @@ class DynamicMarketManager:
                 .get(window, {})
             )
 
+            perp_ready = (
+                linear
+                .get("warmup", {})
+                .get(window, False)
+            )
+
+            spot_ready = (
+                spot
+                .get("warmup", {})
+                .get(window, False)
+            )
+
             perp_delta = (
                 perp_flow.get("delta")
             )
@@ -784,64 +796,244 @@ class DynamicMarketManager:
                 spot_flow.get("delta")
             )
 
+            perp_total = (
+                perp_flow.get("total_volume")
+            )
+
+            spot_total = (
+                spot_flow.get("total_volume")
+            )
+
             perp_price = (
-                perp_flow
-                .get("price_change_pct")
+                perp_flow.get(
+                    "price_change_pct"
+                )
             )
 
             spot_price = (
-                spot_flow
-                .get("price_change_pct")
+                spot_flow.get(
+                    "price_change_pct"
+                )
             )
 
-            state = "insufficient_data"
+            # ---------------------------------------------
+            # NORMALIZED DELTA
+            #
+            # +1.0 = весь объём агрессивные покупки
+            # -1.0 = весь объём агрессивные продажи
+            #  0.0 = баланс
+            # ---------------------------------------------
+
+            perp_delta_ratio = None
+            spot_delta_ratio = None
 
             if (
                 perp_delta is not None
-                and spot_delta is not None
+                and perp_total
+                and perp_total > 0
+            ):
+                perp_delta_ratio = (
+                    perp_delta
+                    / perp_total
+                )
+
+            if (
+                spot_delta is not None
+                and spot_total
+                and spot_total > 0
+            ):
+                spot_delta_ratio = (
+                    spot_delta
+                    / spot_total
+                )
+
+            # ---------------------------------------------
+            # Пока окно не накоплено полностью,
+            # никаких выводов о Driver не делаем.
+            # ---------------------------------------------
+
+            if not (
+                perp_ready
+                and spot_ready
             ):
 
+                state = "warming_up"
+                driver = "unknown"
+
+            else:
+
+                state = "balanced"
+                driver = "mixed"
+
+                threshold = 0.05
+
+                perp_buy = (
+                    perp_delta_ratio
+                    is not None
+                    and perp_delta_ratio
+                    > threshold
+                )
+
+                perp_sell = (
+                    perp_delta_ratio
+                    is not None
+                    and perp_delta_ratio
+                    < -threshold
+                )
+
+                spot_buy = (
+                    spot_delta_ratio
+                    is not None
+                    and spot_delta_ratio
+                    > threshold
+                )
+
+                spot_sell = (
+                    spot_delta_ratio
+                    is not None
+                    and spot_delta_ratio
+                    < -threshold
+                )
+
+                # -----------------------------------------
+                # BOTH MARKETS CONFIRM
+                # -----------------------------------------
+
                 if (
-                    perp_delta > 0
-                    and spot_delta > 0
+                    perp_buy
+                    and spot_buy
                 ):
+
                     state = (
                         "spot_and_perp_buying"
                     )
 
+                    if (
+                        abs(spot_delta_ratio)
+                        > abs(perp_delta_ratio)
+                    ):
+                        driver = "spot"
+
+                    elif (
+                        abs(perp_delta_ratio)
+                        > abs(spot_delta_ratio)
+                    ):
+                        driver = "perp"
+
+                    else:
+                        driver = "both"
+
                 elif (
-                    perp_delta < 0
-                    and spot_delta < 0
+                    perp_sell
+                    and spot_sell
                 ):
+
                     state = (
                         "spot_and_perp_selling"
                     )
 
-                elif (
-                    perp_delta > 0
-                    and spot_delta <= 0
-                ):
-                    state = (
-                        "perp_led_buying"
-                    )
+                    if (
+                        abs(spot_delta_ratio)
+                        > abs(perp_delta_ratio)
+                    ):
+                        driver = "spot"
+
+                    elif (
+                        abs(perp_delta_ratio)
+                        > abs(spot_delta_ratio)
+                    ):
+                        driver = "perp"
+
+                    else:
+                        driver = "both"
+
+                # -----------------------------------------
+                # DISAGREEMENT
+                # -----------------------------------------
 
                 elif (
-                    perp_delta < 0
-                    and spot_delta >= 0
+                    perp_buy
+                    and spot_sell
                 ):
+
                     state = (
-                        "perp_led_selling"
+                        "perp_buying_spot_selling"
                     )
+
+                    driver = "perp"
+
+                elif (
+                    perp_sell
+                    and spot_buy
+                ):
+
+                    state = (
+                        "perp_selling_spot_buying"
+                    )
+
+                    driver = "perp"
+
+                # -----------------------------------------
+                # ONLY PERP HAS STRONG AGGRESSION
+                # -----------------------------------------
+
+                elif perp_buy:
+
+                    state = "perp_led_buying"
+                    driver = "perp"
+
+                elif perp_sell:
+
+                    state = "perp_led_selling"
+                    driver = "perp"
+
+                # -----------------------------------------
+                # ONLY SPOT HAS STRONG AGGRESSION
+                # -----------------------------------------
+
+                elif spot_buy:
+
+                    state = "spot_led_buying"
+                    driver = "spot"
+
+                elif spot_sell:
+
+                    state = "spot_led_selling"
+                    driver = "spot"
 
             result[window] = {
+
                 "state":
                     state,
+
+                "driver":
+                    driver,
 
                 "perp_delta":
                     perp_delta,
 
                 "spot_delta":
                     spot_delta,
+
+                "perp_delta_ratio": (
+                    round(
+                        perp_delta_ratio,
+                        4
+                    )
+                    if perp_delta_ratio
+                    is not None
+                    else None
+                ),
+
+                "spot_delta_ratio": (
+                    round(
+                        spot_delta_ratio,
+                        4
+                    )
+                    if spot_delta_ratio
+                    is not None
+                    else None
+                ),
 
                 "perp_price_change_pct":
                     perp_price,
@@ -850,26 +1042,10 @@ class DynamicMarketManager:
                     spot_price,
 
                 "perp_ready":
-                    linear
-                    .get(
-                        "warmup",
-                        {}
-                    )
-                    .get(
-                        window,
-                        False
-                    ),
+                    perp_ready,
 
                 "spot_ready":
-                    spot
-                    .get(
-                        "warmup",
-                        {}
-                    )
-                    .get(
-                        window,
-                        False
-                    ),
+                    spot_ready,
             }
 
         return result
