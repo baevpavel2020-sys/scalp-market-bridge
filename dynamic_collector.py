@@ -79,16 +79,16 @@ class MarketStream:
         self.orderbook_ready = False
 
         self.ticker = {}
-# Kline / candle storage for Technical Engine
-# Keep last 500 candles for each timeframe.
-self.candles = {
-    "1": deque(maxlen=500),
-    "5": deque(maxlen=500),
-    "15": deque(maxlen=500),
-    "60": deque(maxlen=500),
-    "240": deque(maxlen=500),
-    "D": deque(maxlen=500),
-}
+        # Kline / candle storage for Technical Engine
+        # Keep last 500 candles for each timeframe.
+        self.candles = {
+            "1": deque(maxlen=500),
+            "5": deque(maxlen=500),
+            "15": deque(maxlen=500),
+            "60": deque(maxlen=500),
+            "240": deque(maxlen=500),
+            "D": deque(maxlen=500),
+        }
         
         # cumulative delta from current collector session
         self.cvd_session = 0.0
