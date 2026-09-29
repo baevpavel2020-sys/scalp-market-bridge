@@ -218,10 +218,18 @@ class MarketStream:
             self.cvd_session = 0.0
 
         topics = [
-            f"publicTrade.{self.symbol}",
-            f"orderbook.50.{self.symbol}",
-            f"tickers.{self.symbol}",
-        ]
+    f"publicTrade.{self.symbol}",
+    f"orderbook.50.{self.symbol}",
+    f"tickers.{self.symbol}",
+
+    # Candles for Scan+ Technical Engine
+    f"kline.1.{self.symbol}",
+    f"kline.5.{self.symbol}",
+    f"kline.15.{self.symbol}",
+    f"kline.60.{self.symbol}",
+    f"kline.240.{self.symbol}",
+    f"kline.D.{self.symbol}",
+]
 
         ws.send(
             json.dumps(
