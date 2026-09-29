@@ -346,18 +346,24 @@ class MarketStream:
                 last_error = None
                 for base_url in BYBIT_REST_URLS:
                     try:
-                        response = requests.get(
-                            f"{base_url}/v5/market/kline",
-                            params={
-                                "category": category,
-                                "symbol": self.symbol,
-                                "interval": interval,
-                                "limit": KLINE_LIMIT,
-                            },
-                            timeout=10,
+                        from urllib.parse import urlencode
+                        from urllib.request import Request, urlopen
+                        import json as _json
+
+                        query = urlencode({
+                            "category": category,
+                            "symbol": self.symbol,
+                            "interval": interval,
+                            "limit": KLINE_LIMIT,
+                        })
+                        request = Request(
+                            f"{base_url}/v5/market/kline?{query}",
+                            headers={"User-Agent": "scalp-market-bridge/2.1"},
                         )
-                        response.raise_for_status()
-                        payload = response.json()
+                        with urlopen(request, timeout=10) as response:
+                            payload = _json.loads(
+                                response.read().decode("utf-8")
+                            )
                         if payload.get("retCode") != 0:
                             raise RuntimeError(
                                 f"Bybit retCode={payload.get('retCode')} "
