@@ -1598,24 +1598,30 @@ class MarketStream:
         degree=ctx["base"].get("working_degree","intermediate")
         points=ctx.get("degrees",{}).get(degree,{}).get("points",[])
         idx={r["start"]:i for i,r in enumerate(rows)}
-        closes=[r["close"] for r in rows]
         def osc(point):
             i=idx.get(point["start"])
             if i is None or i<35: return None
-            sub=rows[:i+1]
-            tech=self._technical_metrics(sub)
-            macd=tech.get("macd") or {}
-            st=tech.get("stochastic") or {}
-            return {"rsi":tech.get("rsi14"),"macd":macd.get("macd"),"stoch":st.get("k")}
+            tech=self._technical_metrics(rows[:i+1]); macd=tech.get("macd") or {}; st=tech.get("stochastic") or {}
+            return {"rsi":tech.get("rsi14"),"macd":macd.get("macd"),"stoch":st.get("k"),"atr":tech.get("atr14")}
         events=[]
         for kind in ("high","low"):
             pp=[p for p in points if p["kind"]==kind]
             if len(pp)<2: continue
             a,b=pp[-2],pp[-1]; oa,ob=osc(a),osc(b)
             if not oa or not ob: continue
+            atr=float(ob.get("atr") or oa.get("atr") or 0.0)
+            price_move=abs(float(b["price"])-float(a["price"]))
+            price_floor=max(0.25*atr, max(abs(float(a["price"])),abs(float(b["price"]))) * 0.0005)
+            if price_move < price_floor: continue
             for name in ("rsi","macd","stoch"):
                 va,vb=oa.get(name),ob.get(name)
                 if va is None or vb is None: continue
+                osc_move=abs(float(vb)-float(va))
+                if name=="rsi" and osc_move < 2.0: continue
+                if name=="stoch" and osc_move < 5.0: continue
+                if name=="macd":
+                    macd_floor=max(0.03*atr, 0.10*max(abs(float(va)),abs(float(vb))), max(abs(float(a["price"])),abs(float(b["price"]))) * 1e-6)
+                    if osc_move < macd_floor: continue
                 typ=None
                 if kind=="high":
                     if b["price"]>a["price"] and vb<va: typ="regular_bearish"
@@ -1623,7 +1629,9 @@ class MarketStream:
                 else:
                     if b["price"]<a["price"] and vb>va: typ="regular_bullish"
                     elif b["price"]>a["price"] and vb<va: typ="hidden_bullish"
-                if typ: events.append({"type":typ,"indicator":name,"from":a,"to":b,"from_value":round(va,5),"to_value":round(vb,5)})
+                if typ:
+                    events.append({"type":typ,"indicator":name,"from":a,"to":b,"from_value":round(va,7),"to_value":round(vb,7),
+                                   "price_move_atr":round(price_move/atr,4) if atr else None})
         consensus={}
         for e in events: consensus[e["type"]]=consensus.get(e["type"],0)+1
         return {"ready":len(points)>=4,"events":events,"consensus":consensus}
@@ -1774,7 +1782,7 @@ class MarketStream:
         ready=bool(technical.get("ready") and ctx.get("ready"))
         return {
             "ready":ready,
-            "engine_version":"scan_plus_v3_5",
+            "engine_version":"scan_plus_v3_6",
             "closed_candles":len(rows),
             "excluded_open_candles":max(0,len(raw_rows)-len(rows)),
             "last_confirmed_start":rows[-1].get("start") if rows else None,
@@ -2711,21 +2719,14 @@ class MarketStream:
                 "last_error":
                     self.last_error,
 
-                # Window is trustworthy only after
-                # collector has lived through full window.
+                # A reconnect must not make already collected flow "cold".
+                # Warmth is based on actual trade-history coverage, not websocket session age.
                 "warmup": {
-
                     name: bool(
-                        session_age is not None
-                        and session_age * 1000
-                        >= duration
+                        len(self.trades) >= 2
+                        and (self.trades[-1][0] - self.trades[0][0]) >= duration * 0.80
                     )
-
-                    for (
-                        name,
-                        duration,
-                    )
-                    in WINDOWS.items()
+                    for name, duration in WINDOWS.items()
                 },
 
                 # Session CVD starts from zero
@@ -2935,48 +2936,36 @@ class DynamicMarketManager:
             prices=[float(p["price"]) for p in points if p.get("price") is not None]
             structural_low=min(prices) if prices else None
             structural_high=max(prices) if prices else None
-            gap_atr=(abs(price-last_close)/atr) if price and last_close and atr else None
 
             mode="inside_structure"
             effective_direction=(a.get("confluence") or {}).get("direction","neutral")
             broken_level=None
+            structural_gap=None
             if price is not None and structural_low is not None and price < structural_low:
-                mode="price_discovery_down"
-                effective_direction="bearish"
-                broken_level=structural_low
+                mode="price_discovery_down"; effective_direction="bearish"; broken_level=structural_low
+                structural_gap=structural_low-price
             elif price is not None and structural_high is not None and price > structural_high:
-                mode="price_discovery_up"
-                effective_direction="bullish"
-                broken_level=structural_high
+                mode="price_discovery_up"; effective_direction="bullish"; broken_level=structural_high
+                structural_gap=price-structural_high
+            elif price is not None and structural_low is not None and structural_high is not None:
+                structural_gap=0.0
 
-            # Structural projections are based on the confirmed range, not on an
-            # arbitrary percentage from current price. This avoids circular R:R.
+            gap_atr=(structural_gap/atr) if structural_gap is not None and atr else None
             projections=[]
             if structural_low is not None and structural_high is not None:
                 width=structural_high-structural_low
                 if width>0:
                     ratios=(0.272,0.618,1.0,1.272,1.618,2.0,2.618,3.618)
                     if mode=="price_discovery_down":
-                        projections=[
-                            round(structural_low-width*r,10)
-                            for r in ratios
-                            if structural_low-width*r>0
-                        ]
+                        projections=[round(structural_low-width*r,10) for r in ratios if structural_low-width*r>0]
                     elif mode=="price_discovery_up":
-                        projections=[
-                            round(structural_high+width*r,10)
-                            for r in ratios
-                        ]
-
+                        projections=[round(structural_high+width*r,10) for r in ratios]
             result[tf]={
-                "mode":mode,
-                "effective_direction":effective_direction,
-                "structural_low":structural_low,
-                "structural_high":structural_high,
-                "broken_level":broken_level,
-                "last_confirmed_close":last_close,
+                "mode":mode,"effective_direction":effective_direction,
+                "structural_low":structural_low,"structural_high":structural_high,
+                "broken_level":broken_level,"last_confirmed_close":last_close,
                 "price_gap_atr":None if gap_atr is None else round(gap_atr,4),
-                "stale_or_dislocated":bool(gap_atr is not None and gap_atr>=3.0),
+                "stale_or_dislocated":bool(mode!="inside_structure" and gap_atr is not None and gap_atr>=3.0),
                 "projection_targets":projections,
             }
         return result
@@ -2997,6 +2986,14 @@ class DynamicMarketManager:
             lc=live.get(tf,{})
             direction=lc.get("effective_direction",raw_direction)
             state=a.get("structure",{}).get("state","unknown")
+            # A one-vote momentum edge must not flip an established opposite structure.
+            # External live structure breaks are still allowed to override immediately.
+            if lc.get("mode")=="inside_structure":
+                cb=float(c.get("bullish",0) or 0); cr=float(c.get("bearish",0) or 0)
+                if state=="downtrend" and direction=="bullish" and (cb-cr)<=1:
+                    direction="neutral"
+                elif state=="uptrend" and direction=="bearish" and (cr-cb)<=1:
+                    direction="neutral"
             w=weights[tf]
             if direction=="bullish": bull+=w
             elif direction=="bearish": bear+=w
@@ -3017,10 +3014,13 @@ class DynamicMarketManager:
         agreement=(max(bull,bear)/total) if total else 0.0
         higher=[frames[x]["direction"] for x in ("D","240","60") if frames[x]["ready"]]
         lower=[frames[x]["direction"] for x in ("15","5","1") if frames[x]["ready"]]
-        conflict=bool(higher and lower and
-                      all(x==higher[0] for x in higher) and
-                      all(x==lower[0] for x in lower) and
-                      higher[0]!="neutral" and lower[0]!="neutral" and higher[0]!=lower[0])
+        def group_consensus(vals):
+            b=sum(v=="bullish" for v in vals); r=sum(v=="bearish" for v in vals)
+            if b>=2 and b>r: return "bullish"
+            if r>=2 and r>b: return "bearish"
+            return "neutral"
+        higher_consensus=group_consensus(higher); lower_consensus=group_consensus(lower)
+        conflict=bool(higher_consensus!="neutral" and lower_consensus!="neutral" and higher_consensus!=lower_consensus)
         return {
             "ready":all(frames[x]["ready"] for x in ("D","240","60","15","5")),
             "bias":bias,
@@ -3028,6 +3028,8 @@ class DynamicMarketManager:
             "weighted_bear":bear,
             "agreement":round(agreement,4),
             "higher_lower_conflict":conflict,
+            "higher_consensus":higher_consensus,
+            "lower_consensus":lower_consensus,
             "live_context":live,
             "frames":frames,
         }
@@ -3348,6 +3350,7 @@ class DynamicMarketManager:
             "mtf_ready":bool(mtf.get("ready")),
             "directional_bias":direction!="neutral",
             "mtf_agreement_ge_65":agreement>=0.65,
+            "higher_lower_not_conflicted":not bool(mtf.get("higher_lower_conflict")),
             "transport_ready":bool(execution.get("ready")),
             "trade_data_ready":bool(execution.get("trade_data_ready")),
             "driver_known":driver!="unknown" and driver_conf>=0.35,
@@ -3446,7 +3449,7 @@ class DynamicMarketManager:
         return {
             "symbol": symbol,
             "generated_at": time.time(),
-            "engine_version": "scan_plus_v3_5",
+            "engine_version": "scan_plus_v3_6",
             "linear": linear,
             "spot": spot,
             "driver": self._driver(linear, spot),
@@ -3527,12 +3530,19 @@ class DynamicMarketManager:
                 "linear_connected":linear.get("connected"),
                 "spot_connected":full.get("spot",{}).get("connected"),
                 "execution_ready":execution.get("ready"),
+                "trade_data_ready":execution.get("trade_data_ready"),
+                "flow_ready":execution.get("flow_ready"),
+                "driver_ready":execution.get("driver_ready"),
                 "historical_ready":all(analysis.get(tf,{}).get("ready",False) for tf in ("D","240","60","15","5")),
             },
             "mtf":mtf,
             "timeframes":tf_summary,
             "execution":{
                 "driver":execution.get("driver"),
+                "trade_data_ready":execution.get("trade_data_ready"),
+                "flow_ready":execution.get("flow_ready"),
+                "driver_ready":execution.get("driver_ready"),
+                "warmed_flow_windows":execution.get("warmed_flow_windows",[]),
                 "flow_divergences":execution.get("flow_divergences",[]),
                 "oi_context":execution.get("oi_context"),
                 "funding_rate":execution.get("funding_rate"),
