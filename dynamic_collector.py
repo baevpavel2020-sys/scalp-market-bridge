@@ -679,6 +679,7 @@ class MarketStream:
 
     @staticmethod
     def _swing_points(rows, left=2, right=2):
+        """Confirmed fractal pivots. Kept for liquidity compatibility."""
         highs, lows = [], []
         if len(rows) < left + right + 1:
             return highs, lows
@@ -687,49 +688,317 @@ class MarketStream:
             before = rows[i-left:i]
             after = rows[i+1:i+right+1]
             if all(cur["high"] > x["high"] for x in before + after):
-                highs.append({"index": i, "start": cur["start"], "price": cur["high"]})
+                highs.append({
+                    "index": i, "start": cur["start"],
+                    "price": cur["high"], "kind": "high",
+                })
             if all(cur["low"] < x["low"] for x in before + after):
-                lows.append({"index": i, "start": cur["start"], "price": cur["low"]})
+                lows.append({
+                    "index": i, "start": cur["start"],
+                    "price": cur["low"], "kind": "low",
+                })
         return highs, lows
+
+    @staticmethod
+    def _atr_at(rows, end_index, period=14):
+        if end_index < 1:
+            return None
+        begin = max(1, end_index - period + 1)
+        trs = []
+        for i in range(begin, end_index + 1):
+            prev, cur = rows[i-1], rows[i]
+            trs.append(max(
+                cur["high"] - cur["low"],
+                abs(cur["high"] - prev["close"]),
+                abs(cur["low"] - prev["close"]),
+            ))
+        return sum(trs) / len(trs) if trs else None
+
+    @classmethod
+    def _hierarchical_pivots(cls, rows):
+        """
+        Three structural degrees. The ATR displacement filter suppresses
+        insignificant pivots while preserving the raw confirmed fractal.
+        """
+        configs = {
+            "minor": (2, 0.35),
+            "intermediate": (4, 0.75),
+            "major": (7, 1.25),
+        }
+        result = {}
+        for degree, (width, min_atr) in configs.items():
+            highs, lows = cls._swing_points(rows, width, width)
+            points = sorted(highs + lows, key=lambda p: p["index"])
+
+            # Collapse consecutive pivots of the same kind to the more extreme one.
+            collapsed = []
+            for p in points:
+                p = dict(p)
+                p["degree"] = degree
+                if collapsed and collapsed[-1]["kind"] == p["kind"]:
+                    better = (
+                        p["price"] > collapsed[-1]["price"]
+                        if p["kind"] == "high"
+                        else p["price"] < collapsed[-1]["price"]
+                    )
+                    if better:
+                        collapsed[-1] = p
+                else:
+                    collapsed.append(p)
+
+            # Require meaningful displacement from the previous opposite pivot.
+            filtered = []
+            for p in collapsed:
+                if not filtered:
+                    filtered.append(p)
+                    continue
+                atr = cls._atr_at(rows, p["index"])
+                displacement = abs(p["price"] - filtered[-1]["price"])
+                if atr is None or atr <= 0 or displacement >= atr * min_atr:
+                    filtered.append(p)
+                else:
+                    # If noise produces the same kind after filtering, retain
+                    # only the more extreme point.
+                    if filtered[-1]["kind"] == p["kind"]:
+                        better = (
+                            p["price"] > filtered[-1]["price"]
+                            if p["kind"] == "high"
+                            else p["price"] < filtered[-1]["price"]
+                        )
+                        if better:
+                            filtered[-1] = p
+            result[degree] = filtered
+        return result
+
+    @staticmethod
+    def _label_pivots(points):
+        """Label structural pivots HH/LH/HL/LL relative to same-kind predecessor."""
+        last_high = None
+        last_low = None
+        labelled = []
+        for point in points:
+            p = dict(point)
+            if p["kind"] == "high":
+                if last_high is None:
+                    label = "H"
+                else:
+                    label = "HH" if p["price"] > last_high["price"] else "LH"
+                last_high = p
+            else:
+                if last_low is None:
+                    label = "L"
+                else:
+                    label = "HL" if p["price"] > last_low["price"] else "LL"
+                last_low = p
+            p["label"] = label
+            labelled.append(p)
+        return labelled
+
+    @staticmethod
+    def _leg_metrics(rows, a, b):
+        if not a or not b or b["index"] <= a["index"]:
+            return None
+        start_price = float(a["price"])
+        end_price = float(b["price"])
+        change = end_price - start_price
+        pct = (change / start_price * 100.0) if start_price else None
+        segment = rows[a["index"]:b["index"]+1]
+        duration = b["index"] - a["index"]
+        volume = sum(float(c.get("volume", 0.0)) for c in segment)
+        atr = MarketStream._atr_at(rows, b["index"])
+        strength_atr = abs(change) / atr if atr and atr > 0 else None
+        return {
+            "from": {
+                "start": a["start"], "price": start_price,
+                "kind": a["kind"], "label": a.get("label"),
+            },
+            "to": {
+                "start": b["start"], "price": end_price,
+                "kind": b["kind"], "label": b.get("label"),
+            },
+            "direction": "up" if change > 0 else "down" if change < 0 else "flat",
+            "change": round(change, 10),
+            "change_pct": None if pct is None else round(pct, 6),
+            "candles": duration,
+            "volume": round(volume, 8),
+            "strength_atr": None if strength_atr is None else round(strength_atr, 4),
+        }
+
+    @staticmethod
+    def _overlap_between_legs(first, second):
+        if not first or not second:
+            return None
+        a0, a1 = first["from"]["price"], first["to"]["price"]
+        b0, b1 = second["from"]["price"], second["to"]["price"]
+        lo1, hi1 = min(a0, a1), max(a0, a1)
+        lo2, hi2 = min(b0, b1), max(b0, b1)
+        overlap = max(0.0, min(hi1, hi2) - max(lo1, lo2))
+        span = min(hi1 - lo1, hi2 - lo2)
+        return {
+            "exists": overlap > 0,
+            "price_overlap": round(overlap, 10),
+            "of_smaller_leg_pct": (
+                round(overlap / span * 100.0, 4) if span > 0 else 0.0
+            ),
+        }
 
     def _structure_metrics(self, candles):
         rows = list(candles)
-        highs, lows = self._swing_points(rows)
-        last_close = rows[-1]["close"] if rows else None
-        state = "insufficient_data"
-        bos = None
-        choch = None
+        empty = {
+            "ready": False,
+            "state": "insufficient_data",
+            "phase": "unknown",
+            "bos": None,
+            "choch": None,
+            "last_event": None,
+            "last_swing_high": None,
+            "last_swing_low": None,
+            "swing_high_count": 0,
+            "swing_low_count": 0,
+            "sequence": [],
+            "degrees": {},
+            "current_leg": None,
+            "previous_leg": None,
+            "overlap": None,
+        }
+        if len(rows) < 20:
+            return empty
+
+        hierarchy = self._hierarchical_pivots(rows)
+        labelled = {
+            degree: self._label_pivots(points)
+            for degree, points in hierarchy.items()
+        }
+
+        # Intermediate is the working structure. Fall back to minor if needed.
+        working_degree = "intermediate"
+        points = labelled[working_degree]
+        if len(points) < 4:
+            working_degree = "minor"
+            points = labelled[working_degree]
+
+        highs = [p for p in points if p["kind"] == "high"]
+        lows = [p for p in points if p["kind"] == "low"]
+        state = "range_or_transition"
 
         if len(highs) >= 2 and len(lows) >= 2:
-            h1, h2 = highs[-2]["price"], highs[-1]["price"]
-            l1, l2 = lows[-2]["price"], lows[-1]["price"]
-            if h2 > h1 and l2 > l1:
+            h_up = highs[-1]["price"] > highs[-2]["price"]
+            l_up = lows[-1]["price"] > lows[-2]["price"]
+            h_down = highs[-1]["price"] < highs[-2]["price"]
+            l_down = lows[-1]["price"] < lows[-2]["price"]
+            if h_up and l_up:
                 state = "uptrend"
-            elif h2 < h1 and l2 < l1:
+            elif h_down and l_down:
                 state = "downtrend"
+
+        # BOS/CHoCH uses the latest confirmed structural level BEFORE current bar.
+        last = rows[-1]
+        previous_close = rows[-2]["close"]
+        atr = self._atr(rows)
+        break_buffer = (atr * 0.05) if atr else 0.0
+        prior_highs = [p for p in highs if p["index"] < len(rows) - 1]
+        prior_lows = [p for p in lows if p["index"] < len(rows) - 1]
+        ref_high = prior_highs[-1] if prior_highs else None
+        ref_low = prior_lows[-1] if prior_lows else None
+
+        bos = None
+        choch = None
+        event = None
+        if ref_high and last["close"] > ref_high["price"] + break_buffer:
+            bos = "bullish"
+            choch = "bullish" if state == "downtrend" else None
+            event = {
+                "type": "CHOCH" if choch else "BOS",
+                "direction": "bullish",
+                "level": ref_high["price"],
+                "close": last["close"],
+                "confirmed_by_close": True,
+                "break_atr": (
+                    round((last["close"] - ref_high["price"]) / atr, 4)
+                    if atr else None
+                ),
+            }
+        elif ref_low and last["close"] < ref_low["price"] - break_buffer:
+            bos = "bearish"
+            choch = "bearish" if state == "uptrend" else None
+            event = {
+                "type": "CHOCH" if choch else "BOS",
+                "direction": "bearish",
+                "level": ref_low["price"],
+                "close": last["close"],
+                "confirmed_by_close": True,
+                "break_atr": (
+                    round((ref_low["price"] - last["close"]) / atr, 4)
+                    if atr else None
+                ),
+            }
+        elif ref_high and last["high"] > ref_high["price"] and last["close"] <= ref_high["price"]:
+            event = {
+                "type": "SWEEP",
+                "direction": "buy_side",
+                "level": ref_high["price"],
+                "confirmed_by_close": False,
+            }
+        elif ref_low and last["low"] < ref_low["price"] and last["close"] >= ref_low["price"]:
+            event = {
+                "type": "SWEEP",
+                "direction": "sell_side",
+                "level": ref_low["price"],
+                "confirmed_by_close": False,
+            }
+
+        legs = [
+            self._leg_metrics(rows, a, b)
+            for a, b in zip(points[:-1], points[1:])
+        ]
+        legs = [leg for leg in legs if leg is not None]
+        previous_leg = legs[-2] if len(legs) >= 2 else None
+        current_leg = legs[-1] if legs else None
+        overlap = self._overlap_between_legs(previous_leg, current_leg)
+
+        # Phase describes the last confirmed structural leg relative to trend.
+        phase = "unknown"
+        if current_leg:
+            if state == "uptrend":
+                phase = "impulse" if current_leg["direction"] == "up" else "correction"
+            elif state == "downtrend":
+                phase = "impulse" if current_leg["direction"] == "down" else "correction"
             else:
-                state = "range_or_transition"
+                phase = "transition"
 
-            if last_close is not None:
-                if last_close > highs[-1]["price"]:
-                    bos = "bullish"
-                elif last_close < lows[-1]["price"]:
-                    bos = "bearish"
-
-            if state == "uptrend" and bos == "bearish":
-                choch = "bearish"
-            elif state == "downtrend" and bos == "bullish":
-                choch = "bullish"
+        degree_summary = {}
+        for degree, pts in labelled.items():
+            degree_summary[degree] = {
+                "count": len(pts),
+                "sequence": [p["label"] for p in pts[-8:]],
+                "last_points": [
+                    {
+                        "start": p["start"],
+                        "price": p["price"],
+                        "kind": p["kind"],
+                        "label": p["label"],
+                    }
+                    for p in pts[-8:]
+                ],
+            }
 
         return {
-            "ready": len(rows) >= 20 and len(highs) >= 2 and len(lows) >= 2,
+            "ready": len(points) >= 4 and len(highs) >= 2 and len(lows) >= 2,
+            "working_degree": working_degree,
             "state": state,
+            "phase": phase,
             "bos": bos,
             "choch": choch,
+            "last_event": event,
             "last_swing_high": highs[-1] if highs else None,
             "last_swing_low": lows[-1] if lows else None,
             "swing_high_count": len(highs),
             "swing_low_count": len(lows),
+            "sequence": [p["label"] for p in points[-10:]],
+            "degrees": degree_summary,
+            "current_leg": current_leg,
+            "previous_leg": previous_leg,
+            "overlap": overlap,
         }
 
     def _liquidity_metrics(self, candles):
