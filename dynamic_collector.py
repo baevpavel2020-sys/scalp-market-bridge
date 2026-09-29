@@ -1245,29 +1245,374 @@ class MarketStream:
             "structure_event":event,
         }
 
+    def _structure_context_v2(self, rows):
+        base = self._structure_metrics(rows)
+        degrees = {}
+        for degree, data in base.get("degrees", {}).items():
+            points = data.get("last_points", [])
+            legs = []
+            for a, b in zip(points[:-1], points[1:]):
+                ia = next((i for i, r in enumerate(rows) if r["start"] == a["start"]), None)
+                ib = next((i for i, r in enumerate(rows) if r["start"] == b["start"]), None)
+                if ia is None or ib is None:
+                    continue
+                aa, bb = dict(a), dict(b)
+                aa["index"], bb["index"] = ia, ib
+                leg = self._leg_metrics(rows, aa, bb)
+                if leg:
+                    legs.append(leg)
+            degrees[degree] = {"points": points, "legs": legs, "sequence": data.get("sequence", [])}
+        return {"ready": base.get("ready", False), "base": base, "degrees": degrees}
+
+    @staticmethod
+    def _fib_near(value, target, tolerance):
+        return value is not None and abs(value - target) <= tolerance
+
+    def _fib_engine_v2(self, rows, ctx):
+        base = ctx["base"]
+        legacy = self._fib_metrics(rows, base)
+        degree = base.get("working_degree", "intermediate")
+        points = ctx.get("degrees", {}).get(degree, {}).get("points", [])
+        relationships = []
+        if len(points) >= 3:
+            for a, b, c in zip(points[:-2], points[1:-1], points[2:]):
+                ab = abs(float(b["price"]) - float(a["price"]))
+                bc = abs(float(c["price"]) - float(b["price"]))
+                ratio = self._safe_ratio(bc, ab)
+                if ratio is not None:
+                    relationships.append({
+                        "from": a["start"], "pivot": b["start"], "to": c["start"],
+                        "retracement": round(ratio, 5)
+                    })
+        return {**legacy, "relationships": relationships[-10:]}
+
+    def _elliott_engine_v2(self, rows, ctx, fib):
+        degree = ctx["base"].get("working_degree", "intermediate")
+        points = ctx.get("degrees", {}).get(degree, {}).get("points", [])
+        candidates = []
+
+        def add(candidate):
+            candidate["evidence_count"] = sum(1 for v in candidate["checks"].values() if v is True)
+            candidate["hard_fail"] = any(v is False for k, v in candidate["checks"].items() if k.startswith("hard_"))
+            if not candidate["hard_fail"]:
+                candidates.append(candidate)
+
+        # Impulse / diagonal: 0-1-2-3-4-5.
+        for i in range(max(0, len(points)-14), max(0, len(points)-5)):
+            s = points[i:i+6]
+            if len(s) < 6:
+                continue
+            kinds = [p["kind"] for p in s]
+            if not all(kinds[j] != kinds[j-1] for j in range(1,6)):
+                continue
+            p=[float(x["price"]) for x in s]
+            bull=kinds[0]=="low"
+            w1=abs(p[1]-p[0]); w3=abs(p[3]-p[2]); w5=abs(p[5]-p[4])
+            r2=self._safe_ratio(p[2]-p[1], p[1]-p[0])
+            r3=self._safe_ratio(p[3]-p[2], p[1]-p[0])
+            r4=self._safe_ratio(p[4]-p[3], p[3]-p[2])
+            r5=self._safe_ratio(p[5]-p[4], p[1]-p[0])
+            hard2=(p[2]>p[0]) if bull else (p[2]<p[0])
+            hard3=w3 >= min(w1,w5)
+            wave3_ext=(p[3]>p[1]) if bull else (p[3]<p[1])
+            no_overlap=(p[4]>p[1]) if bull else (p[4]<p[1])
+            wave5_ext=(p[5]>p[3]) if bull else (p[5]<p[3])
+            common_fib = (
+                (r2 is not None and 0.236 <= r2 <= 0.886) and
+                (r3 is not None and 0.8 <= r3 <= 3.8) and
+                (r4 is not None and 0.146 <= r4 <= 0.886)
+            )
+            base={
+                "direction":"bullish" if bull else "bearish",
+                "degree":degree,
+                "points":[{"wave":str(j),**s[j]} for j in range(6)],
+                "ratios":{"w2_w1":None if r2 is None else round(r2,4),"w3_w1":None if r3 is None else round(r3,4),"w4_w3":None if r4 is None else round(r4,4),"w5_w1":None if r5 is None else round(r5,4)},
+                "invalidation":p[0],
+            }
+            add({**base,"type":"impulse","checks":{
+                "hard_wave2_origin":hard2,
+                "hard_wave3_not_shortest":hard3,
+                "hard_wave3_exceeds_wave1":wave3_ext,
+                "hard_wave4_no_overlap":no_overlap,
+                "hard_wave5_exceeds_wave3":wave5_ext,
+                "fib_typical":common_fib,
+            }})
+            # Diagonal is a separate candidate, never an excuse for an invalid impulse.
+            contracting = w3 <= w1*1.35 and w5 <= w3*1.35
+            add({**base,"type":"diagonal","checks":{
+                "hard_wave2_origin":hard2,
+                "hard_wave3_progress":wave3_ext,
+                "hard_wave5_progress":wave5_ext,
+                "hard_overlap_expected":not no_overlap,
+                "contracting_or_near":contracting,
+            }})
+
+        # Corrective families on 0-A-B-C.
+        for i in range(max(0,len(points)-14), max(0,len(points)-3)):
+            s=points[i:i+4]
+            if len(s)<4: continue
+            p=[float(x["price"]) for x in s]
+            a=abs(p[1]-p[0]); b=abs(p[2]-p[1]); c=abs(p[3]-p[2])
+            if min(a,b)<1e-12: continue
+            br=b/a; cr=c/a
+            direction="down" if p[1]<p[0] else "up"
+            common={"direction":direction,"degree":degree,
+                    "points":[{"wave":w,**x} for w,x in zip(("0","A","B","C"),s)],
+                    "ratios":{"B_A":round(br,4),"C_A":round(cr,4)},"invalidation":p[0]}
+            add({**common,"type":"zigzag","checks":{
+                "hard_B_below_A_origin":br < 1.0,
+                "hard_C_progresses": (p[3]<p[1]) if direction=="down" else (p[3]>p[1]),
+                "B_typical":0.236 <= br <= 0.886,
+                "C_typical":0.5 <= cr <= 2.0,
+            }})
+            add({**common,"type":"flat","checks":{
+                "hard_B_deep":0.8 <= br <= 1.38,
+                "hard_C_exists":c>0,
+                "B_near_origin":0.9 <= br <= 1.1,
+                "C_typical":0.8 <= cr <= 1.65,
+            }})
+
+        clusters = fib.get("clusters", []) if isinstance(fib, dict) else []
+        atr = self._atr(rows)
+        for candidate in candidates:
+            endpoint = float(candidate["points"][-1]["price"])
+            near_cluster = False
+            if atr and atr > 0:
+                near_cluster = any(abs(endpoint - float(c["price"])) <= atr * 0.25 for c in clusters)
+            candidate["checks"]["fib_cluster_confluence"] = near_cluster
+            candidate["evidence_count"] = sum(1 for v in candidate["checks"].values() if v is True)
+
+        candidates.sort(key=lambda x:(x["evidence_count"], x["type"]=="impulse"), reverse=True)
+        primary=candidates[0] if candidates else None
+        return {
+            "ready":len(points)>=4,
+            "method":"strict_rule_tree_v2",
+            "primary":primary,
+            "alternatives":candidates[1:4],
+            "candidate_count":len(candidates),
+            "ambiguous":len(candidates)>1 and primary is not None and candidates[1]["evidence_count"]>=primary["evidence_count"]-1,
+        }
+
+    def _harmonic_engine_v2(self, ctx):
+        degree=ctx["base"].get("working_degree","intermediate")
+        points=ctx.get("degrees",{}).get(degree,{}).get("points",[])
+        templates={
+            "Gartley":{"ab":(0.60,0.65),"bc":(0.382,0.886),"cd":(1.13,1.618),"xd":(0.76,0.81)},
+            "Bat":{"ab":(0.382,0.50),"bc":(0.382,0.886),"cd":(1.618,2.618),"xd":(0.86,0.91)},
+            "Butterfly":{"ab":(0.76,0.81),"bc":(0.382,0.886),"cd":(1.618,2.618),"xd":(1.24,1.31)},
+            "Crab":{"ab":(0.382,0.618),"bc":(0.382,0.886),"cd":(2.24,3.618),"xd":(1.58,1.66)},
+            "Deep Crab":{"ab":(0.86,0.91),"bc":(0.382,0.886),"cd":(2.0,3.618),"xd":(1.58,1.66)},
+        }
+        confirmed=[]; developing=[]
+        for i in range(max(0,len(points)-12),max(0,len(points)-4)):
+            s=points[i:i+5]
+            if len(s)<5: continue
+            x,a,b,c,d=[float(q["price"]) for q in s]
+            xa=a-x; ab=b-a; bc=c-b; cd=d-c
+            if min(abs(xa),abs(ab),abs(bc))<1e-12: continue
+            vals={"ab":abs(ab/xa),"bc":abs(bc/ab),"cd":abs(cd/bc),"xd":abs((d-x)/xa)}
+            for name,t in templates.items():
+                checks={k:(lo<=vals[k]<=hi) for k,(lo,hi) in t.items()}
+                rec={"name":name,"direction":"bullish" if d<c else "bearish",
+                     "ratios":{k:round(v,4) for k,v in vals.items()},
+                     "checks":checks,"points":[{"point":n,**q} for n,q in zip("XABCD",s)]}
+                if all(checks.values()): confirmed.append(rec)
+                elif sum(checks.values())==3: developing.append(rec)
+            abcd=abs(cd/ab)
+            if 0.95<=abcd<=1.05:
+                confirmed.append({"name":"AB=CD","direction":"bullish" if d<c else "bearish",
+                                  "ratios":{"CD_AB":round(abcd,4)},"checks":{"AB_CD":True},
+                                  "points":[{"point":n,**q} for n,q in zip("XABCD",s)]})
+        return {"ready":len(points)>=5,"confirmed":confirmed[-6:],"developing":developing[-6:]}
+
+    def _divergence_engine_v2(self, rows, ctx):
+        degree=ctx["base"].get("working_degree","intermediate")
+        points=ctx.get("degrees",{}).get(degree,{}).get("points",[])
+        idx={r["start"]:i for i,r in enumerate(rows)}
+        closes=[r["close"] for r in rows]
+        def osc(point):
+            i=idx.get(point["start"])
+            if i is None or i<35: return None
+            sub=rows[:i+1]
+            tech=self._technical_metrics(sub)
+            macd=tech.get("macd") or {}
+            st=tech.get("stochastic") or {}
+            return {"rsi":tech.get("rsi14"),"macd":macd.get("macd"),"stoch":st.get("k")}
+        events=[]
+        for kind in ("high","low"):
+            pp=[p for p in points if p["kind"]==kind]
+            if len(pp)<2: continue
+            a,b=pp[-2],pp[-1]; oa,ob=osc(a),osc(b)
+            if not oa or not ob: continue
+            for name in ("rsi","macd","stoch"):
+                va,vb=oa.get(name),ob.get(name)
+                if va is None or vb is None: continue
+                typ=None
+                if kind=="high":
+                    if b["price"]>a["price"] and vb<va: typ="regular_bearish"
+                    elif b["price"]<a["price"] and vb>va: typ="hidden_bearish"
+                else:
+                    if b["price"]<a["price"] and vb>va: typ="regular_bullish"
+                    elif b["price"]>a["price"] and vb<va: typ="hidden_bullish"
+                if typ: events.append({"type":typ,"indicator":name,"from":a,"to":b,"from_value":round(va,5),"to_value":round(vb,5)})
+        consensus={}
+        for e in events: consensus[e["type"]]=consensus.get(e["type"],0)+1
+        return {"ready":len(points)>=4,"events":events,"consensus":consensus}
+
+    def _smart_money_engine_v2(self, rows, ctx, liquidity):
+        base=self._smart_money_metrics(rows,ctx["base"],liquidity)
+        # Mitigation status for FVGs; only retain useful recent zones.
+        close=rows[-1]["close"] if rows else None
+        fvg=[]
+        for z in base.get("fvg",[]):
+            lo=min(z["from"],z["to"]); hi=max(z["from"],z["to"])
+            z=dict(z); z["mitigated"]=bool(close is not None and lo<=close<=hi)
+            fvg.append(z)
+        base["fvg"]=fvg
+        return base
+
+    def _confluence_engine_v2(self, technical, ctx, fib, elliott, harmonics, divergences, liquidity, smc):
+        bull=0
+        bear=0
+        evidence=[]
+        state=ctx["base"].get("state")
+        if state=="uptrend":
+            bull+=2
+            evidence.append("structure_up")
+        elif state=="downtrend":
+            bear+=2
+            evidence.append("structure_down")
+
+        ep=elliott.get("primary")
+        if ep:
+            if ep.get("direction") in ("bullish","up"):
+                bull+=2
+            elif ep.get("direction") in ("bearish","down"):
+                bear+=2
+            evidence.append("elliott_"+ep["type"])
+
+        for p in harmonics.get("confirmed",[]):
+            if p["direction"]=="bullish":
+                bull+=2
+            else:
+                bear+=2
+            evidence.append("harmonic_"+p["name"])
+
+        for typ,count in divergences.get("consensus",{}).items():
+            weight=min(2,count)
+            if "bullish" in typ:
+                bull+=weight
+            else:
+                bear+=weight
+            evidence.append("divergence_"+typ)
+
+        # Momentum is confirmation only, never a structural override.
+        rsi=technical.get("rsi14")
+        macd=technical.get("macd") or {}
+        if rsi is not None:
+            if rsi >= 55:
+                bull+=1
+                evidence.append("rsi_bullish")
+            elif rsi <= 45:
+                bear+=1
+                evidence.append("rsi_bearish")
+        if macd.get("macd") is not None and macd.get("signal") is not None:
+            if macd["macd"] > macd["signal"]:
+                bull+=1
+                evidence.append("macd_bullish")
+            elif macd["macd"] < macd["signal"]:
+                bear+=1
+                evidence.append("macd_bearish")
+
+        # Structure/liquidity event has priority over raw indicator momentum.
+        ev=ctx["base"].get("last_event")
+        if ev and ev.get("direction")=="bullish":
+            bull+=1
+            evidence.append("structure_event_bullish")
+        elif ev and ev.get("direction")=="bearish":
+            bear+=1
+            evidence.append("structure_event_bearish")
+
+        sweep=liquidity.get("sweep")
+        if isinstance(sweep, dict):
+            direction=sweep.get("direction")
+            if direction in ("sell_side","bullish"):
+                bull+=1
+                evidence.append("sell_side_sweep")
+            elif direction in ("buy_side","bearish"):
+                bear+=1
+                evidence.append("buy_side_sweep")
+
+        # Fib and SMC add location context; they do not create direction alone.
+        fib_cluster_count=len(fib.get("clusters",[])) if isinstance(fib,dict) else 0
+        smc_context={
+            "dealing_range":smc.get("dealing_range"),
+            "fvg_count":len(smc.get("fvg",[])),
+            "order_block_count":len(smc.get("order_blocks",[])),
+        }
+
+        direction="bullish" if bull>bear else "bearish" if bear>bull else "neutral"
+        return {
+            "bullish":bull,
+            "bearish":bear,
+            "direction":direction,
+            "evidence":evidence,
+            "fib_cluster_count":fib_cluster_count,
+            "smc_context":smc_context,
+            "structural_uncertainty":elliott.get("ambiguous",False),
+        }
+
+
+    def _regime_levels_v2(self, rows, technical, structure, fib):
+        if not rows:
+            return {"ready":False}
+        close=float(rows[-1]["close"])
+        atr=technical.get("atr14")
+        atr_pct=(atr/close*100.0) if atr and close else None
+        pts=structure.get("degrees",{}).get(structure.get("working_degree","intermediate"),{}).get("last_points",[])
+        supports=sorted({round(float(p["price"]),10) for p in pts if p["kind"]=="low" and float(p["price"])<close},reverse=True)[:4]
+        resistances=sorted({round(float(p["price"]),10) for p in pts if p["kind"]=="high" and float(p["price"])>close})[:4]
+        clusters=fib.get("clusters",[]) if isinstance(fib,dict) else []
+        return {
+            "ready":True,
+            "price":close,
+            "atr":atr,
+            "atr_pct":None if atr_pct is None else round(atr_pct,5),
+            "volatility_regime":"high" if atr_pct and atr_pct>=3 else "normal" if atr_pct and atr_pct>=1 else "low" if atr_pct is not None else "unknown",
+            "supports":supports,
+            "resistances":resistances,
+            "fib_clusters":[c["price"] for c in clusters[:5]],
+        }
+
     def _analysis_bundle(self, candles):
         rows=list(candles)
         technical=self._technical_metrics(rows)
-        structure=self._structure_metrics(rows)
+        ctx=self._structure_context_v2(rows)
         liquidity=self._liquidity_metrics(rows)
-        fib=self._fib_metrics(rows,structure)
-        elliott=self._elliott_metrics(rows,structure)
-        harmonics=self._harmonic_metrics(structure)
-        divergences=self._divergence_metrics(rows,structure)
-        smart_money=self._smart_money_metrics(rows,structure,liquidity)
-        ready=bool(technical.get("ready") and structure.get("ready"))
+        fib=self._fib_engine_v2(rows,ctx)
+        elliott=self._elliott_engine_v2(rows,ctx,fib)
+        harmonics=self._harmonic_engine_v2(ctx)
+        divergences=self._divergence_engine_v2(rows,ctx)
+        smc=self._smart_money_engine_v2(rows,ctx,liquidity)
+        regime=self._regime_levels_v2(rows,technical,ctx["base"],fib)
+        confluence=self._confluence_engine_v2(technical,ctx,fib,elliott,harmonics,divergences,liquidity,smc)
+        ready=bool(technical.get("ready") and ctx.get("ready"))
         return {
             "ready":ready,
-            "pipeline":["technical","structure","fibonacci","elliott","harmonics","divergences","liquidity","smart_money"],
+            "engine_version":"scan_plus_v3_1",
+            "pipeline":["technical","structure","fibonacci","elliott","harmonics","divergences","liquidity","smart_money","regime_levels","confluence"],
             "technical":technical,
-            "structure":structure,
+            "structure":ctx["base"],
             "fibonacci":fib,
             "elliott":elliott,
             "harmonics":harmonics,
             "divergences":divergences,
             "liquidity":liquidity,
-            "smart_money":smart_money,
+            "smart_money":smc,
+            "regime_levels":regime,
+            "confluence":confluence,
         }
+
 
     def _liquidity_metrics(self, candles):
         rows = list(candles)
@@ -2224,6 +2569,11 @@ class MarketStream:
                     "seed_counts": dict(self.seed_counts),
                 },
 
+                "analysis": {
+                    interval: self._analysis_bundle(candles)
+                    for interval, candles in self.candles.items()
+                },
+
                 "structure": {
                     interval: self._structure_metrics(candles)
                     for interval, candles in self.candles.items()
@@ -2387,6 +2737,258 @@ class DynamicMarketManager:
     # SNAPSHOT
     # ========================================================
 
+
+    @staticmethod
+    def _mtf_engine_v3(linear):
+        analysis=linear.get("analysis",{})
+        order=["D","240","60","15","5","1"]
+        weights={"D":5,"240":4,"60":3,"15":2,"5":1,"1":1}
+        bull=bear=0
+        frames={}
+        for tf in order:
+            a=analysis.get(tf,{})
+            c=a.get("confluence",{})
+            direction=c.get("direction","neutral")
+            state=a.get("structure",{}).get("state","unknown")
+            w=weights[tf]
+            if direction=="bullish": bull+=w
+            elif direction=="bearish": bear+=w
+            frames[tf]={
+                "ready":a.get("ready",False),
+                "structure":state,
+                "direction":direction,
+                "elliott":(a.get("elliott",{}).get("primary") or {}).get("type"),
+                "elliott_ambiguous":a.get("elliott",{}).get("ambiguous"),
+                "bull":c.get("bullish",0),
+                "bear":c.get("bearish",0),
+            }
+        total=bull+bear
+        bias="bullish" if bull>bear else "bearish" if bear>bull else "neutral"
+        agreement=(max(bull,bear)/total) if total else 0.0
+        higher=[frames[x]["direction"] for x in ("D","240","60") if frames[x]["ready"]]
+        lower=[frames[x]["direction"] for x in ("15","5","1") if frames[x]["ready"]]
+        conflict=bool(higher and lower and
+                      all(x==higher[0] for x in higher) and
+                      all(x==lower[0] for x in lower) and
+                      higher[0]!="neutral" and lower[0]!="neutral" and higher[0]!=lower[0])
+        return {
+            "ready":all(frames[x]["ready"] for x in ("D","240","60","15","5")),
+            "bias":bias,
+            "weighted_bull":bull,
+            "weighted_bear":bear,
+            "agreement":round(agreement,4),
+            "higher_lower_conflict":conflict,
+            "frames":frames,
+        }
+
+    @staticmethod
+    def _execution_engine_v3(linear, spot):
+        book=linear.get("orderbook",{})
+        lf=linear.get("flow",{})
+        sf=spot.get("flow",{})
+        oi=linear.get("open_interest") or {}
+        funding=linear.get("funding_rate")
+        ticker=linear.get("ticker",{})
+        price=fnum(ticker.get("lastPrice")) or fnum(ticker.get("markPrice"))
+        windows={}
+        driver_votes={"spot":0.0,"perp":0.0,"mixed":0.0}
+        divergence_events=[]
+
+        for w in WINDOWS:
+            l=lf.get(w,{})
+            s=sf.get(w,{})
+            o=(oi.get("windows") or {}).get(w,{})
+            pd=l.get("delta_ratio")
+            sd=s.get("delta_ratio")
+            pp=l.get("price_change_pct")
+            sp=s.get("price_change_pct")
+            warm=bool(linear.get("warmup",{}).get(w,False) and spot.get("warmup",{}).get(w,False))
+
+            driver="unknown"
+            confidence=0.0
+            if warm and pd is not None and sd is not None:
+                ap,as_=abs(pd),abs(sd)
+                if as_ >= ap*1.35 and as_ >= 0.08:
+                    driver="spot"
+                    confidence=min(1.0,(as_-ap)+0.45)
+                    driver_votes["spot"]+=confidence
+                elif ap >= as_*1.35 and ap >= 0.08:
+                    driver="perp"
+                    confidence=min(1.0,(ap-as_)+0.45)
+                    driver_votes["perp"]+=confidence
+                else:
+                    driver="mixed"
+                    confidence=min(1.0,max(ap,as_)+0.35)
+                    driver_votes["mixed"]+=confidence
+
+                # Flow disagreement / non-confirmation.
+                if pd*sd < 0 and abs(pd-sd)>=0.18:
+                    divergence_events.append({
+                        "window":w,
+                        "type":"spot_perp_opposition",
+                        "perp_delta_ratio":pd,
+                        "spot_delta_ratio":sd,
+                    })
+                if pp is not None and pp > 0:
+                    if pd > 0.08 and sd <= 0.02:
+                        divergence_events.append({"window":w,"type":"price_up_perp_led_spot_not_confirming"})
+                    elif sd > 0.08 and pd <= 0.02:
+                        divergence_events.append({"window":w,"type":"price_up_spot_led_perp_not_confirming"})
+                elif pp is not None and pp < 0:
+                    if pd < -0.08 and sd >= -0.02:
+                        divergence_events.append({"window":w,"type":"price_down_perp_led_spot_not_confirming"})
+                    elif sd < -0.08 and pd >= -0.02:
+                        divergence_events.append({"window":w,"type":"price_down_spot_led_perp_not_confirming"})
+
+            windows[w]={
+                "perp_delta_ratio":pd,
+                "spot_delta_ratio":sd,
+                "perp_price_change_pct":pp,
+                "spot_price_change_pct":sp,
+                "oi_change_pct":o.get("change_pct"),
+                "linear_warm":linear.get("warmup",{}).get(w,False),
+                "spot_warm":spot.get("warmup",{}).get(w,False),
+                "driver":driver,
+                "driver_confidence":round(confidence,4),
+            }
+
+        # Prefer evidence accumulated across fully warmed windows.
+        ranked=sorted(driver_votes.items(),key=lambda kv:kv[1],reverse=True)
+        overall_driver=ranked[0][0] if ranked and ranked[0][1]>0 else "unknown"
+        total_votes=sum(driver_votes.values())
+        overall_conf=(ranked[0][1]/total_votes) if total_votes and ranked else 0.0
+
+        imbalance=book.get("imbalance_50") if book.get("ready") else None
+        pressure="neutral"
+        if imbalance is not None:
+            pressure="bullish" if imbalance>=0.12 else "bearish" if imbalance<=-0.12 else "neutral"
+
+        # OI interpretation is context, not an automatic direction signal.
+        oi_context="unknown"
+        preferred=("5m","15m","1m")
+        for w in preferred:
+            ow=windows.get(w,{})
+            ch=ow.get("oi_change_pct")
+            pc=ow.get("perp_price_change_pct")
+            if ch is None or pc is None:
+                continue
+            if ch>0 and pc>0: oi_context="new_longs_or_trend_participation"
+            elif ch>0 and pc<0: oi_context="new_shorts_or_bearish_participation"
+            elif ch<0 and pc>0: oi_context="short_covering_or_position_reduction"
+            elif ch<0 and pc<0: oi_context="long_liquidation_or_position_reduction"
+            break
+
+        return {
+            "ready":bool(linear.get("connected") and spot.get("connected") and book.get("ready")),
+            "price":price,
+            "spread_bps":book.get("spread_bps"),
+            "book_imbalance":imbalance,
+            "book_pressure":pressure,
+            "funding_rate":funding,
+            "open_interest_current":oi.get("current"),
+            "oi_context":oi_context,
+            "driver":{
+                "primary":overall_driver,
+                "confidence":round(overall_conf,4),
+                "votes":{k:round(v,4) for k,v in driver_votes.items()},
+            },
+            "flow_divergences":divergence_events,
+            "windows":windows,
+        }
+
+    @staticmethod
+    def _setup_engine_v3(linear, mtf, execution):
+        analysis=linear.get("analysis",{})
+        a15=analysis.get("15",{})
+        a5=analysis.get("5",{})
+        price=execution.get("price")
+        if not price:
+            return {"ready":False,"status":"NO_SETUP","reason":"no_realtime_price"}
+
+        bias=mtf.get("bias","neutral")
+        agreement=mtf.get("agreement",0)
+        uncertainty=any(
+            analysis.get(tf,{}).get("elliott",{}).get("ambiguous",False)
+            for tf in ("240","60","15")
+        )
+        execution_dir=execution.get("book_pressure","neutral")
+        driver=(execution.get("driver") or {}).get("primary","unknown")
+        flow_divs=execution.get("flow_divergences",[])
+
+        levels=a15.get("regime_levels",{})
+        supports=levels.get("supports",[])
+        resistances=levels.get("resistances",[])
+        atr=(a15.get("technical") or {}).get("atr14") or (a5.get("technical") or {}).get("atr14")
+        direction=bias if bias in ("bullish","bearish") else "neutral"
+
+        if direction=="bullish":
+            invalid_candidates=[x for x in supports if x<price]
+            invalid=max(invalid_candidates) if invalid_candidates else (price-1.5*atr if atr else None)
+            targets=[x for x in resistances if x>price]
+        elif direction=="bearish":
+            invalid_candidates=[x for x in resistances if x>price]
+            invalid=min(invalid_candidates) if invalid_candidates else (price+1.5*atr if atr else None)
+            targets=[x for x in supports if x<price]
+        else:
+            invalid=None
+            targets=[]
+
+        target=targets[0] if targets else None
+        risk=abs(price-invalid) if invalid is not None else None
+        reward=abs(target-price) if target is not None else None
+        rr=(reward/risk) if risk and reward is not None else None
+
+        # Driver quality: spot/mixed confirmation is stronger; perp-only is allowed
+        # but explicitly downgraded because leverage can lead fragile moves.
+        driver_quality="strong" if driver=="spot" else "normal" if driver=="mixed" else "fragile" if driver=="perp" else "unknown"
+        opposed_flow=False
+        for ev in flow_divs:
+            typ=ev.get("type","")
+            if direction=="bullish" and typ=="price_up_perp_led_spot_not_confirming":
+                opposed_flow=True
+            if direction=="bearish" and typ=="price_down_perp_led_spot_not_confirming":
+                opposed_flow=True
+
+        required={
+            "mtf_ready":bool(mtf.get("ready")),
+            "directional_bias":direction!="neutral",
+            "realtime_ready":bool(execution.get("ready")),
+            "invalidation_known":invalid is not None,
+            "target_known":target is not None,
+            "rr_min_1_5":rr is not None and rr>=1.5,
+            "execution_not_opposed":execution_dir in ("neutral",direction),
+        }
+        all_required=all(required.values())
+        status="SETUP" if all_required else "NO_SETUP"
+
+        confirmations={
+            "spot_or_mixed_driver":driver in ("spot","mixed"),
+            "no_spot_perp_warning":not opposed_flow,
+            "elliott_clear":not uncertainty,
+            "mtf_agreement_ge_65":agreement>=0.65,
+        }
+        quality=sum(1 for v in confirmations.values() if v)
+
+        return {
+            "ready":True,
+            "status":status,
+            "direction":direction if direction!="neutral" else None,
+            "entry_reference":price,
+            "invalidation":invalid,
+            "target_1":target,
+            "risk_reward":None if rr is None else round(rr,3),
+            "required":required,
+            "confirmations":confirmations,
+            "confirmation_score":quality,
+            "driver":driver,
+            "driver_quality":driver_quality,
+            "flow_warning":opposed_flow,
+            "elliott_uncertainty":uncertainty,
+            "mtf_agreement":agreement,
+            "execution_pressure":execution_dir,
+            "note":"Position size is intentionally not calculated here; it requires current account equity and chosen risk percent.",
+        }
+
     def snapshot(
         self,
         symbol,
@@ -2416,28 +3018,22 @@ class DynamicMarketManager:
             .snapshot()
         )
 
+        mtf = self._mtf_engine_v3(linear)
+        execution = self._execution_engine_v3(linear, spot)
+        setup = self._setup_engine_v3(linear, mtf, execution)
+
         return {
-
-            "symbol":
-                symbol,
-
-            "generated_at":
-                time.time(),
-
-            # Raw factual data
-            "linear":
-                linear,
-
-            "spot":
-                spot,
-
-            # Diagnostic comparison.
-            # NOT a trade signal.
-            "driver":
-                self._driver(
-                    linear,
-                    spot,
-                ),
+            "symbol": symbol,
+            "generated_at": time.time(),
+            "engine_version": "scan_plus_v3_1",
+            "linear": linear,
+            "spot": spot,
+            "driver": self._driver(linear, spot),
+            "scan_plus": {
+                "mtf": mtf,
+                "execution": execution,
+                "setup": setup,
+            },
         }
 
     def diagnostics(self, symbol):
@@ -2453,12 +3049,10 @@ class DynamicMarketManager:
             "linear": linear,
             "spot": spot,
             "overall": {
-                "realtime_pass": bool(
-                    linear["realtime_pass"] and spot["realtime_pass"]
-                ),
-                "full_technical_pass": bool(
-                    linear["full_technical_pass"] and spot["full_technical_pass"]
-                ),
+                "realtime_pass": bool(linear["realtime_pass"] and spot["realtime_pass"]),
+                "historical_analysis_pass": bool(linear.get("analysis_full_6_of_6")),
+                "linear_technical_pass": bool(linear["full_technical_pass"]),
+                "spot_realtime_only": True,
             },
         }
 
