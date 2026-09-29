@@ -1175,13 +1175,12 @@ self.candles = {
                         8,
                     ),
 
-                                "candles": {
+                "candles": {
                     interval: list(candles)
                     for interval, candles
                     in self.candles.items()
                 },
 
-                
                 "flow":
                     self._flow_metrics(
                         now_ms
