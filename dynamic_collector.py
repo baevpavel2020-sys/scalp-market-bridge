@@ -1,4 +1,5 @@
 import json
+import re
 import threading
 import time
 import uuid
@@ -6,6 +7,10 @@ from collections import deque
 
 import websocket
 
+
+# ============================================================
+# CONFIG
+# ============================================================
 
 WS_URLS = {
     "linear": "wss://stream.bybit.com/v5/public/linear",
@@ -19,155 +24,240 @@ WINDOWS = {
     "1h": 3_600_000,
 }
 
+SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,24}USDT$")
+
+
+def fnum(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+# ============================================================
+# ONE MARKET STREAM
+# ============================================================
 
 class MarketStream:
+
     def __init__(self, symbol, market):
-        self.symbol = symbol.upper()
+
+        self.symbol = symbol
         self.market = market
 
         self.lock = threading.RLock()
         self.stop_event = threading.Event()
+
         self.thread = None
+        self.ws = None
 
         self.status = "created"
         self.connected = False
+        self.available = None
 
-        self.started_at = None
-        self.session_started_at = None
-        self.session_id = None
-
-        self.last_message_at = None
         self.last_error = None
+        self.last_message_at = None
+
+        self.session_id = None
+        self.session_started_at = None
 
         self.connect_attempts = 0
         self.successful_connections = 0
         self.reconnects = 0
 
-        self.ticker = {}
+        # trades:
+        # timestamp_ms, side, price, qty
+        self.trades = deque()
+
+        # OI history:
+        # timestamp_ms, open_interest
+        self.oi_samples = deque()
 
         self.bids = {}
         self.asks = {}
+
         self.orderbook_ready = False
-        self.orderbook_updated_at = None
 
-        # timestamp_ms, side, price, size
-        self.trades = deque()
+        self.ticker = {}
 
-    # =====================================================
-    # LIFECYCLE
-    # =====================================================
+        # cumulative delta from current collector session
+        self.cvd_session = 0.0
+
+    # ========================================================
+    # START / STOP
+    # ========================================================
 
     def start(self):
+
         with self.lock:
-            if self.thread and self.thread.is_alive():
+
+            if (
+                self.thread
+                and self.thread.is_alive()
+            ):
                 return
 
             self.stop_event.clear()
-            self.started_at = time.time()
-            self.status = "starting"
 
             self.thread = threading.Thread(
                 target=self._run_forever,
                 daemon=True,
-                name=f"{self.market}-{self.symbol}",
+                name=f"market-{self.market}-{self.symbol}",
             )
 
             self.thread.start()
 
     def stop(self):
+
         self.stop_event.set()
 
         with self.lock:
-            self.status = "stopping"
 
-    def_run_forever(self):
+            self.status = "stopping"
+            ws = self.ws
+
+        if ws:
+
+            try:
+                ws.close()
+
+            except Exception:
+                pass
+
+    # ========================================================
+    # CONNECTION LOOP
+    # ========================================================
+
+    def _run_forever(self):
+
         backoff = 1
 
         while not self.stop_event.is_set():
 
             with self.lock:
+
                 self.status = "connecting"
                 self.connect_attempts += 1
 
             try:
+
                 self._run_connection()
 
-                if self.stop_event.is_set():
-                    break
+                backoff = 1
 
             except Exception as exc:
 
                 with self.lock:
+
                     self.connected = False
                     self.orderbook_ready = False
+
                     self.status = "reconnecting"
+
                     self.last_error = (
                         f"{type(exc).__name__}: {exc}"
                     )
 
-                time.sleep(backoff)
-                backoff = min(backoff * 2, 30)
+                if not self.stop_event.wait(backoff):
+
+                    backoff = min(
+                        backoff * 2,
+                        30,
+                    )
 
         with self.lock:
+
             self.connected = False
             self.status = "stopped"
 
-    # =====================================================
+    # ========================================================
     # WEBSOCKET
-    # =====================================================
+    # ========================================================
 
     def _run_connection(self):
 
-        endpoint = WS_URLS[self.market]
-
         ws = websocket.create_connection(
-            endpoint,
+            WS_URLS[self.market],
             timeout=30,
         )
 
+        # recv timeout allows heartbeat / stop checks
+        ws.settimeout(5)
+
+        with self.lock:
+
+            self.ws = ws
+
+            if self.successful_connections:
+                self.reconnects += 1
+
+            self.successful_connections += 1
+
+            self.connected = True
+            self.available = True
+
+            self.status = "connected"
+            self.last_error = None
+
+            self.session_id = str(uuid.uuid4())
+
+            self.session_started_at = time.time()
+            self.last_message_at = time.time()
+
+            # New connection = new trustworthy session.
+            self.trades.clear()
+            self.oi_samples.clear()
+
+            self.bids.clear()
+            self.asks.clear()
+
+            self.orderbook_ready = False
+
+            self.ticker.clear()
+
+            self.cvd_session = 0.0
+
+        topics = [
+            f"publicTrade.{self.symbol}",
+            f"orderbook.50.{self.symbol}",
+            f"tickers.{self.symbol}",
+        ]
+
+        ws.send(
+            json.dumps(
+                {
+                    "op": "subscribe",
+                    "args": topics,
+                }
+            )
+        )
+
+        last_ping = time.time()
+
         try:
-            with self.lock:
-
-                if self.successful_connections > 0:
-                    self.reconnects += 1
-
-                self.successful_connections += 1
-
-                self.connected = True
-                self.status = "connected"
-                self.last_error = None
-
-                self.session_id = str(uuid.uuid4())
-                self.session_started_at = time.time()
-
-                self.bids.clear()
-                self.asks.clear()
-                self.trades.clear()
-
-                self.orderbook_ready = False
-
-            subscription = {
-                "op": "subscribe",
-                "args": [
-                    f"publicTrade.{self.symbol}",
-                    f"orderbook.50.{self.symbol}",
-                    f"tickers.{self.symbol}",
-                ],
-            }
-
-            ws.send(json.dumps(subscription))
-
-            last_ping = time.time()
 
             while not self.stop_event.is_set():
 
+                # Heartbeat
                 if time.time() - last_ping >= 20:
+
                     ws.send(
-                        json.dumps({"op": "ping"})
+                        json.dumps(
+                            {
+                                "op": "ping"
+                            }
+                        )
                     )
+
                     last_ping = time.time()
 
-                raw = ws.recv()
+                try:
+
+                    raw = ws.recv()
+
+                except websocket.WebSocketTimeoutException:
+
+                    continue
 
                 if not raw:
                     continue
@@ -177,64 +267,105 @@ class MarketStream:
                 with self.lock:
                     self.last_message_at = time.time()
 
+                # Subscription rejected.
+                # Useful for coins without spot market.
+                if (
+                    message.get("op") == "subscribe"
+                    and message.get("success") is False
+                ):
+
+                    reason = (
+                        message.get("ret_msg")
+                        or message.get("retMsg")
+                        or "subscription rejected"
+                    )
+
+                    with self.lock:
+
+                        self.available = False
+                        self.status = "unavailable"
+                        self.last_error = reason
+
+                    return
+
                 self._handle_message(message)
 
         finally:
 
             with self.lock:
+
                 self.connected = False
-                self.orderbook_ready = False
+                self.ws = None
 
             try:
                 ws.close()
+
             except Exception:
                 pass
 
-    # =====================================================
-    # ROUTER
-    # =====================================================
+    # ========================================================
+    # MESSAGE ROUTER
+    # ========================================================
 
     def _handle_message(self, message):
 
-        topic = message.get("topic")
-
-        if not topic:
-            return
+        topic = message.get(
+            "topic",
+            "",
+        )
 
         if topic.startswith("publicTrade."):
-            self._handle_trades(message)
+
+            self._handle_trades(
+                message.get(
+                    "data",
+                    [],
+                )
+            )
 
         elif topic.startswith("orderbook."):
-            self._handle_orderbook(message)
+
+            self._handle_orderbook(
+                message
+            )
 
         elif topic.startswith("tickers."):
-            self._handle_ticker(message)
 
-    # =====================================================
-    # TRADES
-    # =====================================================
+            self._handle_ticker(
+                message.get(
+                    "data",
+                    {},
+                )
+            )
 
-    def _handle_trades(self, message):
+    # ========================================================
+    # TRADES / DELTA / CVD
+    # ========================================================
 
-        rows = message.get("data", [])
+    def _handle_trades(self, rows):
+
+        now_ms = int(
+            time.time() * 1000
+        )
 
         with self.lock:
 
             for trade in rows:
 
                 try:
-                    timestamp_ms = int(trade["T"])
-                    side = trade["S"]
-                    price = float(trade["p"])
-                    size = float(trade["v"])
 
-                    self.trades.append(
-                        (
-                            timestamp_ms,
-                            side,
-                            price,
-                            size,
-                        )
+                    timestamp_ms = int(
+                        trade["T"]
+                    )
+
+                    side = trade["S"]
+
+                    price = float(
+                        trade["p"]
+                    )
+
+                    qty = float(
+                        trade["v"]
                     )
 
                 except (
@@ -242,37 +373,58 @@ class MarketStream:
                     TypeError,
                     ValueError,
                 ):
+
                     continue
 
-            self._cleanup_trades(
-                int(time.time() * 1000)
+                self.trades.append(
+                    (
+                        timestamp_ms,
+                        side,
+                        price,
+                        qty,
+                    )
+                )
+
+                if side == "Buy":
+
+                    self.cvd_session += qty
+
+                elif side == "Sell":
+
+                    self.cvd_session -= qty
+
+            self._cleanup(
+                now_ms
             )
 
-    def _cleanup_trades(self, now_ms):
-
-        cutoff = now_ms - 3_600_000
-
-        while (
-            self.trades
-            and self.trades[0][0] < cutoff
-        ):
-            self.trades.popleft()
-
-    # =====================================================
+    # ========================================================
     # ORDERBOOK
-    # =====================================================
+    # ========================================================
 
     def _handle_orderbook(self, message):
 
-        data = message.get("data", {})
-        msg_type = message.get("type")
+        data = (
+            message.get("data")
+            or {}
+        )
 
-        bids = data.get("b", [])
-        asks = data.get("a", [])
+        message_type = (
+            message.get("type")
+        )
+
+        bids = data.get(
+            "b",
+            [],
+        )
+
+        asks = data.get(
+            "a",
+            [],
+        )
 
         with self.lock:
 
-            if msg_type == "snapshot":
+            if message_type == "snapshot":
 
                 self.bids.clear()
                 self.asks.clear()
@@ -289,7 +441,7 @@ class MarketStream:
 
                 self.orderbook_ready = True
 
-            elif msg_type == "delta":
+            elif message_type == "delta":
 
                 if not self.orderbook_ready:
                     return
@@ -304,291 +456,527 @@ class MarketStream:
                     asks,
                 )
 
-            self.orderbook_updated_at = time.time()
-
     @staticmethod
     def _apply_book(book, rows):
 
         for row in rows:
 
             try:
-                price = float(row[0])
-                size = float(row[1])
 
-                if size == 0:
-                    book.pop(price, None)
+                price = float(
+                    row[0]
+                )
 
-                else:
-                    book[price] = size
+                size = float(
+                    row[1]
+                )
 
             except (
                 IndexError,
                 TypeError,
                 ValueError,
             ):
+
                 continue
 
-    # =====================================================
-    # TICKER
-    # =====================================================
+            if size == 0:
 
-    def _handle_ticker(self, message):
-
-        data = message.get("data", {})
-
-        with self.lock:
-
-            for key, value in data.items():
-
-                if isinstance(
-                    value,
-                    (str, int, float, bool)
-                ):
-                    self.ticker[key] = value
-
-            self.ticker["updated_at"] = time.time()
-
-    # =====================================================
-    # FLOW
-    # =====================================================
-
-    def flow_metrics(self):
-
-        now_ms = int(time.time() * 1000)
-
-        with self.lock:
-
-            self._cleanup_trades(now_ms)
-
-            result = {}
-
-            for name, duration in WINDOWS.items():
-
-                cutoff = now_ms - duration
-
-                buy = 0.0
-                sell = 0.0
-                count = 0
-
-                first_price = None
-                last_price = None
-
-                for (
-                    timestamp_ms,
-                    side,
+                book.pop(
                     price,
-                    size,
-                ) in reversed(self.trades):
+                    None,
+                )
 
-                    if timestamp_ms < cutoff:
-                        break
+            else:
 
-                    count += 1
+                book[price] = size
 
-                    first_price = price
+    # ========================================================
+    # TICKER / OI / FUNDING
+    # ========================================================
 
-                    if last_price is None:
-                        last_price = price
+    def _handle_ticker(self, data):
 
-                    if side == "Buy":
-                        buy += size
+        if not isinstance(
+            data,
+            dict,
+        ):
+            return
 
-                    elif side == "Sell":
-                        sell += size
-
-                total = buy + sell
-                delta = buy - sell
-
-                price_change_pct = None
-
-                if (
-                    first_price
-                    and last_price
-                    and first_price != 0
-                ):
-                    price_change_pct = (
-                        (
-                            last_price
-                            - first_price
-                        )
-                        / first_price
-                    ) * 100
-
-                result[name] = {
-                    "buy_volume":
-                        round(buy, 8),
-
-                    "sell_volume":
-                        round(sell, 8),
-
-                    "delta":
-                        round(delta, 8),
-
-                    "total_volume":
-                        round(total, 8),
-
-                    "trade_count":
-                        count,
-
-                    "buy_ratio": (
-                        round(buy / total, 4)
-                        if total > 0
-                        else None
-                    ),
-
-                    "sell_ratio": (
-                        round(sell / total, 4)
-                        if total > 0
-                        else None
-                    ),
-
-                    "price_change_pct": (
-                        round(
-                            price_change_pct,
-                            5
-                        )
-                        if price_change_pct
-                        is not None
-                        else None
-                    ),
-                }
-
-            return result
-
-    # =====================================================
-    # BOOK METRICS
-    # =====================================================
-
-    def book_metrics(self):
+        now_ms = int(
+            time.time() * 1000
+        )
 
         with self.lock:
 
-            if (
-                not self.orderbook_ready
-                or not self.bids
-                or not self.asks
+            # Bybit derivative ticker can send deltas,
+            # therefore keep previous fields and update only
+            # fields present in current message.
+            self.ticker.update(
+                data
+            )
+
+            self.ticker[
+                "updated_at"
+            ] = time.time()
+
+            # OI exists only on derivatives.
+            if self.market == "linear":
+
+                oi = fnum(
+                    data.get(
+                        "openInterest"
+                    )
+                )
+
+                if oi is not None:
+
+                    if (
+                        not self.oi_samples
+                        or oi
+                        != self.oi_samples[-1][1]
+                    ):
+
+                        self.oi_samples.append(
+                            (
+                                now_ms,
+                                oi,
+                            )
+                        )
+
+                    self._cleanup(
+                        now_ms
+                    )
+
+    # ========================================================
+    # ROLLING STORAGE
+    # ========================================================
+
+    def _cleanup(self, now_ms):
+
+        cutoff = (
+            now_ms
+            - WINDOWS["1h"]
+        )
+
+        while (
+            self.trades
+            and self.trades[0][0]
+            < cutoff
+        ):
+
+            self.trades.popleft()
+
+        while (
+            self.oi_samples
+            and self.oi_samples[0][0]
+            < cutoff
+        ):
+
+            self.oi_samples.popleft()
+
+    # ========================================================
+    # FLOW METRICS
+    # ========================================================
+
+    def _flow_metrics(
+        self,
+        now_ms,
+    ):
+
+        result = {}
+
+        for (
+            name,
+            duration,
+        ) in WINDOWS.items():
+
+            cutoff = (
+                now_ms
+                - duration
+            )
+
+            buy = 0.0
+            sell = 0.0
+
+            count = 0
+
+            first_price = None
+            last_price = None
+
+            for (
+                timestamp_ms,
+                side,
+                price,
+                qty,
+            ) in reversed(
+                self.trades
             ):
-                return {
-                    "ready": False
-                }
 
-            best_bid = max(self.bids)
-            best_ask = min(self.asks)
+                if timestamp_ms < cutoff:
+                    break
 
-            bid_depth = sum(
-                self.bids.values()
-            )
+                count += 1
 
-            ask_depth = sum(
-                self.asks.values()
-            )
+                # Because we iterate backwards,
+                # last_price is newest trade,
+                # first_price ends as oldest trade.
+                first_price = price
+
+                if last_price is None:
+                    last_price = price
+
+                if side == "Buy":
+
+                    buy += qty
+
+                elif side == "Sell":
+
+                    sell += qty
 
             total = (
-                bid_depth
-                + ask_depth
+                buy
+                + sell
             )
 
-            imbalance = (
-                (
-                    bid_depth
-                    - ask_depth
-                )
-                / total
-                if total > 0
+            delta = (
+                buy
+                - sell
+            )
+
+            delta_ratio = (
+                delta / total
+                if total
                 else None
             )
 
-            mid = (
-                best_bid
-                + best_ask
-            ) / 2
+            price_change_pct = None
 
-            spread = (
-                best_ask
-                - best_bid
-            )
+            if (
+                first_price
+                and last_price
+            ):
 
-            return {
-                "ready": True,
-
-                "best_bid":
-                    best_bid,
-
-                "best_ask":
-                    best_ask,
-
-                "spread":
-                    round(spread, 8),
-
-                "spread_bps": (
-                    round(
-                        (
-                            spread
-                            / mid
-                        )
-                        * 10_000,
-                        4,
+                price_change_pct = (
+                    (
+                        last_price
+                        - first_price
                     )
-                    if mid > 0
+                    / first_price
+                    * 100
+                )
+
+            result[name] = {
+
+                "buy_volume":
+                    round(
+                        buy,
+                        8,
+                    ),
+
+                "sell_volume":
+                    round(
+                        sell,
+                        8,
+                    ),
+
+                "total_volume":
+                    round(
+                        total,
+                        8,
+                    ),
+
+                "delta":
+                    round(
+                        delta,
+                        8,
+                    ),
+
+                # Normalized delta.
+                # +1 = all aggressive buys
+                # -1 = all aggressive sells
+                "delta_ratio": (
+                    round(
+                        delta_ratio,
+                        6,
+                    )
+                    if delta_ratio is not None
                     else None
                 ),
 
-                "bid_depth_50":
-                    round(
-                        bid_depth,
-                        8
-                    ),
+                "trade_count":
+                    count,
 
-                "ask_depth_50":
+                "price_change_pct": (
                     round(
-                        ask_depth,
-                        8
-                    ),
-
-                "imbalance_50": (
-                    round(
-                        imbalance,
-                        4
+                        price_change_pct,
+                        6,
                     )
-                    if imbalance
-                    is not None
+                    if price_change_pct is not None
                     else None
                 ),
-
-                "bid_levels":
-                    len(self.bids),
-
-                "ask_levels":
-                    len(self.asks),
             }
 
-    # =====================================================
-    # SNAPSHOT
-    # =====================================================
+        return result
+
+    # ========================================================
+    # OPEN INTEREST METRICS
+    # ========================================================
+
+    def _oi_metrics(
+        self,
+        now_ms,
+    ):
+
+        if self.market != "linear":
+            return None
+
+        current = fnum(
+            self.ticker.get(
+                "openInterest"
+            )
+        )
+
+        result = {
+            "current":
+                current,
+
+            "windows":
+                {},
+        }
+
+        for (
+            name,
+            duration,
+        ) in WINDOWS.items():
+
+            cutoff = (
+                now_ms
+                - duration
+            )
+
+            base = None
+
+            for (
+                timestamp_ms,
+                oi,
+            ) in self.oi_samples:
+
+                if timestamp_ms >= cutoff:
+
+                    base = oi
+                    break
+
+            change = None
+            change_pct = None
+
+            if (
+                current is not None
+                and base is not None
+            ):
+
+                change = (
+                    current
+                    - base
+                )
+
+                if base != 0:
+
+                    change_pct = (
+                        change
+                        / base
+                        * 100
+                    )
+
+            result[
+                "windows"
+            ][name] = {
+
+                "start":
+                    base,
+
+                "change": (
+                    round(
+                        change,
+                        8,
+                    )
+                    if change is not None
+                    else None
+                ),
+
+                "change_pct": (
+                    round(
+                        change_pct,
+                        6,
+                    )
+                    if change_pct is not None
+                    else None
+                ),
+            }
+
+        return result
+
+    # ========================================================
+    # ORDERBOOK METRICS
+    # ========================================================
+
+    def _book_metrics(self):
+
+        if (
+            not self.orderbook_ready
+            or not self.bids
+            or not self.asks
+        ):
+
+            return {
+                "ready": False
+            }
+
+        best_bid = max(
+            self.bids
+        )
+
+        best_ask = min(
+            self.asks
+        )
+
+        mid = (
+            best_bid
+            + best_ask
+        ) / 2
+
+        spread = (
+            best_ask
+            - best_bid
+        )
+
+        bid_depth = sum(
+            self.bids.values()
+        )
+
+        ask_depth = sum(
+            self.asks.values()
+        )
+
+        total_depth = (
+            bid_depth
+            + ask_depth
+        )
+
+        imbalance = (
+            (
+                bid_depth
+                - ask_depth
+            )
+            / total_depth
+            if total_depth
+            else None
+        )
+
+        top_bids = sorted(
+            self.bids.items(),
+            reverse=True,
+        )[:5]
+
+        top_asks = sorted(
+            self.asks.items()
+        )[:5]
+
+        return {
+
+            "ready":
+                True,
+
+            "best_bid":
+                best_bid,
+
+            "best_ask":
+                best_ask,
+
+            "spread":
+                round(
+                    spread,
+                    10,
+                ),
+
+            "spread_bps": (
+                round(
+                    spread
+                    / mid
+                    * 10_000,
+                    6,
+                )
+                if mid
+                else None
+            ),
+
+            "bid_depth_50":
+                round(
+                    bid_depth,
+                    8,
+                ),
+
+            "ask_depth_50":
+                round(
+                    ask_depth,
+                    8,
+                ),
+
+            "imbalance_50": (
+                round(
+                    imbalance,
+                    6,
+                )
+                if imbalance is not None
+                else None
+            ),
+
+            "top5_bids": [
+                [price, qty]
+                for price, qty
+                in top_bids
+            ],
+
+            "top5_asks": [
+                [price, qty]
+                for price, qty
+                in top_asks
+            ],
+        }
+
+    # ========================================================
+    # PUBLIC SNAPSHOT
+    # ========================================================
 
     def snapshot(self):
 
         now = time.time()
 
+        now_ms = int(
+            now * 1000
+        )
+
         with self.lock:
 
-            session_age = None
+            self._cleanup(
+                now_ms
+            )
 
-            if self.session_started_at:
-                session_age = (
-                    now
-                    - self.session_started_at
-                )
+            session_age = (
+                now
+                - self.session_started_at
+                if self.session_started_at
+                else None
+            )
 
-            message_age = None
-
-            if self.last_message_at:
-                message_age = (
-                    now
-                    - self.last_message_at
-                )
+            message_age = (
+                now
+                - self.last_message_at
+                if self.last_message_at
+                else None
+            )
 
             return {
+
                 "market":
                     self.market,
 
@@ -601,26 +989,27 @@ class MarketStream:
                 "connected":
                     self.connected,
 
+                "available":
+                    self.available,
+
                 "session_id":
                     self.session_id,
 
                 "session_age_seconds": (
                     round(
                         session_age,
-                        2
+                        2,
                     )
-                    if session_age
-                    is not None
+                    if session_age is not None
                     else None
                 ),
 
                 "last_message_age_seconds": (
                     round(
                         message_age,
-                        2
+                        2,
                     )
-                    if message_age
-                    is not None
+                    if message_age is not None
                     else None
                 ),
 
@@ -630,38 +1019,64 @@ class MarketStream:
                 "last_error":
                     self.last_error,
 
+                # Window is trustworthy only after
+                # collector has lived through full window.
                 "warmup": {
-                    "1m":
-                        session_age is not None
-                        and session_age >= 60,
 
-                    "5m":
+                    name: bool(
                         session_age is not None
-                        and session_age >= 300,
+                        and session_age * 1000
+                        >= duration
+                    )
 
-                    "15m":
-                        session_age is not None
-                        and session_age >= 900,
-
-                    "1h":
-                        session_age is not None
-                        and session_age >= 3600,
+                    for (
+                        name,
+                        duration,
+                    )
+                    in WINDOWS.items()
                 },
 
-                "ticker":
-                    dict(self.ticker),
+                # Session CVD starts from zero
+                # after collector/reconnect.
+                "cvd_session":
+                    round(
+                        self.cvd_session,
+                        8,
+                    ),
 
                 "flow":
-                    self.flow_metrics(),
+                    self._flow_metrics(
+                        now_ms
+                    ),
+
+                "open_interest":
+                    self._oi_metrics(
+                        now_ms
+                    ),
+
+                "funding_rate": (
+                    fnum(
+                        self.ticker.get(
+                            "fundingRate"
+                        )
+                    )
+                    if self.market == "linear"
+                    else None
+                ),
+
+                "ticker":
+                    dict(
+                        self.ticker
+                    ),
 
                 "orderbook":
-                    self.book_metrics(),
+                    self._book_metrics(),
             }
 
 
-# =========================================================
+# ============================================================
 # DYNAMIC MANAGER
-# =========================================================
+# ============================================================
 
 class DynamicMarketManager:
 
@@ -673,26 +1088,68 @@ class DynamicMarketManager:
 
         self.lock = threading.RLock()
 
-        self.max_symbols = max_symbols
-        self.idle_timeout = idle_timeout
+        self.max_symbols = (
+            max_symbols
+        )
+
+        self.idle_timeout = (
+            idle_timeout
+        )
 
         self.streams = {}
         self.last_access = {}
 
-    # -----------------------------------------------------
+    # ========================================================
+    # SYMBOL
+    # ========================================================
 
-    def activate(self, symbol):
+    @staticmethod
+    def normalize_symbol(symbol):
 
-        symbol = symbol.upper()
+        symbol = (
+            symbol
+            .upper()
+            .strip()
+        )
 
-        if not symbol.endswith("USDT"):
+        if not symbol.endswith(
+            "USDT"
+        ):
+
             symbol += "USDT"
+
+        if not SYMBOL_RE.fullmatch(
+            symbol
+        ):
+
+            raise ValueError(
+                "invalid symbol"
+            )
+
+        return symbol
+
+    # ========================================================
+    # ACTIVATE
+    # ========================================================
+
+    def activate(
+        self,
+        symbol,
+    ):
+
+        symbol = (
+            self.normalize_symbol(
+                symbol
+            )
+        )
 
         with self.lock:
 
             self._cleanup_idle()
 
-            self.last_access[symbol] = time.time()
+            self.last_access[
+                symbol
+            ] = time.time()
 
             if symbol not in self.streams:
 
@@ -708,9 +1165,15 @@ class DynamicMarketManager:
                     "spot",
                 )
 
-                self.streams[symbol] = {
-                    "linear": linear,
-                    "spot": spot,
+                self.streams[
+                    symbol
+                ] = {
+
+                    "linear":
+                        linear,
+
+                    "spot":
+                        spot,
                 }
 
                 linear.start()
@@ -718,43 +1181,74 @@ class DynamicMarketManager:
 
             return symbol
 
-    # -----------------------------------------------------
+    # ========================================================
+    # SNAPSHOT
+    # ========================================================
 
-    def snapshot(self, symbol):
+    def snapshot(
+        self,
+        symbol,
+    ):
 
-        symbol = self.activate(symbol)
+        symbol = self.activate(
+            symbol
+        )
 
         with self.lock:
 
-            self.last_access[symbol] = time.time()
+            self.last_access[
+                symbol
+            ] = time.time()
 
-            pair = self.streams[symbol]
+            pair = self.streams[
+                symbol
+            ]
 
-            linear = pair["linear"].snapshot()
-            spot = pair["spot"].snapshot()
+        linear = (
+            pair["linear"]
+            .snapshot()
+        )
+
+        spot = (
+            pair["spot"]
+            .snapshot()
+        )
 
         return {
-            "symbol": symbol,
 
+            "symbol":
+                symbol,
+
+            "generated_at":
+                time.time(),
+
+            # Raw factual data
             "linear":
                 linear,
 
             "spot":
                 spot,
 
+            # Diagnostic comparison.
+            # NOT a trade signal.
             "driver":
-                self._driver_analysis(
+                self._driver(
                     linear,
                     spot,
                 ),
-
-            "generated_at":
-                time.time(),
         }
 
-    # -----------------------------------------------------
+    # ========================================================
+    # DRIVER
+    #
+    # Answers:
+    # "Who appears to be pushing current price flow?"
+    #
+    # This is diagnostic evidence for Scan+.
+    # It is NOT LONG / SHORT logic.
+    # ========================================================
 
-            def _driver_analysis(
+    def _driver(
         self,
         linear,
         spot,
@@ -764,310 +1258,313 @@ class DynamicMarketManager:
 
         for window in WINDOWS:
 
-            perp_flow = (
-                linear
-                .get("flow", {})
-                .get(window, {})
-            )
-
-            spot_flow = (
-                spot
-                .get("flow", {})
-                .get(window, {})
-            )
-
             perp_ready = (
                 linear
-                .get("warmup", {})
-                .get(window, False)
+                .get(
+                    "warmup",
+                    {}
+                )
+                .get(
+                    window,
+                    False,
+                )
             )
 
             spot_ready = (
                 spot
-                .get("warmup", {})
-                .get(window, False)
+                .get(
+                    "warmup",
+                    {}
+                )
+                .get(
+                    window,
+                    False,
+                )
             )
 
-            perp_delta = (
-                perp_flow.get("delta")
+            ready = (
+                perp_ready
+                and spot_ready
+                and linear.get(
+                    "connected"
+                )
+                and spot.get(
+                    "connected"
+                )
             )
 
-            spot_delta = (
-                spot_flow.get("delta")
+            perp_flow = (
+                linear
+                .get(
+                    "flow",
+                    {}
+                )
+                .get(
+                    window,
+                    {}
+                )
             )
 
-            perp_total = (
-                perp_flow.get("total_volume")
+            spot_flow = (
+                spot
+                .get(
+                    "flow",
+                    {}
+                )
+                .get(
+                    window,
+                    {}
+                )
             )
 
-            spot_total = (
-                spot_flow.get("total_volume")
+            perp_ratio = (
+                perp_flow.get(
+                    "delta_ratio"
+                )
             )
 
-            perp_price = (
+            spot_ratio = (
+                spot_flow.get(
+                    "delta_ratio"
+                )
+            )
+
+            price_change = (
                 perp_flow.get(
                     "price_change_pct"
                 )
             )
 
-            spot_price = (
-                spot_flow.get(
-                    "price_change_pct"
-                )
-            )
-
-            # ---------------------------------------------
-            # NORMALIZED DELTA
-            #
-            # +1.0 = весь объём агрессивные покупки
-            # -1.0 = весь объём агрессивные продажи
-            #  0.0 = баланс
-            # ---------------------------------------------
-
-            perp_delta_ratio = None
-            spot_delta_ratio = None
-
-            if (
-                perp_delta is not None
-                and perp_total
-                and perp_total > 0
-            ):
-                perp_delta_ratio = (
-                    perp_delta
-                    / perp_total
-                )
-
-            if (
-                spot_delta is not None
-                and spot_total
-                and spot_total > 0
-            ):
-                spot_delta_ratio = (
-                    spot_delta
-                    / spot_total
-                )
-
-            # ---------------------------------------------
-            # Пока окно не накоплено полностью,
-            # никаких выводов о Driver не делаем.
-            # ---------------------------------------------
-
-            if not (
-                perp_ready
-                and spot_ready
-            ):
+            if not ready:
 
                 state = "warming_up"
-                driver = "unknown"
+                leader = "unknown"
+                confidence = "low"
+
+            elif (
+                perp_ratio is None
+                or spot_ratio is None
+            ):
+
+                state = "insufficient_data"
+                leader = "unknown"
+                confidence = "low"
 
             else:
 
-                state = "balanced"
-                driver = "mixed"
+                perp_strength = abs(
+                    perp_ratio
+                )
 
+                spot_strength = abs(
+                    spot_ratio
+                )
+
+                # Ignore very small delta imbalance.
                 threshold = 0.05
 
-                perp_buy = (
-                    perp_delta_ratio
-                    is not None
-                    and perp_delta_ratio
-                    > threshold
-                )
-
-                perp_sell = (
-                    perp_delta_ratio
-                    is not None
-                    and perp_delta_ratio
-                    < -threshold
-                )
-
-                spot_buy = (
-                    spot_delta_ratio
-                    is not None
-                    and spot_delta_ratio
-                    > threshold
-                )
-
-                spot_sell = (
-                    spot_delta_ratio
-                    is not None
-                    and spot_delta_ratio
-                    < -threshold
-                )
-
-                # -----------------------------------------
-                # BOTH MARKETS CONFIRM
-                # -----------------------------------------
-
                 if (
-                    perp_buy
-                    and spot_buy
+                    perp_strength < threshold
+                    and spot_strength < threshold
                 ):
 
-                    state = (
-                        "spot_and_perp_buying"
-                    )
+                    state = "balanced"
+                    leader = "mixed"
+                    confidence = "low"
 
-                    if (
-                        abs(spot_delta_ratio)
-                        > abs(perp_delta_ratio)
-                    ):
-                        driver = "spot"
-
-                    elif (
-                        abs(perp_delta_ratio)
-                        > abs(spot_delta_ratio)
-                    ):
-                        driver = "perp"
-
-                    else:
-                        driver = "both"
-
+                # Both buying
                 elif (
-                    perp_sell
-                    and spot_sell
+                    perp_ratio > threshold
+                    and spot_ratio > threshold
                 ):
 
-                    state = (
-                        "spot_and_perp_selling"
-                    )
+                    state = "both_buying"
 
                     if (
-                        abs(spot_delta_ratio)
-                        > abs(perp_delta_ratio)
+                        spot_strength
+                        > perp_strength * 1.25
                     ):
-                        driver = "spot"
+
+                        leader = "spot"
 
                     elif (
-                        abs(perp_delta_ratio)
-                        > abs(spot_delta_ratio)
+                        perp_strength
+                        > spot_strength * 1.25
                     ):
-                        driver = "perp"
+
+                        leader = "perp"
 
                     else:
-                        driver = "both"
 
-                # -----------------------------------------
-                # DISAGREEMENT
-                # -----------------------------------------
+                        leader = "both"
 
+                    confidence = "high"
+
+                # Both selling
                 elif (
-                    perp_buy
-                    and spot_sell
+                    perp_ratio < -threshold
+                    and spot_ratio < -threshold
+                ):
+
+                    state = "both_selling"
+
+                    if (
+                        spot_strength
+                        > perp_strength * 1.25
+                    ):
+
+                        leader = "spot"
+
+                    elif (
+                        perp_strength
+                        > spot_strength * 1.25
+                    ):
+
+                        leader = "perp"
+
+                    else:
+
+                        leader = "both"
+
+                    confidence = "high"
+
+                # Direct disagreement
+                elif (
+                    perp_ratio > threshold
+                    and spot_ratio < -threshold
                 ):
 
                     state = (
                         "perp_buying_spot_selling"
                     )
 
-                    driver = "perp"
+                    leader = "conflict"
+                    confidence = "high"
 
                 elif (
-                    perp_sell
-                    and spot_buy
+                    perp_ratio < -threshold
+                    and spot_ratio > threshold
                 ):
 
                     state = (
                         "perp_selling_spot_buying"
                     )
 
-                    driver = "perp"
+                    leader = "conflict"
+                    confidence = "high"
 
-                # -----------------------------------------
-                # ONLY PERP HAS STRONG AGGRESSION
-                # -----------------------------------------
+                # Perp only
+                elif perp_strength >= threshold:
 
-                elif perp_buy:
+                    if perp_ratio > 0:
 
-                    state = "perp_led_buying"
-                    driver = "perp"
+                        state = (
+                            "perp_led_buying"
+                        )
 
-                elif perp_sell:
+                    else:
 
-                    state = "perp_led_selling"
-                    driver = "perp"
+                        state = (
+                            "perp_led_selling"
+                        )
 
-                # -----------------------------------------
-                # ONLY SPOT HAS STRONG AGGRESSION
-                # -----------------------------------------
+                    leader = "perp"
+                    confidence = "medium"
 
-                elif spot_buy:
+                # Spot only
+                else:
 
-                    state = "spot_led_buying"
-                    driver = "spot"
+                    if spot_ratio > 0:
 
-                elif spot_sell:
+                        state = (
+                            "spot_led_buying"
+                        )
 
-                    state = "spot_led_selling"
-                    driver = "spot"
+                    else:
 
-            result[window] = {
+                        state = (
+                            "spot_led_selling"
+                        )
+
+                    leader = "spot"
+                    confidence = "medium"
+
+            oi_window = (
+                (
+                    linear.get(
+                        "open_interest"
+                    )
+                    or {}
+                )
+                .get(
+                    "windows",
+                    {}
+                )
+                .get(
+                    window,
+                    {}
+                )
+            )
+
+            result[
+                window
+            ] = {
 
                 "state":
                     state,
 
-                "driver":
-                    driver,
+                "leader":
+                    leader,
 
-                "perp_delta":
-                    perp_delta,
+                "confidence":
+                    confidence,
 
-                "spot_delta":
-                    spot_delta,
+                "price_change_pct":
+                    price_change,
 
-                "perp_delta_ratio": (
-                    round(
-                        perp_delta_ratio,
-                        4
-                    )
-                    if perp_delta_ratio
-                    is not None
-                    else None
-                ),
+                "perp_delta_ratio":
+                    perp_ratio,
 
-                "spot_delta_ratio": (
-                    round(
-                        spot_delta_ratio,
-                        4
-                    )
-                    if spot_delta_ratio
-                    is not None
-                    else None
-                ),
+                "spot_delta_ratio":
+                    spot_ratio,
 
-                "perp_price_change_pct":
-                    perp_price,
+                "oi_change_pct":
+                    oi_window.get(
+                        "change_pct"
+                    ),
 
-                "spot_price_change_pct":
-                    spot_price,
-
-                "perp_ready":
-                    perp_ready,
-
-                "spot_ready":
-                    spot_ready,
+                "funding_rate":
+                    linear.get(
+                        "funding_rate"
+                    ),
             }
 
         return result
 
-    # -----------------------------------------------------
+    # ========================================================
+    # CLEANUP
+    # ========================================================
 
     def _cleanup_idle(self):
 
         now = time.time()
 
-        stale = []
+        stale = [
 
-        for (
-            symbol,
-            last_seen,
-        ) in self.last_access.items():
+            symbol
+
+            for (
+                symbol,
+                last_seen,
+            )
+            in self.last_access.items()
 
             if (
-                now - last_seen
+                now
+                - last_seen
                 > self.idle_timeout
-            ):
-                stale.append(symbol)
+            )
+        ]
 
         for symbol in stale:
 
@@ -1083,10 +1580,17 @@ class DynamicMarketManager:
 
             if pair:
 
-                pair["linear"].stop()
-                pair["spot"].stop()
+                pair[
+                    "linear"
+                ].stop()
 
-    # -----------------------------------------------------
+                pair[
+                    "spot"
+                ].stop()
+
+    # ========================================================
+    # MAX ACTIVE SYMBOLS
+    # ========================================================
 
     def _make_room(self):
 
@@ -1094,6 +1598,7 @@ class DynamicMarketManager:
             len(self.streams)
             < self.max_symbols
         ):
+
             return
 
         oldest = min(
@@ -1110,9 +1615,18 @@ class DynamicMarketManager:
             None,
         )
 
-        pair["linear"].stop()
-        pair["spot"].stop()
+        pair[
+            "linear"
+        ].stop()
 
+        pair[
+            "spot"
+        ].stop()
+
+
+# ============================================================
+# GLOBAL MANAGER
+# ============================================================
 
 dynamic_manager = DynamicMarketManager(
     max_symbols=6,
