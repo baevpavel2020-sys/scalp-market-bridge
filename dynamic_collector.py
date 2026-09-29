@@ -355,6 +355,119 @@ self.candles = {
                     {},
                 )
             )
+        elif topic.startswith("kline."):
+
+    self._handle_kline(
+        topic,
+        message.get(
+            "data",
+            [],
+        ),
+    )
+
+    # ========================================================
+    # KLINES / CANDLES
+    # ========================================================
+
+    def _handle_kline(self, topic, rows):
+
+        if not isinstance(rows, list):
+            return
+
+        parts = topic.split(".")
+
+        # Expected:
+        # kline.1.BTCUSDT
+        # kline.60.ETHUSDT
+        # kline.D.ENAUSDT
+        if len(parts) < 3:
+            return
+
+        interval = parts[1]
+
+        if interval not in self.candles:
+            return
+
+        with self.lock:
+
+            for row in rows:
+
+                try:
+
+                    start = int(
+                        row["start"]
+                    )
+
+                    end = int(
+                        row["end"]
+                    )
+
+                    candle = {
+                        "start": start,
+                        "end": end,
+
+                        "open": float(
+                            row["open"]
+                        ),
+
+                        "high": float(
+                            row["high"]
+                        ),
+
+                        "low": float(
+                            row["low"]
+                        ),
+
+                        "close": float(
+                            row["close"]
+                        ),
+
+                        "volume": float(
+                            row["volume"]
+                        ),
+
+                        "turnover": float(
+                            row.get(
+                                "turnover",
+                                0,
+                            )
+                        ),
+
+                        "confirm": bool(
+                            row.get(
+                                "confirm",
+                                False,
+                            )
+                        ),
+                    }
+
+                except (
+                    KeyError,
+                    TypeError,
+                    ValueError,
+                ):
+
+                    continue
+
+                candles = self.candles[
+                    interval
+                ]
+
+                # Same candle received again:
+                # replace its live OHLCV values.
+                if (
+                    candles
+                    and candles[-1]["start"]
+                    == start
+                ):
+
+                    candles[-1] = candle
+
+                else:
+
+                    candles.append(
+                        candle
+                    )
 
     # ========================================================
     # TRADES / DELTA / CVD
@@ -1062,6 +1175,13 @@ self.candles = {
                         8,
                     ),
 
+                                "candles": {
+                    interval: list(candles)
+                    for interval, candles
+                    in self.candles.items()
+                },
+
+                
                 "flow":
                     self._flow_metrics(
                         now_ms
