@@ -1,4 +1,5 @@
 import csv
+import datetime as dt
 import io
 import json
 import os
@@ -10,6 +11,7 @@ import threading
 import time
 import uuid
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import websocket
 
@@ -474,6 +476,39 @@ class MarketStream:
                 rows.append(candle)
         return rows
 
+    def _download_binance_day(self, interval, day):
+        tf = BINANCE_INTERVALS[interval]
+        stamp = day.strftime("%Y-%m-%d")
+        filename = f"{self.symbol}-{tf}-{stamp}.zip"
+        url = (
+            f"{BINANCE_PUBLIC_DATA}/daily/klines/{self.symbol}/"
+            f"{tf}/{filename}"
+        )
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "scalp-market-bridge/1.0", "Accept": "*/*"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=20) as response:
+                payload = response.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return []
+            raise
+
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            names = [n for n in archive.namelist() if n.lower().endswith(".csv")]
+            if not names:
+                return []
+            text = archive.read(names[0]).decode("utf-8-sig")
+
+        rows = []
+        for row in csv.reader(io.StringIO(text)):
+            candle = self._binance_row_to_candle(row)
+            if candle is not None:
+                rows.append(candle)
+        return rows
+
     def _merge_seed(self, interval, seed_rows):
         # Existing cache is treated as native Bybit and wins on timestamp overlap.
         existing = {int(c["start"]): dict(c) for c in self.candles[interval]}
@@ -487,33 +522,84 @@ class MarketStream:
         if self.market != "linear":
             return
 
+        now_dt = dt.datetime.now(dt.timezone.utc)
         now = time.gmtime()
-        # Monthly archive for the current month is incomplete/not published yet.
         year, month = self._month_shift(now.tm_year, now.tm_mon, -1)
         errors = []
         total_seeded = 0
 
+        # Phase A: old history. A full cache may skip monthly downloads,
+        # but it must NEVER skip the recent daily refresh below.
         for interval in KLINE_INTERVALS:
-            if len(self.candles[interval]) >= KLINE_LIMIT:
-                continue
+            if len(self.candles[interval]) < KLINE_LIMIT:
+                seed_rows = []
+                for back in range(BINANCE_SEED_MONTHS):
+                    y, mo = self._month_shift(year, month, -back)
+                    try:
+                        rows = self._download_binance_month(interval, y, mo)
+                    except Exception as exc:
+                        errors.append(
+                            f"{interval} monthly {y:04d}-{mo:02d}: "
+                            f"{type(exc).__name__}: {exc}"
+                        )
+                        continue
+                    if rows:
+                        seed_rows.extend(rows)
+                        if len(seed_rows) >= KLINE_LIMIT:
+                            break
+                seed_rows.sort(key=lambda c: c["start"])
+                self._merge_seed(interval, seed_rows[-KLINE_LIMIT:])
 
-            seed_rows = []
-            for back in range(BINANCE_SEED_MONTHS):
-                y, mo = self._month_shift(year, month, -back)
-                try:
-                    rows = self._download_binance_month(interval, y, mo)
-                except Exception as exc:
-                    errors.append(
-                        f"{interval} {y:04d}-{mo:02d}: {type(exc).__name__}: {exc}"
-                    )
-                    continue
-                if rows:
-                    seed_rows.extend(rows)
-                    if len(seed_rows) >= KLINE_LIMIT:
-                        break
+        # Phase B: fill the gap from the latest cached/seed candle through yesterday.
+        # Binance monthly archives do not contain the current incomplete month.
+        jobs = []
+        yesterday = now_dt.date() - dt.timedelta(days=1)
+        for interval in KLINE_INTERVALS:
+            rows = list(self.candles[interval])
+            if rows:
+                last_day = dt.datetime.fromtimestamp(
+                    int(rows[-1]["start"]) / 1000.0, tz=dt.timezone.utc
+                ).date()
+                first_day = last_day + dt.timedelta(days=1)
+            else:
+                first_day = max(
+                    yesterday - dt.timedelta(days=34),
+                    now_dt.date().replace(day=1),
+                )
 
-            seed_rows.sort(key=lambda c: c["start"])
-            self._merge_seed(interval, seed_rows[-KLINE_LIMIT:])
+            # Safety cap prevents a damaged cache from creating hundreds of requests.
+            first_day = max(first_day, yesterday - dt.timedelta(days=40))
+            day = first_day
+            while day <= yesterday:
+                jobs.append((interval, day))
+                day += dt.timedelta(days=1)
+
+        daily_by_tf = {tf: [] for tf in KLINE_INTERVALS}
+        if jobs:
+            with ThreadPoolExecutor(max_workers=min(12, len(jobs))) as pool:
+                futures = {
+                    pool.submit(self._download_binance_day, interval, day):
+                    (interval, day)
+                    for interval, day in jobs
+                }
+                for future in as_completed(futures):
+                    interval, day = futures[future]
+                    try:
+                        rows = future.result()
+                    except Exception as exc:
+                        errors.append(
+                            f"{interval} daily {day.isoformat()}: "
+                            f"{type(exc).__name__}: {exc}"
+                        )
+                        continue
+                    if rows:
+                        daily_by_tf[interval].extend(rows)
+
+        for interval in KLINE_INTERVALS:
+            if daily_by_tf[interval]:
+                daily_by_tf[interval].sort(key=lambda c: c["start"])
+                self._merge_seed(interval, daily_by_tf[interval])
+
             self.seed_counts[interval] = sum(
                 1 for c in self.candles[interval]
                 if c.get("source") == "binance_seed"
@@ -523,11 +609,11 @@ class MarketStream:
         if total_seeded:
             self.history_bootstrapped = True
             self.history_loaded_at = time.time()
-            self.history_source = "binance_seed+bybit_websocket"
+            self.history_source = "binance_seed_daily+monthly+bybit_websocket"
             self._cache_dirty = True
             self._save_candle_cache(force=True)
 
-        self.history_error = "; ".join(errors[-6:]) if errors else None
+        self.history_error = "; ".join(errors[-8:]) if errors else None
 
     def _save_candle_cache(self, force=False):
         now = time.time()
@@ -1585,7 +1671,8 @@ class MarketStream:
         }
 
     def _analysis_bundle(self, candles):
-        rows=list(candles)
+        raw_rows=list(candles)
+        rows=[r for r in raw_rows if r.get("confirm", True)]
         technical=self._technical_metrics(rows)
         ctx=self._structure_context_v2(rows)
         liquidity=self._liquidity_metrics(rows)
@@ -1599,7 +1686,11 @@ class MarketStream:
         ready=bool(technical.get("ready") and ctx.get("ready"))
         return {
             "ready":ready,
-            "engine_version":"scan_plus_v3_2",
+            "engine_version":"scan_plus_v3_3",
+            "closed_candles":len(rows),
+            "excluded_open_candles":max(0,len(raw_rows)-len(rows)),
+            "last_confirmed_start":rows[-1].get("start") if rows else None,
+            "last_confirmed_close":rows[-1].get("close") if rows else None,
             "pipeline":["technical","structure","fibonacci","elliott","harmonics","divergences","liquidity","smart_money","regime_levels","confluence"],
             "technical":technical,
             "structure":ctx["base"],
@@ -2739,8 +2830,74 @@ class DynamicMarketManager:
 
 
     @staticmethod
-    def _mtf_engine_v3(linear):
+    def _live_structure_context_v33(linear, execution):
         analysis=linear.get("analysis",{})
+        price=execution.get("price")
+        result={}
+        for tf in ("D","240","60","15","5","1"):
+            a=analysis.get(tf,{})
+            reg=a.get("regime_levels",{})
+            structure=a.get("structure",{})
+            technical=a.get("technical",{})
+            atr=technical.get("atr14") or reg.get("atr")
+            last_close=a.get("last_confirmed_close") or technical.get("last_close")
+            points=[]
+            for degree in structure.get("degrees",{}).values():
+                points.extend(degree.get("last_points",[]))
+            prices=[float(p["price"]) for p in points if p.get("price") is not None]
+            structural_low=min(prices) if prices else None
+            structural_high=max(prices) if prices else None
+            gap_atr=(abs(price-last_close)/atr) if price and last_close and atr else None
+
+            mode="inside_structure"
+            effective_direction=(a.get("confluence") or {}).get("direction","neutral")
+            broken_level=None
+            if price is not None and structural_low is not None and price < structural_low:
+                mode="price_discovery_down"
+                effective_direction="bearish"
+                broken_level=structural_low
+            elif price is not None and structural_high is not None and price > structural_high:
+                mode="price_discovery_up"
+                effective_direction="bullish"
+                broken_level=structural_high
+
+            # Structural projections are based on the confirmed range, not on an
+            # arbitrary percentage from current price. This avoids circular R:R.
+            projections=[]
+            if structural_low is not None and structural_high is not None:
+                width=structural_high-structural_low
+                if width>0:
+                    ratios=(0.272,0.618,1.0,1.272,1.618,2.0,2.618,3.618)
+                    if mode=="price_discovery_down":
+                        projections=[
+                            round(structural_low-width*r,10)
+                            for r in ratios
+                            if structural_low-width*r>0
+                        ]
+                    elif mode=="price_discovery_up":
+                        projections=[
+                            round(structural_high+width*r,10)
+                            for r in ratios
+                        ]
+
+            result[tf]={
+                "mode":mode,
+                "effective_direction":effective_direction,
+                "structural_low":structural_low,
+                "structural_high":structural_high,
+                "broken_level":broken_level,
+                "last_confirmed_close":last_close,
+                "price_gap_atr":None if gap_atr is None else round(gap_atr,4),
+                "stale_or_dislocated":bool(gap_atr is not None and gap_atr>=3.0),
+                "projection_targets":projections,
+            }
+        return result
+
+    @staticmethod
+    def _mtf_engine_v3(linear, execution=None):
+        analysis=linear.get("analysis",{})
+        execution=execution or {}
+        live=DynamicMarketManager._live_structure_context_v33(linear,execution)
         order=["D","240","60","15","5","1"]
         weights={"D":5,"240":4,"60":3,"15":2,"5":1,"1":1}
         bull=bear=0
@@ -2748,7 +2905,9 @@ class DynamicMarketManager:
         for tf in order:
             a=analysis.get(tf,{})
             c=a.get("confluence",{})
-            direction=c.get("direction","neutral")
+            raw_direction=c.get("direction","neutral")
+            lc=live.get(tf,{})
+            direction=lc.get("effective_direction",raw_direction)
             state=a.get("structure",{}).get("state","unknown")
             w=weights[tf]
             if direction=="bullish": bull+=w
@@ -2757,6 +2916,9 @@ class DynamicMarketManager:
                 "ready":a.get("ready",False),
                 "structure":state,
                 "direction":direction,
+                "raw_direction":raw_direction,
+                "live_mode":lc.get("mode"),
+                "price_gap_atr":lc.get("price_gap_atr"),
                 "elliott":(a.get("elliott",{}).get("primary") or {}).get("type"),
                 "elliott_ambiguous":a.get("elliott",{}).get("ambiguous"),
                 "bull":c.get("bullish",0),
@@ -2778,6 +2940,7 @@ class DynamicMarketManager:
             "weighted_bear":bear,
             "agreement":round(agreement,4),
             "higher_lower_conflict":conflict,
+            "live_context":live,
             "frames":frames,
         }
 
@@ -2899,8 +3062,6 @@ class DynamicMarketManager:
     @staticmethod
     def _setup_engine_v3(linear, mtf, execution):
         analysis=linear.get("analysis",{})
-        a15=analysis.get("15",{})
-        a5=analysis.get("5",{})
         price=execution.get("price")
         if not price:
             return {"ready":False,"status":"NO_SETUP","reason":"no_realtime_price"}
@@ -2914,32 +3075,82 @@ class DynamicMarketManager:
         execution_dir=execution.get("book_pressure","neutral")
         driver=(execution.get("driver") or {}).get("primary","unknown")
         flow_divs=execution.get("flow_divergences",[])
-
-        levels=a15.get("regime_levels",{})
-        supports=levels.get("supports",[])
-        resistances=levels.get("resistances",[])
-        atr=(a15.get("technical") or {}).get("atr14") or (a5.get("technical") or {}).get("atr14")
         direction=bias if bias in ("bullish","bearish") else "neutral"
+        live=mtf.get("live_context",{})
+
+        # Gather levels across execution + context TFs. This fixes the case where
+        # price has already broken every 15m support/resistance.
+        supports=set()
+        resistances=set()
+        atrs=[]
+        for tf in ("5","15","60","240","D"):
+            a=analysis.get(tf,{})
+            reg=a.get("regime_levels",{})
+            supports.update(float(x) for x in reg.get("supports",[]) if x is not None)
+            resistances.update(float(x) for x in reg.get("resistances",[]) if x is not None)
+            atr=(a.get("technical") or {}).get("atr14") or reg.get("atr")
+            if atr:
+                atrs.append(float(atr))
+
+        target_candidates=[]
+        invalid_candidates=[]
+        target_source=None
+        invalid_source=None
 
         if direction=="bullish":
-            invalid_candidates=[x for x in supports if x<price]
-            invalid=max(invalid_candidates) if invalid_candidates else (price-1.5*atr if atr else None)
-            targets=[x for x in resistances if x>price]
+            target_candidates.extend(x for x in resistances if x>price)
+            invalid_candidates.extend(x for x in supports if x<price)
+            for tf in ("15","60","240","D"):
+                lc=live.get(tf,{})
+                target_candidates.extend(x for x in lc.get("projection_targets",[]) if x>price)
+                broken=lc.get("broken_level")
+                if lc.get("mode")=="price_discovery_up" and broken is not None and broken<price:
+                    invalid_candidates.append(float(broken))
         elif direction=="bearish":
-            invalid_candidates=[x for x in resistances if x>price]
-            invalid=min(invalid_candidates) if invalid_candidates else (price+1.5*atr if atr else None)
-            targets=[x for x in supports if x<price]
-        else:
-            invalid=None
-            targets=[]
+            target_candidates.extend(x for x in supports if x<price)
+            invalid_candidates.extend(x for x in resistances if x>price)
+            for tf in ("15","60","240","D"):
+                lc=live.get(tf,{})
+                target_candidates.extend(x for x in lc.get("projection_targets",[]) if 0<x<price)
+                broken=lc.get("broken_level")
+                if lc.get("mode")=="price_discovery_down" and broken is not None and broken>price:
+                    invalid_candidates.append(float(broken))
 
-        target=targets[0] if targets else None
+        # Deduplicate and use the nearest structurally meaningful target.
+        target_candidates=sorted(set(round(x,10) for x in target_candidates))
+        invalid_candidates=sorted(set(round(x,10) for x in invalid_candidates))
+        if direction=="bullish":
+            target=min(target_candidates) if target_candidates else None
+            invalid=max(invalid_candidates) if invalid_candidates else None
+        elif direction=="bearish":
+            target=max(target_candidates) if target_candidates else None
+            invalid=min(invalid_candidates) if invalid_candidates else None
+        else:
+            target=invalid=None
+
+        # ATR fallback is allowed only for invalidation, never for a profit target.
+        # A target must come from actual structure/projection to avoid fabricated R:R.
+        atr=min(atrs) if atrs else None
+        if invalid is None and atr and direction=="bullish":
+            invalid=price-1.5*atr
+            invalid_source="atr_fallback"
+        elif invalid is None and atr and direction=="bearish":
+            invalid=price+1.5*atr
+            invalid_source="atr_fallback"
+
+        if target is not None:
+            in_discovery=any(
+                live.get(tf,{}).get("mode") in ("price_discovery_down","price_discovery_up")
+                for tf in ("15","60","240","D")
+            )
+            target_source="structural_projection" if in_discovery else "confirmed_level"
+        if invalid is not None and invalid_source is None:
+            invalid_source="broken_structure_or_confirmed_level"
+
         risk=abs(price-invalid) if invalid is not None else None
         reward=abs(target-price) if target is not None else None
         rr=(reward/risk) if risk and reward is not None else None
 
-        # Driver quality: spot/mixed confirmation is stronger; perp-only is allowed
-        # but explicitly downgraded because leverage can lead fragile moves.
         driver_quality="strong" if driver=="spot" else "normal" if driver=="mixed" else "fragile" if driver=="perp" else "unknown"
         opposed_flow=False
         for ev in flow_divs:
@@ -2949,6 +3160,13 @@ class DynamicMarketManager:
             if direction=="bearish" and typ=="price_down_perp_led_spot_not_confirming":
                 opposed_flow=True
 
+        # A large history/live discontinuity is diagnostic. It no longer corrupts
+        # structure because analysis uses closed candles and daily archives refresh it.
+        dislocated=[
+            tf for tf in ("D","240","60","15","5")
+            if live.get(tf,{}).get("stale_or_dislocated")
+        ]
+
         required={
             "mtf_ready":bool(mtf.get("ready")),
             "directional_bias":direction!="neutral",
@@ -2957,6 +3175,7 @@ class DynamicMarketManager:
             "target_known":target is not None,
             "rr_min_1_5":rr is not None and rr>=1.5,
             "execution_not_opposed":execution_dir in ("neutral",direction),
+            "history_not_severely_dislocated":len(dislocated)<3,
         }
         all_required=all(required.values())
         status="SETUP" if all_required else "NO_SETUP"
@@ -2967,7 +3186,6 @@ class DynamicMarketManager:
             "elliott_clear":not uncertainty,
             "mtf_agreement_ge_65":agreement>=0.65,
         }
-        quality=sum(1 for v in confirmations.values() if v)
 
         return {
             "ready":True,
@@ -2975,17 +3193,20 @@ class DynamicMarketManager:
             "direction":direction if direction!="neutral" else None,
             "entry_reference":price,
             "invalidation":invalid,
+            "invalidation_source":invalid_source,
             "target_1":target,
+            "target_source":target_source,
             "risk_reward":None if rr is None else round(rr,3),
             "required":required,
             "confirmations":confirmations,
-            "confirmation_score":quality,
+            "confirmation_score":sum(1 for v in confirmations.values() if v),
             "driver":driver,
             "driver_quality":driver_quality,
             "flow_warning":opposed_flow,
             "elliott_uncertainty":uncertainty,
             "mtf_agreement":agreement,
             "execution_pressure":execution_dir,
+            "dislocated_timeframes":dislocated,
             "note":"Position size is intentionally not calculated here; it requires current account equity and chosen risk percent.",
         }
 
@@ -3018,14 +3239,14 @@ class DynamicMarketManager:
             .snapshot()
         )
 
-        mtf = self._mtf_engine_v3(linear)
         execution = self._execution_engine_v3(linear, spot)
+        mtf = self._mtf_engine_v3(linear, execution)
         setup = self._setup_engine_v3(linear, mtf, execution)
 
         return {
             "symbol": symbol,
             "generated_at": time.time(),
-            "engine_version": "scan_plus_v3_2",
+            "engine_version": "scan_plus_v3_3",
             "linear": linear,
             "spot": spot,
             "driver": self._driver(linear, spot),
