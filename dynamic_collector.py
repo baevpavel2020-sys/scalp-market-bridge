@@ -38,6 +38,14 @@ def fnum(value):
 # ONE MARKET STREAM
 # ============================================================
 
+BYBIT_REST_URLS = (
+    "https://api.bybit.com",
+    "https://api.bytick.com",
+)
+KLINE_INTERVALS = ("1", "5", "15", "60", "240", "D")
+KLINE_LIMIT = 500
+
+
 class MarketStream:
 
     def __init__(self, symbol, market):
@@ -80,16 +88,14 @@ class MarketStream:
 
         self.ticker = {}
         # Kline / candle storage for Technical Engine
-        # Keep last 500 candles for each timeframe.
         self.candles = {
-            "1": deque(maxlen=500),
-            "5": deque(maxlen=500),
-            "15": deque(maxlen=500),
-            "60": deque(maxlen=500),
-            "240": deque(maxlen=500),
-            "D": deque(maxlen=500),
+            interval: deque(maxlen=KLINE_LIMIT)
+            for interval in KLINE_INTERVALS
         }
-        
+        self.history_bootstrapped = False
+        self.history_error = None
+        self.history_loaded_at = None
+
         # cumulative delta from current collector session
         self.cvd_session = 0.0
 
@@ -227,6 +233,9 @@ class MarketStream:
 
             self.cvd_session = 0.0
 
+        if not self.history_bootstrapped:
+            self._bootstrap_history()
+
         topics = [
             f"publicTrade.{self.symbol}",
             f"orderbook.50.{self.symbol}",
@@ -324,6 +333,216 @@ class MarketStream:
     # ========================================================
     # MESSAGE ROUTER
     # ========================================================
+
+    # ========================================================
+    # HISTORICAL KLINES / TECHNICAL ENGINE
+    # ========================================================
+
+    def _bootstrap_history(self):
+        category = "linear" if self.market == "linear" else "spot"
+        try:
+            for interval in KLINE_INTERVALS:
+                rows = None
+                last_error = None
+                for base_url in BYBIT_REST_URLS:
+                    try:
+                        response = requests.get(
+                            f"{base_url}/v5/market/kline",
+                            params={
+                                "category": category,
+                                "symbol": self.symbol,
+                                "interval": interval,
+                                "limit": KLINE_LIMIT,
+                            },
+                            timeout=10,
+                        )
+                        response.raise_for_status()
+                        payload = response.json()
+                        if payload.get("retCode") != 0:
+                            raise RuntimeError(
+                                f"Bybit retCode={payload.get('retCode')} "
+                                f"retMsg={payload.get('retMsg')}"
+                            )
+                        rows = payload.get("result", {}).get("list", [])
+                        break
+                    except Exception as exc:
+                        last_error = str(exc)
+
+                if rows is None:
+                    raise RuntimeError(f"history {interval} unavailable: {last_error}")
+
+                normalized = []
+                for row in reversed(rows):
+                    try:
+                        start = int(row[0])
+                        normalized.append({
+                            "start": start,
+                            "end": self._candle_end_ms(start, interval),
+                            "open": float(row[1]),
+                            "high": float(row[2]),
+                            "low": float(row[3]),
+                            "close": float(row[4]),
+                            "volume": float(row[5]),
+                            "turnover": float(row[6]),
+                            "confirm": True,
+                        })
+                    except (IndexError, TypeError, ValueError):
+                        continue
+
+                with self.lock:
+                    self.candles[interval].clear()
+                    self.candles[interval].extend(normalized)
+
+            with self.lock:
+                self.history_bootstrapped = True
+                self.history_error = None
+                self.history_loaded_at = time.time()
+        except Exception as exc:
+            with self.lock:
+                self.history_error = str(exc)
+
+    @staticmethod
+    def _candle_end_ms(start_ms, interval):
+        return start_ms + (86_400_000 if interval == "D" else int(interval) * 60_000) - 1
+
+    @staticmethod
+    def _ema(values, period):
+        if len(values) < period:
+            return None
+        alpha = 2.0 / (period + 1.0)
+        value = sum(values[:period]) / period
+        for item in values[period:]:
+            value = alpha * item + (1.0 - alpha) * value
+        return value
+
+    @staticmethod
+    def _ema_series(values, period):
+        if len(values) < period:
+            return []
+        alpha = 2.0 / (period + 1.0)
+        value = sum(values[:period]) / period
+        out = [None] * (period - 1) + [value]
+        for item in values[period:]:
+            value = alpha * item + (1.0 - alpha) * value
+            out.append(value)
+        return out
+
+    @staticmethod
+    def _rsi(values, period=14):
+        if len(values) < period + 1:
+            return None
+        gains, losses = [], []
+        for previous, current in zip(values[-period-1:-1], values[-period:]):
+            change = current - previous
+            gains.append(max(change, 0.0))
+            losses.append(max(-change, 0.0))
+        avg_gain = sum(gains) / period
+        avg_loss = sum(losses) / period
+        if avg_loss == 0:
+            return 100.0 if avg_gain > 0 else 50.0
+        rs = avg_gain / avg_loss
+        return 100.0 - 100.0 / (1.0 + rs)
+
+    @classmethod
+    def _macd(cls, values, fast=12, slow=26, signal=9):
+        if len(values) < slow + signal:
+            return None
+        fast_s = cls._ema_series(values, fast)
+        slow_s = cls._ema_series(values, slow)
+        line = [
+            fast_s[i] - slow_s[i]
+            for i in range(len(values))
+            if i < len(fast_s) and i < len(slow_s)
+            and fast_s[i] is not None and slow_s[i] is not None
+        ]
+        if len(line) < signal:
+            return None
+        sig = cls._ema(line, signal)
+        return {"macd": line[-1], "signal": sig, "histogram": line[-1] - sig}
+
+    @staticmethod
+    def _stochastic(candles, period=14, smooth_k=3, smooth_d=3):
+        if len(candles) < period + smooth_k + smooth_d - 2:
+            return None
+        raw = []
+        for end in range(period, len(candles) + 1):
+            chunk = candles[end-period:end]
+            hi = max(c["high"] for c in chunk)
+            lo = min(c["low"] for c in chunk)
+            raw.append(50.0 if hi == lo else 100.0 * (chunk[-1]["close"] - lo) / (hi - lo))
+        ks = [sum(raw[i-smooth_k+1:i+1]) / smooth_k for i in range(smooth_k-1, len(raw))]
+        if len(ks) < smooth_d:
+            return None
+        return {"k": ks[-1], "d": sum(ks[-smooth_d:]) / smooth_d}
+
+    @staticmethod
+    def _atr(candles, period=14):
+        if len(candles) < period + 1:
+            return None
+        rows = candles[-period-1:]
+        trs = [
+            max(cur["high"] - cur["low"],
+                abs(cur["high"] - prev["close"]),
+                abs(cur["low"] - prev["close"]))
+            for prev, cur in zip(rows[:-1], rows[1:])
+        ]
+        return sum(trs) / period
+
+    @staticmethod
+    def _vwap(candles):
+        volume = sum(c["volume"] for c in candles)
+        if volume <= 0:
+            return None
+        return sum(
+            ((c["high"] + c["low"] + c["close"]) / 3.0) * c["volume"]
+            for c in candles
+        ) / volume
+
+    def _technical_metrics(self, candles):
+        rows = list(candles)
+        closes = [c["close"] for c in rows]
+        macd = self._macd(closes)
+        stoch = self._stochastic(rows)
+        def rnd(v):
+            return None if v is None else round(float(v), 10)
+        return {
+            "count": len(rows),
+            "ready": len(rows) >= 200,
+            "last_start": rows[-1]["start"] if rows else None,
+            "last_close": rows[-1]["close"] if rows else None,
+            "last_confirm": rows[-1]["confirm"] if rows else None,
+            "ema20": rnd(self._ema(closes, 20)),
+            "ema50": rnd(self._ema(closes, 50)),
+            "ema200": rnd(self._ema(closes, 200)),
+            "rsi14": rnd(self._rsi(closes)),
+            "macd": None if macd is None else {k: rnd(v) for k, v in macd.items()},
+            "stochastic": None if stoch is None else {k: rnd(v) for k, v in stoch.items()},
+            "atr14": rnd(self._atr(rows)),
+            "vwap": rnd(self._vwap(rows)),
+        }
+
+    def diagnostics(self):
+        with self.lock:
+            technical = {i: self._technical_metrics(c) for i, c in self.candles.items()}
+            counts = {i: len(c) for i, c in self.candles.items()}
+            checks = {
+                "connected": bool(self.connected),
+                "history_bootstrapped": bool(self.history_bootstrapped),
+                "history_6_of_6": all(counts.get(i, 0) >= 200 for i in KLINE_INTERVALS),
+                "technical_6_of_6": all(technical[i]["ready"] for i in KLINE_INTERVALS),
+                "orderbook_ready": bool(self.orderbook_ready),
+            }
+            return {
+                "symbol": self.symbol,
+                "market": self.market,
+                "status": self.status,
+                "checks": checks,
+                "overall_pass": all(checks.values()),
+                "history_error": self.history_error,
+                "history_loaded_at": self.history_loaded_at,
+                "candle_counts": counts,
+                "technical": technical,
+            }
 
     def _handle_message(self, message):
 
@@ -1177,6 +1396,18 @@ class MarketStream:
                         self.cvd_session,
                         8,
                     ),
+
+                "history": {
+                    "bootstrapped": self.history_bootstrapped,
+                    "error": self.history_error,
+                    "loaded_at": self.history_loaded_at,
+                },
+
+                "technical": {
+                    interval: self._technical_metrics(candles)
+                    for interval, candles
+                    in self.candles.items()
+                },
 
                 "candles": {
                     interval: list(candles)
