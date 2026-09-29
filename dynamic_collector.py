@@ -1774,7 +1774,7 @@ class MarketStream:
         ready=bool(technical.get("ready") and ctx.get("ready"))
         return {
             "ready":ready,
-            "engine_version":"scan_plus_v3_4",
+            "engine_version":"scan_plus_v3_5",
             "closed_candles":len(rows),
             "excluded_open_candles":max(0,len(raw_rows)-len(rows)),
             "last_confirmed_start":rows[-1].get("start") if rows else None,
@@ -3129,8 +3129,23 @@ class DynamicMarketManager:
             elif ch<0 and pc<0: oi_context="long_liquidation_or_position_reduction"
             break
 
+        transport_ready=bool(linear.get("connected") and spot.get("connected") and book.get("ready"))
+        warmed_flow_windows=[
+            w for w,data in windows.items()
+            if data.get("linear_warm") and data.get("spot_warm")
+            and data.get("perp_delta_ratio") is not None
+            and data.get("spot_delta_ratio") is not None
+        ]
+        flow_ready=bool(warmed_flow_windows)
+        driver_ready=bool(overall_driver!="unknown" and overall_conf>=0.35)
+        trade_data_ready=bool(transport_ready and price is not None and flow_ready and driver_ready)
+
         return {
-            "ready":bool(linear.get("connected") and spot.get("connected") and book.get("ready")),
+            "ready":transport_ready,
+            "trade_data_ready":trade_data_ready,
+            "flow_ready":flow_ready,
+            "driver_ready":driver_ready,
+            "warmed_flow_windows":warmed_flow_windows,
             "price":price,
             "spread_bps":book.get("spread_bps"),
             "book_imbalance":imbalance,
@@ -3155,75 +3170,111 @@ class DynamicMarketManager:
             return {"ready":False,"status":"NO_SETUP","reason":"no_realtime_price"}
 
         bias=mtf.get("bias","neutral")
-        agreement=mtf.get("agreement",0)
-        uncertainty=any(
-            analysis.get(tf,{}).get("elliott",{}).get("ambiguous",False)
-            for tf in ("240","60","15")
-        )
+        agreement=float(mtf.get("agreement") or 0.0)
         execution_dir=execution.get("book_pressure","neutral")
         driver=(execution.get("driver") or {}).get("primary","unknown")
+        driver_conf=float((execution.get("driver") or {}).get("confidence") or 0.0)
         flow_divs=execution.get("flow_divergences",[])
         direction=bias if bias in ("bullish","bearish") else "neutral"
         live=mtf.get("live_context",{})
 
-        # Gather levels across execution + context TFs. This fixes the case where
-        # price has already broken every 15m support/resistance.
+        uncertainty=any(
+            analysis.get(tf,{}).get("elliott",{}).get("ambiguous",False)
+            for tf in ("240","60","15")
+        )
+
+        # Execution ATR is deliberately taken from 5m first. Using the minimum ATR
+        # across all TFs can create absurdly tight stops on low-priced assets.
+        atr5=(analysis.get("5",{}).get("technical") or {}).get("atr14")
+        if atr5 is None:
+            atr5=(analysis.get("5",{}).get("regime_levels") or {}).get("atr")
+        atr15=(analysis.get("15",{}).get("technical") or {}).get("atr14")
+        if atr15 is None:
+            atr15=(analysis.get("15",{}).get("regime_levels") or {}).get("atr")
+        execution_atr=float(atr5 or atr15 or 0.0) or None
+
+        spread_bps=execution.get("spread_bps")
+        spread_abs=(price*float(spread_bps)/10000.0) if spread_bps is not None else None
+
+        # Costs/noise floor. Structural stops are placed BEYOND the level and must
+        # also clear normal execution noise. No artificial tiny denominator for R:R.
+        level_buffer=max(
+            execution_atr*0.25 if execution_atr else 0.0,
+            spread_abs*2.0 if spread_abs else 0.0,
+        )
+        min_risk_distance=max(
+            execution_atr*0.75 if execution_atr else 0.0,
+            spread_abs*3.0 if spread_abs else 0.0,
+        )
+        min_reward_distance=max(
+            execution_atr*1.00 if execution_atr else 0.0,
+            spread_abs*3.0 if spread_abs else 0.0,
+        )
+
         supports=set()
         resistances=set()
-        atrs=[]
         for tf in ("5","15","60","240","D"):
-            a=analysis.get(tf,{})
-            reg=a.get("regime_levels",{})
+            reg=analysis.get(tf,{}).get("regime_levels",{})
             supports.update(float(x) for x in reg.get("supports",[]) if x is not None)
             resistances.update(float(x) for x in reg.get("resistances",[]) if x is not None)
-            atr=(a.get("technical") or {}).get("atr14") or reg.get("atr")
-            if atr:
-                atrs.append(float(atr))
 
         target_candidates=[]
-        invalid_candidates=[]
+        invalid_levels=[]
         target_source=None
         invalid_source=None
 
         if direction=="bullish":
             target_candidates.extend(x for x in resistances if x>price)
-            invalid_candidates.extend(x for x in supports if x<price)
+            invalid_levels.extend(x for x in supports if x<price)
             for tf in ("15","60","240","D"):
                 lc=live.get(tf,{})
                 target_candidates.extend(x for x in lc.get("projection_targets",[]) if x>price)
                 broken=lc.get("broken_level")
                 if lc.get("mode")=="price_discovery_up" and broken is not None and broken<price:
-                    invalid_candidates.append(float(broken))
+                    invalid_levels.append(float(broken))
         elif direction=="bearish":
             target_candidates.extend(x for x in supports if x<price)
-            invalid_candidates.extend(x for x in resistances if x>price)
+            invalid_levels.extend(x for x in resistances if x>price)
             for tf in ("15","60","240","D"):
                 lc=live.get(tf,{})
                 target_candidates.extend(x for x in lc.get("projection_targets",[]) if 0<x<price)
                 broken=lc.get("broken_level")
                 if lc.get("mode")=="price_discovery_down" and broken is not None and broken>price:
-                    invalid_candidates.append(float(broken))
+                    invalid_levels.append(float(broken))
 
-        # Deduplicate and use the nearest structurally meaningful target.
         target_candidates=sorted(set(round(x,10) for x in target_candidates))
-        invalid_candidates=sorted(set(round(x,10) for x in invalid_candidates))
-        if direction=="bullish":
-            target=min(target_candidates) if target_candidates else None
-            invalid=max(invalid_candidates) if invalid_candidates else None
-        elif direction=="bearish":
-            target=max(target_candidates) if target_candidates else None
-            invalid=min(invalid_candidates) if invalid_candidates else None
-        else:
-            target=invalid=None
+        invalid_levels=sorted(set(round(x,10) for x in invalid_levels))
 
-        # ATR fallback is allowed only for invalidation, never for a profit target.
-        # A target must come from actual structure/projection to avoid fabricated R:R.
-        atr=min(atrs) if atrs else None
-        if invalid is None and atr and direction=="bullish":
-            invalid=price-1.5*atr
+        # Candidate target must be meaningfully beyond market noise.
+        if direction=="bullish":
+            valid_targets=[x for x in target_candidates if (x-price)>=min_reward_distance]
+            target=min(valid_targets) if valid_targets else None
+            structural_level=max(invalid_levels) if invalid_levels else None
+        elif direction=="bearish":
+            valid_targets=[x for x in target_candidates if (price-x)>=min_reward_distance]
+            target=max(valid_targets) if valid_targets else None
+            structural_level=min(invalid_levels) if invalid_levels else None
+        else:
+            valid_targets=[]
+            target=structural_level=None
+
+        # Put invalidation beyond the structural level, then widen it to the minimum
+        # ATR/spread noise floor when necessary.
+        invalid=None
+        raw_invalid=None
+        if structural_level is not None:
+            if direction=="bullish":
+                raw_invalid=structural_level-level_buffer
+                invalid=min(raw_invalid, price-min_risk_distance)
+            elif direction=="bearish":
+                raw_invalid=structural_level+level_buffer
+                invalid=max(raw_invalid, price+min_risk_distance)
+            invalid_source="buffered_structural_level"
+        elif execution_atr and direction=="bullish":
+            invalid=price-max(1.5*execution_atr,min_risk_distance)
             invalid_source="atr_fallback"
-        elif invalid is None and atr and direction=="bearish":
-            invalid=price+1.5*atr
+        elif execution_atr and direction=="bearish":
+            invalid=price+max(1.5*execution_atr,min_risk_distance)
             invalid_source="atr_fallback"
 
         if target is not None:
@@ -3232,14 +3283,47 @@ class DynamicMarketManager:
                 for tf in ("15","60","240","D")
             )
             target_source="structural_projection" if in_discovery else "confirmed_level"
-        if invalid is not None and invalid_source is None:
-            invalid_source="broken_structure_or_confirmed_level"
+
+        # Hard price-order invariants.
+        price_order_valid=False
+        if direction=="bullish" and invalid is not None and target is not None:
+            price_order_valid=invalid < price < target
+        elif direction=="bearish" and invalid is not None and target is not None:
+            price_order_valid=target < price < invalid
 
         risk=abs(price-invalid) if invalid is not None else None
         reward=abs(target-price) if target is not None else None
-        rr=(reward/risk) if risk and reward is not None else None
+        risk_distance_valid=bool(risk is not None and risk+1e-18>=min_risk_distance)
+        reward_distance_valid=bool(reward is not None and reward+1e-18>=min_reward_distance)
+        rr=(reward/risk) if risk and reward is not None and price_order_valid else None
 
-        driver_quality="strong" if driver=="spot" else "normal" if driver=="mixed" else "fragile" if driver=="perp" else "unknown"
+        # Fresh lower-TF structure may veto a setup against an active execution impulse.
+        lower_tfs=("1","5","15")
+        opposing_lower=[]
+        for tf in lower_tfs:
+            frame=(mtf.get("frames") or {}).get(tf,{})
+            a=analysis.get(tf,{})
+            ev=(a.get("structure") or {}).get("last_event") or {}
+            mode=(live.get(tf) or {}).get("mode")
+            frame_dir=frame.get("direction")
+            active_bull=bool(
+                frame_dir=="bullish" and
+                (mode=="price_discovery_up" or
+                 (ev.get("direction")=="bullish" and ev.get("type") in ("BOS","CHoCH")))
+            )
+            active_bear=bool(
+                frame_dir=="bearish" and
+                (mode=="price_discovery_down" or
+                 (ev.get("direction")=="bearish" and ev.get("type") in ("BOS","CHoCH")))
+            )
+            if direction=="bearish" and active_bull:
+                opposing_lower.append(tf)
+            elif direction=="bullish" and active_bear:
+                opposing_lower.append(tf)
+
+        # One noisy 1m event is not enough; two execution TFs opposing the trade is a veto.
+        lower_tf_not_opposed=len(opposing_lower)<2
+
         opposed_flow=False
         for ev in flow_divs:
             typ=ev.get("type","")
@@ -3248,35 +3332,47 @@ class DynamicMarketManager:
             if direction=="bearish" and typ=="price_down_perp_led_spot_not_confirming":
                 opposed_flow=True
 
-        # A large history/live discontinuity is diagnostic. It no longer corrupts
-        # structure because analysis uses closed candles and daily archives refresh it.
         dislocated=[
             tf for tf in ("D","240","60","15","5")
             if live.get(tf,{}).get("stale_or_dislocated")
         ]
 
+        driver_quality=(
+            "strong" if driver=="spot"
+            else "normal" if driver=="mixed"
+            else "fragile" if driver=="perp"
+            else "unknown"
+        )
+
         required={
             "mtf_ready":bool(mtf.get("ready")),
             "directional_bias":direction!="neutral",
-            "realtime_ready":bool(execution.get("ready")),
+            "mtf_agreement_ge_65":agreement>=0.65,
+            "transport_ready":bool(execution.get("ready")),
+            "trade_data_ready":bool(execution.get("trade_data_ready")),
+            "driver_known":driver!="unknown" and driver_conf>=0.35,
             "invalidation_known":invalid is not None,
             "target_known":target is not None,
+            "price_order_valid":price_order_valid,
+            "risk_distance_valid":risk_distance_valid,
+            "reward_distance_valid":reward_distance_valid,
             "rr_min_1_5":rr is not None and rr>=1.5,
             "execution_not_opposed":execution_dir in ("neutral",direction),
+            "lower_tf_not_opposed":lower_tf_not_opposed,
+            "flow_not_opposed":not opposed_flow,
             "history_not_severely_dislocated":len(dislocated)<3,
             "elliott_not_fully_ambiguous":not all(
                 analysis.get(tf,{}).get("elliott",{}).get("ambiguous",False)
                 for tf in ("240","60","15")
             ),
         }
-        all_required=all(required.values())
-        status="SETUP" if all_required else "NO_SETUP"
+        status="SETUP" if all(required.values()) else "NO_SETUP"
 
         confirmations={
             "spot_or_mixed_driver":driver in ("spot","mixed"),
-            "no_spot_perp_warning":not opposed_flow,
             "elliott_clear":not uncertainty,
-            "mtf_agreement_ge_65":agreement>=0.65,
+            "mtf_agreement_ge_75":agreement>=0.75,
+            "book_confirms":execution_dir==direction,
         }
 
         return {
@@ -3284,15 +3380,27 @@ class DynamicMarketManager:
             "status":status,
             "direction":direction if direction!="neutral" else None,
             "entry_reference":price,
+            "structural_invalidation_level":structural_level,
+            "raw_buffered_invalidation":raw_invalid,
             "invalidation":invalid,
             "invalidation_source":invalid_source,
             "target_1":target,
             "target_source":target_source,
             "risk_reward":None if rr is None else round(rr,3),
+            "risk_distance":risk,
+            "reward_distance":reward,
+            "execution_atr":execution_atr,
+            "spread_abs":spread_abs,
+            "spread_bps":spread_bps,
+            "level_buffer":level_buffer,
+            "min_risk_distance":min_risk_distance,
+            "min_reward_distance":min_reward_distance,
+            "opposing_lower_timeframes":opposing_lower,
             "required":required,
             "confirmations":confirmations,
             "confirmation_score":sum(1 for v in confirmations.values() if v),
             "driver":driver,
+            "driver_confidence":round(driver_conf,4),
             "driver_quality":driver_quality,
             "flow_warning":opposed_flow,
             "elliott_uncertainty":uncertainty,
@@ -3338,7 +3446,7 @@ class DynamicMarketManager:
         return {
             "symbol": symbol,
             "generated_at": time.time(),
-            "engine_version": "scan_plus_v3_4",
+            "engine_version": "scan_plus_v3_5",
             "linear": linear,
             "spot": spot,
             "driver": self._driver(linear, spot),
