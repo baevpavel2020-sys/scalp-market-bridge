@@ -2,6 +2,7 @@ import csv
 import datetime as dt
 import io
 import json
+import math
 import os
 import re
 import urllib.error
@@ -853,8 +854,67 @@ class MarketStream:
                         )
                         if better:
                             filtered[-1] = p
-            result[degree] = filtered
+            result[degree] = cls._sanitize_pivot_sequence(filtered)
         return result
+
+    @staticmethod
+    def _sanitize_pivot_sequence(points):
+        """Return one chronological, strictly alternating, geometrically valid pivot chain."""
+        clean=[]
+        for raw in sorted(points, key=lambda p:(p.get("start",0), p.get("index",0))):
+            if raw.get("kind") not in ("high","low"):
+                continue
+            try:
+                price=float(raw.get("price"))
+                start=int(raw.get("start"))
+            except (TypeError,ValueError):
+                continue
+            if not math.isfinite(price) or price<=0:
+                continue
+            p=dict(raw); p["price"]=price; p["start"]=start
+
+            # Same timestamp: keep only the point that extends the current leg.
+            if clean and p["start"]==clean[-1]["start"]:
+                if p["kind"]==clean[-1]["kind"]:
+                    better=(p["price"]>clean[-1]["price"] if p["kind"]=="high"
+                            else p["price"]<clean[-1]["price"])
+                    if better: clean[-1]=p
+                continue
+
+            # Consecutive same-kind pivots are never allowed into pattern engines.
+            if clean and p["kind"]==clean[-1]["kind"]:
+                better=(p["price"]>clean[-1]["price"] if p["kind"]=="high"
+                        else p["price"]<clean[-1]["price"])
+                if better: clean[-1]=p
+                continue
+
+            # Geometry invariant: high must be above preceding low; low below preceding high.
+            if clean:
+                if p["kind"]=="high" and p["price"]<=clean[-1]["price"]:
+                    continue
+                if p["kind"]=="low" and p["price"]>=clean[-1]["price"]:
+                    continue
+            clean.append(p)
+        return clean
+
+    @staticmethod
+    def _valid_pattern_sequence(seq, expected_len):
+        if len(seq)!=expected_len:
+            return False
+        starts=[p.get("start") for p in seq]
+        kinds=[p.get("kind") for p in seq]
+        prices=[p.get("price") for p in seq]
+        if any(x is None for x in starts+kinds+prices):
+            return False
+        if any(starts[i] >= starts[i+1] for i in range(len(starts)-1)):
+            return False
+        if any(kinds[i] == kinds[i+1] for i in range(len(kinds)-1)):
+            return False
+        for i in range(len(seq)-1):
+            a=float(prices[i]); b=float(prices[i+1])
+            if kinds[i]=="low" and not b>a: return False
+            if kinds[i]=="high" and not b<a: return False
+        return True
 
     @staticmethod
     def _label_pivots(points):
@@ -1335,7 +1395,11 @@ class MarketStream:
         base = self._structure_metrics(rows)
         degrees = {}
         for degree, data in base.get("degrees", {}).items():
-            points = data.get("last_points", [])
+            points = self._sanitize_pivot_sequence(data.get("last_points", []))
+            # Keep the public base synchronized with the validated chain so every
+            # downstream engine sees the same pivots.
+            data["last_points"] = points
+            data["sequence"] = [p.get("label") for p in points]
             legs = []
             for a, b in zip(points[:-1], points[1:]):
                 ia = next((i for i, r in enumerate(rows) if r["start"] == a["start"]), None)
@@ -1388,9 +1452,9 @@ class MarketStream:
             s = points[i:i+6]
             if len(s) < 6:
                 continue
-            kinds = [p["kind"] for p in s]
-            if not all(kinds[j] != kinds[j-1] for j in range(1,6)):
+            if not self._valid_pattern_sequence(s,6):
                 continue
+            kinds = [p["kind"] for p in s]
             p=[float(x["price"]) for x in s]
             bull=kinds[0]=="low"
             w1=abs(p[1]-p[0]); w3=abs(p[3]-p[2]); w5=abs(p[5]-p[4])
@@ -1436,12 +1500,17 @@ class MarketStream:
         # Corrective families on 0-A-B-C.
         for i in range(max(0,len(points)-14), max(0,len(points)-3)):
             s=points[i:i+4]
-            if len(s)<4: continue
+            if not self._valid_pattern_sequence(s,4):
+                continue
             p=[float(x["price"]) for x in s]
             a=abs(p[1]-p[0]); b=abs(p[2]-p[1]); c=abs(p[3]-p[2])
-            if min(a,b)<1e-12: continue
+            if min(a,b,c)<1e-12: continue
+            # A and C must travel in the same direction; B must oppose A.
+            leg_a=p[1]-p[0]; leg_b=p[2]-p[1]; leg_c=p[3]-p[2]
+            if not (leg_a*leg_b<0 and leg_a*leg_c>0):
+                continue
             br=b/a; cr=c/a
-            direction="down" if p[1]<p[0] else "up"
+            direction="down" if leg_a<0 else "up"
             common={"direction":direction,"degree":degree,
                     "points":[{"wave":w,**x} for w,x in zip(("0","A","B","C"),s)],
                     "ratios":{"B_A":round(br,4),"C_A":round(cr,4)},"invalidation":p[0]}
@@ -1468,6 +1537,13 @@ class MarketStream:
             candidate["checks"]["fib_cluster_confluence"] = near_cluster
             candidate["evidence_count"] = sum(1 for v in candidate["checks"].values() if v is True)
 
+        unique={}
+        for c in candidates:
+            key=(c["type"],c["direction"],tuple(p["start"] for p in c["points"]))
+            old=unique.get(key)
+            if old is None or c["evidence_count"]>old["evidence_count"]:
+                unique[key]=c
+        candidates=list(unique.values())
         candidates.sort(key=lambda x:(x["evidence_count"], x["type"]=="impulse"), reverse=True)
         primary=candidates[0] if candidates else None
         return {
@@ -1492,21 +1568,28 @@ class MarketStream:
         confirmed=[]; developing=[]
         for i in range(max(0,len(points)-12),max(0,len(points)-4)):
             s=points[i:i+5]
-            if len(s)<5: continue
+            if not self._valid_pattern_sequence(s,5):
+                continue
             x,a,b,c,d=[float(q["price"]) for q in s]
             xa=a-x; ab=b-a; bc=c-b; cd=d-c
             if min(abs(xa),abs(ab),abs(bc))<1e-12: continue
             vals={"ab":abs(ab/xa),"bc":abs(bc/ab),"cd":abs(cd/bc),"xd":abs((d-x)/xa)}
+            # Harmonic completion direction is determined by the final CD leg.
+            # Reject degenerate shapes where D fails to extend beyond B in CD direction.
+            bullish = cd < 0
+            d_progress = (d < b) if bullish else (d > b)
+            if not d_progress:
+                continue
             for name,t in templates.items():
                 checks={k:(lo<=vals[k]<=hi) for k,(lo,hi) in t.items()}
-                rec={"name":name,"direction":"bullish" if d<c else "bearish",
+                rec={"name":name,"direction":"bullish" if bullish else "bearish",
                      "ratios":{k:round(v,4) for k,v in vals.items()},
                      "checks":checks,"points":[{"point":n,**q} for n,q in zip("XABCD",s)]}
                 if all(checks.values()): confirmed.append(rec)
                 elif sum(checks.values())==3: developing.append(rec)
             abcd=abs(cd/ab)
             if 0.95<=abcd<=1.05:
-                confirmed.append({"name":"AB=CD","direction":"bullish" if d<c else "bearish",
+                confirmed.append({"name":"AB=CD","direction":"bullish" if bullish else "bearish",
                                   "ratios":{"CD_AB":round(abcd,4)},"checks":{"AB_CD":True},
                                   "points":[{"point":n,**q} for n,q in zip("XABCD",s)]})
         return {"ready":len(points)>=5,"confirmed":confirmed[-6:],"developing":developing[-6:]}
@@ -1548,11 +1631,15 @@ class MarketStream:
     def _smart_money_engine_v2(self, rows, ctx, liquidity):
         base=self._smart_money_metrics(rows,ctx["base"],liquidity)
         # Mitigation status for FVGs; only retain useful recent zones.
-        close=rows[-1]["close"] if rows else None
         fvg=[]
         for z in base.get("fvg",[]):
             lo=min(z["from"],z["to"]); hi=max(z["from"],z["to"])
-            z=dict(z); z["mitigated"]=bool(close is not None and lo<=close<=hi)
+            z=dict(z)
+            later=[r for r in rows if r.get("start",0)>z.get("start",0)]
+            touched=any(float(r["low"])<=hi and float(r["high"])>=lo for r in later)
+            fully_filled=any(float(r["low"])<=lo and float(r["high"])>=hi for r in later)
+            z["mitigated"]=bool(touched)
+            z["fully_filled"]=bool(fully_filled)
             fvg.append(z)
         base["fvg"]=fvg
         return base
@@ -1571,11 +1658,12 @@ class MarketStream:
 
         ep=elliott.get("primary")
         if ep:
-            if ep.get("direction") in ("bullish","up"):
-                bull+=2
-            elif ep.get("direction") in ("bearish","down"):
-                bear+=2
-            evidence.append("elliott_"+ep["type"])
+            if not elliott.get("ambiguous",False):
+                if ep.get("direction") in ("bullish","up"):
+                    bull+=2
+                elif ep.get("direction") in ("bearish","down"):
+                    bear+=2
+            evidence.append("elliott_"+ep["type"]+("_ambiguous" if elliott.get("ambiguous",False) else ""))
 
         for p in harmonics.get("confirmed",[]):
             if p["direction"]=="bullish":
@@ -1686,7 +1774,7 @@ class MarketStream:
         ready=bool(technical.get("ready") and ctx.get("ready"))
         return {
             "ready":ready,
-            "engine_version":"scan_plus_v3_3",
+            "engine_version":"scan_plus_v3_4",
             "closed_candles":len(rows),
             "excluded_open_candles":max(0,len(raw_rows)-len(rows)),
             "last_confirmed_start":rows[-1].get("start") if rows else None,
@@ -3176,6 +3264,10 @@ class DynamicMarketManager:
             "rr_min_1_5":rr is not None and rr>=1.5,
             "execution_not_opposed":execution_dir in ("neutral",direction),
             "history_not_severely_dislocated":len(dislocated)<3,
+            "elliott_not_fully_ambiguous":not all(
+                analysis.get(tf,{}).get("elliott",{}).get("ambiguous",False)
+                for tf in ("240","60","15")
+            ),
         }
         all_required=all(required.values())
         status="SETUP" if all_required else "NO_SETUP"
@@ -3246,7 +3338,7 @@ class DynamicMarketManager:
         return {
             "symbol": symbol,
             "generated_at": time.time(),
-            "engine_version": "scan_plus_v3_3",
+            "engine_version": "scan_plus_v3_4",
             "linear": linear,
             "spot": spot,
             "driver": self._driver(linear, spot),
