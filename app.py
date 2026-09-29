@@ -142,6 +142,112 @@ def test_bybit_ws():
         "results": results
     })
 
+@app.get("/test-bybit-streams")
+def test_bybit_streams():
+    import websocket
+    import json
+    import time
+
+    endpoint = "wss://stream.bybit.com/v5/public/linear"
+
+    topics = [
+        "publicTrade.BTCUSDT",
+        "orderbook.50.BTCUSDT",
+        "tickers.BTCUSDT"
+    ]
+
+    ws = None
+
+    try:
+        started = time.time()
+
+        ws = websocket.create_connection(
+            endpoint,
+            timeout=10
+        )
+
+        ws.send(json.dumps({
+            "op": "subscribe",
+            "args": topics
+        }))
+
+        received = {
+            "publicTrade.BTCUSDT": False,
+            "orderbook.50.BTCUSDT": False,
+            "tickers.BTCUSDT": False
+        }
+
+        samples = {}
+
+        deadline = time.time() + 15
+
+        while time.time() < deadline and not all(received.values()):
+            raw = ws.recv()
+            data = json.loads(raw)
+
+            topic = data.get("topic")
+
+            if topic in received:
+                received[topic] = True
+
+                if topic == "publicTrade.BTCUSDT":
+                    trades = data.get("data", [])
+                    samples["trade_count"] = len(trades)
+
+                    if trades:
+                        samples["trade"] = {
+                            "price": trades[0].get("p"),
+                            "size": trades[0].get("v"),
+                            "side": trades[0].get("S")
+                        }
+
+                elif topic == "orderbook.50.BTCUSDT":
+                    book = data.get("data", {})
+
+                    bids = book.get("b", [])
+                    asks = book.get("a", [])
+
+                    samples["orderbook"] = {
+                        "bid_levels": len(bids),
+                        "ask_levels": len(asks),
+                        "best_bid": bids[0] if bids else None,
+                        "best_ask": asks[0] if asks else None
+                    }
+
+                elif topic == "tickers.BTCUSDT":
+                    ticker = data.get("data", {})
+
+                    samples["ticker"] = {
+                        "lastPrice": ticker.get("lastPrice"),
+                        "markPrice": ticker.get("markPrice"),
+                        "indexPrice": ticker.get("indexPrice"),
+                        "openInterest": ticker.get("openInterest"),
+                        "fundingRate": ticker.get("fundingRate")
+                    }
+
+        return jsonify({
+            "test": "Bybit Scan+ WS streams",
+            "connected": True,
+            "connect_ms": round((time.time() - started) * 1000),
+            "received": received,
+            "all_streams_work": all(received.values()),
+            "samples": samples
+        })
+
+    except Exception as e:
+        return jsonify({
+            "test": "Bybit Scan+ WS streams",
+            "connected": False,
+            "error": str(e)
+        })
+
+    finally:
+        if ws:
+            try:
+                ws.close()
+            except Exception:
+                pass
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
