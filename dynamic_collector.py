@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import threading
 import time
@@ -38,12 +39,12 @@ def fnum(value):
 # ONE MARKET STREAM
 # ============================================================
 
-BYBIT_REST_URLS = (
-    "https://api.bybit.com",
-    "https://api.bytick.com",
-)
 KLINE_INTERVALS = ("1", "5", "15", "60", "240", "D")
 KLINE_LIMIT = 500
+CANDLE_STORE_DIR = os.environ.get(
+    "CANDLE_STORE_DIR",
+    "/tmp/scalp-market-bridge/candles",
+)
 
 
 class MarketStream:
@@ -95,6 +96,12 @@ class MarketStream:
         self.history_bootstrapped = False
         self.history_error = None
         self.history_loaded_at = None
+        self.history_source = "websocket_cache"
+        self._cache_dirty = False
+        self._last_cache_save = 0.0
+
+        # Load candles previously collected from Bybit WebSocket.
+        self._load_candle_cache()
 
         # cumulative delta from current collector session
         self.cvd_session = 0.0
@@ -233,9 +240,6 @@ class MarketStream:
 
             self.cvd_session = 0.0
 
-        if not self.history_bootstrapped:
-            self._bootstrap_history()
-
         topics = [
             f"publicTrade.{self.symbol}",
             f"orderbook.50.{self.symbol}",
@@ -338,74 +342,84 @@ class MarketStream:
     # HISTORICAL KLINES / TECHNICAL ENGINE
     # ========================================================
 
-    def _bootstrap_history(self):
-        category = "linear" if self.market == "linear" else "spot"
+    def _cache_path(self):
+        safe_symbol = re.sub(r"[^A-Z0-9]", "", self.symbol)
+        safe_market = re.sub(r"[^a-z]", "", self.market.lower())
+        return os.path.join(
+            CANDLE_STORE_DIR,
+            f"{safe_symbol}_{safe_market}.json",
+        )
+
+    def _load_candle_cache(self):
+        path = self._cache_path()
         try:
+            if not os.path.exists(path):
+                return
+            with open(path, "r", encoding="utf-8") as fh:
+                payload = json.load(fh)
+            loaded = 0
             for interval in KLINE_INTERVALS:
-                rows = None
-                last_error = None
-                for base_url in BYBIT_REST_URLS:
+                rows = payload.get("candles", {}).get(interval, [])
+                clean = []
+                seen = set()
+                for row in rows[-KLINE_LIMIT:]:
                     try:
-                        from urllib.parse import urlencode
-                        from urllib.request import Request, urlopen
-                        import json as _json
-
-                        query = urlencode({
-                            "category": category,
-                            "symbol": self.symbol,
-                            "interval": interval,
-                            "limit": KLINE_LIMIT,
-                        })
-                        request = Request(
-                            f"{base_url}/v5/market/kline?{query}",
-                            headers={"User-Agent": "scalp-market-bridge/2.1"},
-                        )
-                        with urlopen(request, timeout=10) as response:
-                            payload = _json.loads(
-                                response.read().decode("utf-8")
-                            )
-                        if payload.get("retCode") != 0:
-                            raise RuntimeError(
-                                f"Bybit retCode={payload.get('retCode')} "
-                                f"retMsg={payload.get('retMsg')}"
-                            )
-                        rows = payload.get("result", {}).get("list", [])
-                        break
-                    except Exception as exc:
-                        last_error = str(exc)
-
-                if rows is None:
-                    raise RuntimeError(f"history {interval} unavailable: {last_error}")
-
-                normalized = []
-                for row in reversed(rows):
-                    try:
-                        start = int(row[0])
-                        normalized.append({
-                            "start": start,
-                            "end": self._candle_end_ms(start, interval),
-                            "open": float(row[1]),
-                            "high": float(row[2]),
-                            "low": float(row[3]),
-                            "close": float(row[4]),
-                            "volume": float(row[5]),
-                            "turnover": float(row[6]),
-                            "confirm": True,
-                        })
-                    except (IndexError, TypeError, ValueError):
+                        candle = {
+                            "start": int(row["start"]),
+                            "end": int(row["end"]),
+                            "open": float(row["open"]),
+                            "high": float(row["high"]),
+                            "low": float(row["low"]),
+                            "close": float(row["close"]),
+                            "volume": float(row["volume"]),
+                            "turnover": float(row.get("turnover", 0.0)),
+                            "confirm": bool(row.get("confirm", True)),
+                        }
+                    except (KeyError, TypeError, ValueError):
                         continue
-
-                with self.lock:
-                    self.candles[interval].clear()
-                    self.candles[interval].extend(normalized)
-
-            with self.lock:
+                    if candle["start"] in seen:
+                        continue
+                    if candle["low"] > candle["high"]:
+                        continue
+                    seen.add(candle["start"])
+                    clean.append(candle)
+                clean.sort(key=lambda c: c["start"])
+                self.candles[interval].extend(clean[-KLINE_LIMIT:])
+                loaded += len(clean)
+            if loaded:
                 self.history_bootstrapped = True
-                self.history_error = None
                 self.history_loaded_at = time.time()
+                self.history_error = None
         except Exception as exc:
-            with self.lock:
-                self.history_error = str(exc)
+            self.history_error = f"cache load: {type(exc).__name__}: {exc}"
+
+    def _save_candle_cache(self, force=False):
+        now = time.time()
+        if not force and (not self._cache_dirty or now - self._last_cache_save < 5.0):
+            return
+        path = self._cache_path()
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            payload = {
+                "version": 1,
+                "symbol": self.symbol,
+                "market": self.market,
+                "saved_at": now,
+                "source": "bybit_websocket",
+                "candles": {
+                    interval: list(rows)
+                    for interval, rows in self.candles.items()
+                },
+            }
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh, separators=(",", ":"))
+            os.replace(tmp, path)
+            self._cache_dirty = False
+            self._last_cache_save = now
+            self.history_error = None
+        except Exception as exc:
+            self.history_error = f"cache save: {type(exc).__name__}: {exc}"
 
     @staticmethod
     def _candle_end_ms(start_ms, interval):
@@ -527,27 +541,132 @@ class MarketStream:
             "vwap": rnd(self._vwap(rows)),
         }
 
+    @staticmethod
+    def _swing_points(rows, left=2, right=2):
+        highs, lows = [], []
+        if len(rows) < left + right + 1:
+            return highs, lows
+        for i in range(left, len(rows) - right):
+            cur = rows[i]
+            before = rows[i-left:i]
+            after = rows[i+1:i+right+1]
+            if all(cur["high"] > x["high"] for x in before + after):
+                highs.append({"index": i, "start": cur["start"], "price": cur["high"]})
+            if all(cur["low"] < x["low"] for x in before + after):
+                lows.append({"index": i, "start": cur["start"], "price": cur["low"]})
+        return highs, lows
+
+    def _structure_metrics(self, candles):
+        rows = list(candles)
+        highs, lows = self._swing_points(rows)
+        last_close = rows[-1]["close"] if rows else None
+        state = "insufficient_data"
+        bos = None
+        choch = None
+
+        if len(highs) >= 2 and len(lows) >= 2:
+            h1, h2 = highs[-2]["price"], highs[-1]["price"]
+            l1, l2 = lows[-2]["price"], lows[-1]["price"]
+            if h2 > h1 and l2 > l1:
+                state = "uptrend"
+            elif h2 < h1 and l2 < l1:
+                state = "downtrend"
+            else:
+                state = "range_or_transition"
+
+            if last_close is not None:
+                if last_close > highs[-1]["price"]:
+                    bos = "bullish"
+                elif last_close < lows[-1]["price"]:
+                    bos = "bearish"
+
+            if state == "uptrend" and bos == "bearish":
+                choch = "bearish"
+            elif state == "downtrend" and bos == "bullish":
+                choch = "bullish"
+
+        return {
+            "ready": len(rows) >= 20 and len(highs) >= 2 and len(lows) >= 2,
+            "state": state,
+            "bos": bos,
+            "choch": choch,
+            "last_swing_high": highs[-1] if highs else None,
+            "last_swing_low": lows[-1] if lows else None,
+            "swing_high_count": len(highs),
+            "swing_low_count": len(lows),
+        }
+
+    def _liquidity_metrics(self, candles):
+        rows = list(candles)
+        highs, lows = self._swing_points(rows)
+        atr = self._atr(rows)
+        tolerance = (atr * 0.15) if atr is not None else None
+
+        def nearest_equal(points):
+            if tolerance is None or len(points) < 2:
+                return None
+            for a, b in zip(reversed(points[:-1]), reversed(points[1:])):
+                if abs(a["price"] - b["price"]) <= tolerance:
+                    return {
+                        "price": round((a["price"] + b["price"]) / 2.0, 10),
+                        "first_start": a["start"],
+                        "second_start": b["start"],
+                        "distance": round(abs(a["price"] - b["price"]), 10),
+                    }
+            return None
+
+        eqh = nearest_equal(highs)
+        eql = nearest_equal(lows)
+        sweep = None
+        if len(rows) >= 2:
+            cur = rows[-1]
+            if eqh and cur["high"] > eqh["price"] and cur["close"] < eqh["price"]:
+                sweep = "buy_side_swept"
+            elif eql and cur["low"] < eql["price"] and cur["close"] > eql["price"]:
+                sweep = "sell_side_swept"
+
+        return {
+            "ready": len(rows) >= 20 and atr is not None,
+            "equal_highs": eqh,
+            "equal_lows": eql,
+            "sweep": sweep,
+            "tolerance": None if tolerance is None else round(tolerance, 10),
+        }
+
     def diagnostics(self):
         with self.lock:
             technical = {i: self._technical_metrics(c) for i, c in self.candles.items()}
+            structure = {i: self._structure_metrics(c) for i, c in self.candles.items()}
+            liquidity = {i: self._liquidity_metrics(c) for i, c in self.candles.items()}
             counts = {i: len(c) for i, c in self.candles.items()}
             checks = {
                 "connected": bool(self.connected),
-                "history_bootstrapped": bool(self.history_bootstrapped),
-                "history_6_of_6": all(counts.get(i, 0) >= 200 for i in KLINE_INTERVALS),
-                "technical_6_of_6": all(technical[i]["ready"] for i in KLINE_INTERVALS),
                 "orderbook_ready": bool(self.orderbook_ready),
+                "candles_receiving": any(v > 0 for v in counts.values()),
+                "technical_full_6_of_6": all(technical[i]["ready"] for i in KLINE_INTERVALS),
             }
             return {
                 "symbol": self.symbol,
                 "market": self.market,
                 "status": self.status,
                 "checks": checks,
-                "overall_pass": all(checks.values()),
-                "history_error": self.history_error,
-                "history_loaded_at": self.history_loaded_at,
+                "realtime_pass": (
+                    checks["connected"]
+                    and checks["orderbook_ready"]
+                    and checks["candles_receiving"]
+                ),
+                "full_technical_pass": checks["technical_full_6_of_6"],
+                "history": {
+                    "source": self.history_source,
+                    "cache_loaded": self.history_bootstrapped,
+                    "loaded_at": self.history_loaded_at,
+                    "error": self.history_error,
+                    "store_path": self._cache_path(),
+                },
                 "candle_counts": counts,
                 "technical": technical,
+                "structure": structure,
+                "liquidity": liquidity,
             }
 
     def _handle_message(self, message):
@@ -694,6 +813,10 @@ class MarketStream:
                     candles.append(
                         candle
                     )
+
+                self._cache_dirty = True
+
+            self._save_candle_cache()
 
     # ========================================================
     # TRADES / DELTA / CVD
@@ -1404,9 +1527,20 @@ class MarketStream:
                     ),
 
                 "history": {
-                    "bootstrapped": self.history_bootstrapped,
+                    "source": self.history_source,
+                    "cache_loaded": self.history_bootstrapped,
                     "error": self.history_error,
                     "loaded_at": self.history_loaded_at,
+                },
+
+                "structure": {
+                    interval: self._structure_metrics(candles)
+                    for interval, candles in self.candles.items()
+                },
+
+                "liquidity": {
+                    interval: self._liquidity_metrics(candles)
+                    for interval, candles in self.candles.items()
                 },
 
                 "technical": {
@@ -1613,6 +1747,28 @@ class DynamicMarketManager:
                     linear,
                     spot,
                 ),
+        }
+
+    def diagnostics(self, symbol):
+        symbol = self.activate(symbol)
+        with self.lock:
+            self.last_access[symbol] = time.time()
+            pair = self.streams[symbol]
+        linear = pair["linear"].diagnostics()
+        spot = pair["spot"].diagnostics()
+        return {
+            "symbol": symbol,
+            "generated_at": time.time(),
+            "linear": linear,
+            "spot": spot,
+            "overall": {
+                "realtime_pass": bool(
+                    linear["realtime_pass"] and spot["realtime_pass"]
+                ),
+                "full_technical_pass": bool(
+                    linear["full_technical_pass"] and spot["full_technical_pass"]
+                ),
+            },
         }
 
     # ========================================================
