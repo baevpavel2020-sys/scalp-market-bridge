@@ -754,7 +754,7 @@ class DynamicMarketManager:
 
     # -----------------------------------------------------
 
-        def _driver_analysis(
+            def _driver_analysis(
         self,
         linear,
         spot,
