@@ -2,7 +2,11 @@ import os
 import requests
 from flask import Flask, jsonify
 
+from collector import collector
+
 app = Flask(__name__)
+
+collector.start()
 
 BYBIT_URLS = [
     "https://api.bybit.com",
@@ -247,6 +251,10 @@ def test_bybit_streams():
                 ws.close()
             except Exception:
                 pass
+
+@app.get("/market/BTCUSDT")
+def market_btcusdt():
+    return jsonify(collector.get_snapshot())
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
