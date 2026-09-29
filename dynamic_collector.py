@@ -1001,6 +1001,274 @@ class MarketStream:
             "overlap": overlap,
         }
 
+
+    @staticmethod
+    def _safe_ratio(a, b):
+        return None if b is None or abs(b) < 1e-12 else abs(a / b)
+
+    def _fib_metrics(self, rows, structure):
+        points = structure.get("degrees", {}).get(
+            structure.get("working_degree", "intermediate"), {}
+        ).get("last_points", [])
+        if len(points) < 2:
+            return {"ready": False, "anchors": None, "retracements": {}, "extensions": {}, "clusters": []}
+        a, b = points[-2], points[-1]
+        p0, p1 = float(a["price"]), float(b["price"])
+        move = p1 - p0
+        if abs(move) < 1e-12:
+            return {"ready": False, "anchors": None, "retracements": {}, "extensions": {}, "clusters": []}
+        retr = {}
+        for r in (0.236, 0.382, 0.5, 0.618, 0.705, 0.786, 0.886):
+            retr[str(r)] = round(p1 - move * r, 10)
+        ext = {}
+        for r in (1.0, 1.272, 1.414, 1.618, 2.0, 2.618):
+            ext[str(r)] = round(p0 + move * r, 10)
+
+        # Cluster fib levels from the last few confirmed structural legs.
+        pts = structure.get("degrees", {}).get(
+            structure.get("working_degree", "intermediate"), {}
+        ).get("last_points", [])
+        levels = []
+        for x, y in zip(pts[-7:-1], pts[-6:]):
+            x0, y0 = float(x["price"]), float(y["price"])
+            d = y0 - x0
+            if abs(d) < 1e-12:
+                continue
+            for r in (0.382, 0.5, 0.618, 0.786, 1.272, 1.618):
+                price = y0 - d * r if r < 1 else x0 + d * r
+                levels.append((price, r))
+        atr = self._atr(rows)
+        tol = (atr * 0.15) if atr else abs(move) * 0.002
+        clusters = []
+        for price, ratio in sorted(levels):
+            if clusters and abs(price - clusters[-1]["price"]) <= tol:
+                c = clusters[-1]
+                c["levels"].append(ratio)
+                c["count"] += 1
+                c["price"] = round((c["price"] * (c["count"] - 1) + price) / c["count"], 10)
+            else:
+                clusters.append({"price": round(price, 10), "count": 1, "levels": [ratio]})
+        clusters = sorted((c for c in clusters if c["count"] >= 2), key=lambda c: (-c["count"], c["price"]))[:8]
+        return {
+            "ready": True,
+            "direction": "up" if move > 0 else "down",
+            "anchors": {"from": a, "to": b},
+            "retracements": retr,
+            "extensions": ext,
+            "clusters": clusters,
+        }
+
+    def _elliott_metrics(self, rows, structure):
+        degree = structure.get("working_degree", "intermediate")
+        pts = structure.get("degrees", {}).get(degree, {}).get("last_points", [])
+        candidates = []
+        # Rule-based candidates only; ambiguous markets deliberately keep alternatives.
+        for n in (6, 4):
+            if len(pts) < n:
+                continue
+            for end in range(len(pts), n - 1, -1):
+                seq = pts[end-n:end]
+                prices = [float(p["price"]) for p in seq]
+                kinds = [p["kind"] for p in seq]
+                alternating = all(kinds[i] != kinds[i-1] for i in range(1, len(kinds)))
+                if not alternating:
+                    continue
+                if n == 6:
+                    bullish = kinds[0] == "low"
+                    p0,p1,p2,p3,p4,p5 = prices
+                    if bullish:
+                        hard = p2 > p0 and p3 > p1 and p4 > p1 and p5 > p3
+                        lengths = [p1-p0, p3-p2, p5-p4]
+                    else:
+                        hard = p2 < p0 and p3 < p1 and p4 < p1 and p5 < p3
+                        lengths = [p0-p1, p2-p3, p4-p5]
+                    wave3_not_shortest = lengths[1] >= min(lengths[0], lengths[2]) if all(x > 0 for x in lengths) else False
+                    standard_no_overlap = (p4 > p1) if bullish else (p4 < p1)
+                    valid = hard and wave3_not_shortest
+                    if valid:
+                        score = 4 + int(standard_no_overlap)
+                        candidates.append({
+                            "type": "impulse_1_5",
+                            "direction": "bullish" if bullish else "bearish",
+                            "degree": degree,
+                            "score": score,
+                            "standard_impulse": bool(standard_no_overlap),
+                            "diagonal_overlap_possible": not standard_no_overlap,
+                            "rules": {
+                                "wave2_does_not_break_origin": True,
+                                "wave3_not_shortest": bool(wave3_not_shortest),
+                                "wave4_no_wave1_overlap": bool(standard_no_overlap),
+                            },
+                            "points": [
+                                {"wave": str(i), **seq[i]} for i in range(6)
+                            ],
+                            "invalidation": p0,
+                        })
+                else:
+                    # ABC candidate: A and C travel same direction, B retraces A.
+                    p0,pA,pB,pC = prices
+                    bullish_corr = pA < p0 and pB > pA and pC < pB
+                    bearish_corr = pA > p0 and pB < pA and pC > pB
+                    if bullish_corr or bearish_corr:
+                        a_len = abs(pA-p0); b_len = abs(pB-pA); c_len = abs(pC-pB)
+                        br = self._safe_ratio(b_len, a_len)
+                        cr = self._safe_ratio(c_len, a_len)
+                        candidates.append({
+                            "type": "abc",
+                            "direction": "down" if bullish_corr else "up",
+                            "degree": degree,
+                            "score": 2 + int(br is not None and 0.236 <= br <= 0.886) + int(cr is not None and 0.5 <= cr <= 1.618),
+                            "ratios": {"B/A": None if br is None else round(br,4), "C/A": None if cr is None else round(cr,4)},
+                            "points": [{"wave": w, **p} for w,p in zip(("0","A","B","C"),seq)],
+                            "invalidation": p0,
+                        })
+                if len(candidates) >= 8:
+                    break
+            if len(candidates) >= 8:
+                break
+        candidates.sort(key=lambda x: x["score"], reverse=True)
+        return {
+            "ready": len(pts) >= 4,
+            "method": "rule_based_candidates",
+            "primary": candidates[0] if candidates else None,
+            "alternatives": candidates[1:4],
+            "candidate_count": len(candidates),
+        }
+
+    def _harmonic_metrics(self, structure):
+        degree = structure.get("working_degree", "intermediate")
+        pts = structure.get("degrees", {}).get(degree, {}).get("last_points", [])
+        patterns = []
+        templates = {
+            "Gartley": ((0.55,0.70),(0.382,0.886),(1.13,1.70),(0.72,0.84)),
+            "Bat": ((0.35,0.55),(0.382,0.886),(1.50,2.70),(0.84,0.93)),
+            "Butterfly": ((0.72,0.84),(0.382,0.886),(1.50,2.70),(1.20,1.70)),
+            "Crab": ((0.35,0.70),(0.382,0.886),(2.20,3.70),(1.50,1.75)),
+            "Deep Crab": ((0.84,0.93),(0.382,0.886),(2.00,3.70),(1.50,1.75)),
+        }
+        if len(pts) < 5:
+            return {"ready": False, "patterns": []}
+        for seq in [pts[i:i+5] for i in range(max(0,len(pts)-10),len(pts)-4)]:
+            x,a,b,c,d=[float(p["price"]) for p in seq]
+            xa=a-x; ab=b-a; bc=c-b; cd=d-c
+            if min(abs(xa),abs(ab),abs(bc)) < 1e-12:
+                continue
+            vals=(abs(ab/xa),abs(bc/ab),abs(cd/bc),abs((d-x)/xa))
+            for name,ranges in templates.items():
+                passed=[lo <= v <= hi for v,(lo,hi) in zip(vals,ranges)]
+                if sum(passed) >= 3:
+                    patterns.append({
+                        "name":name,
+                        "direction":"bullish" if d < c else "bearish",
+                        "score":sum(passed),
+                        "ratios":{"AB_XA":round(vals[0],4),"BC_AB":round(vals[1],4),"CD_BC":round(vals[2],4),"XD_XA":round(vals[3],4)},
+                        "points":[{"point":n,**p} for n,p in zip("XABCD",seq)],
+                    })
+            # AB=CD is useful independently of XABCD families.
+            abcd=abs(cd/ab)
+            if 0.90 <= abcd <= 1.10 or 1.20 <= abcd <= 1.75:
+                patterns.append({
+                    "name":"AB=CD" if 0.90 <= abcd <= 1.10 else "Extended AB=CD",
+                    "direction":"bullish" if d < c else "bearish",
+                    "score":4,
+                    "ratios":{"CD_AB":round(abcd,4)},
+                    "points":[{"point":n,**p} for n,p in zip("XABCD",seq)],
+                })
+        patterns.sort(key=lambda p:p["score"], reverse=True)
+        return {"ready": True, "patterns": patterns[:6]}
+
+    def _divergence_metrics(self, rows, structure):
+        degree=structure.get("working_degree","intermediate")
+        pts=structure.get("degrees",{}).get(degree,{}).get("last_points",[])
+        closes=[r["close"] for r in rows]
+        index_by_start = {r["start"]: i for i, r in enumerate(rows)}
+        def rsi_at(point):
+            idx = index_by_start.get(point.get("start"))
+            if idx is None or idx < 15:
+                return None
+            return self._rsi(closes[:idx+1])
+        events=[]
+        for kind in ("high","low"):
+            pp=[p for p in pts if p["kind"]==kind]
+            if len(pp)<2: continue
+            a,b=pp[-2],pp[-1]
+            ra,rb=rsi_at(a),rsi_at(b)
+            if ra is None or rb is None: continue
+            if kind=="high":
+                if b["price"]>a["price"] and rb<ra: typ="regular_bearish"
+                elif b["price"]<a["price"] and rb>ra: typ="hidden_bearish"
+                else: typ=None
+            else:
+                if b["price"]<a["price"] and rb>ra: typ="regular_bullish"
+                elif b["price"]>a["price"] and rb<ra: typ="hidden_bullish"
+                else: typ=None
+            if typ:
+                events.append({"type":typ,"indicator":"RSI14","from":a,"to":b,"indicator_from":round(ra,4),"indicator_to":round(rb,4)})
+        return {"ready":len(pts)>=4,"events":events}
+
+    def _smart_money_metrics(self, rows, structure, liquidity):
+        if len(rows)<5:
+            return {"ready":False,"fvg":[],"order_blocks":[],"dealing_range":None}
+        fvg=[]
+        for i in range(max(2,len(rows)-80),len(rows)):
+            a,c=rows[i-2],rows[i]
+            if c["low"]>a["high"]:
+                fvg.append({"type":"bullish","from":a["high"],"to":c["low"],"start":c["start"]})
+            elif c["high"]<a["low"]:
+                fvg.append({"type":"bearish","from":c["high"],"to":a["low"],"start":c["start"]})
+        fvg=fvg[-8:]
+        degree=structure.get("working_degree","intermediate")
+        pts=structure.get("degrees",{}).get(degree,{}).get("last_points",[])
+        dealing=None
+        if len(pts)>=2:
+            lo=min(float(p["price"]) for p in pts[-6:])
+            hi=max(float(p["price"]) for p in pts[-6:])
+            mid=(lo+hi)/2
+            close=rows[-1]["close"]
+            dealing={"low":lo,"high":hi,"equilibrium":round(mid,10),"zone":"premium" if close>mid else "discount" if close<mid else "equilibrium"}
+        obs=[]
+        event=structure.get("last_event")
+        if event and event.get("type") in ("BOS","CHOCH"):
+            direction=event.get("direction")
+            for c in reversed(rows[-30:-1]):
+                bearish=c["close"]<c["open"]
+                bullish=c["close"]>c["open"]
+                if (direction=="bullish" and bearish) or (direction=="bearish" and bullish):
+                    obs.append({"direction":direction,"low":c["low"],"high":c["high"],"start":c["start"]})
+                    break
+        return {
+            "ready":True,
+            "fvg":fvg,
+            "order_blocks":obs,
+            "dealing_range":dealing,
+            "liquidity_event":liquidity.get("sweep"),
+            "structure_event":event,
+        }
+
+    def _analysis_bundle(self, candles):
+        rows=list(candles)
+        technical=self._technical_metrics(rows)
+        structure=self._structure_metrics(rows)
+        liquidity=self._liquidity_metrics(rows)
+        fib=self._fib_metrics(rows,structure)
+        elliott=self._elliott_metrics(rows,structure)
+        harmonics=self._harmonic_metrics(structure)
+        divergences=self._divergence_metrics(rows,structure)
+        smart_money=self._smart_money_metrics(rows,structure,liquidity)
+        ready=bool(technical.get("ready") and structure.get("ready"))
+        return {
+            "ready":ready,
+            "pipeline":["technical","structure","fibonacci","elliott","harmonics","divergences","liquidity","smart_money"],
+            "technical":technical,
+            "structure":structure,
+            "fibonacci":fib,
+            "elliott":elliott,
+            "harmonics":harmonics,
+            "divergences":divergences,
+            "liquidity":liquidity,
+            "smart_money":smart_money,
+        }
+
     def _liquidity_metrics(self, candles):
         rows = list(candles)
         highs, lows = self._swing_points(rows)
@@ -1040,9 +1308,10 @@ class MarketStream:
 
     def diagnostics(self):
         with self.lock:
-            technical = {i: self._technical_metrics(c) for i, c in self.candles.items()}
-            structure = {i: self._structure_metrics(c) for i, c in self.candles.items()}
-            liquidity = {i: self._liquidity_metrics(c) for i, c in self.candles.items()}
+            analysis = {i: self._analysis_bundle(c) for i, c in self.candles.items()}
+            technical = {i: analysis[i]["technical"] for i in KLINE_INTERVALS}
+            structure = {i: analysis[i]["structure"] for i in KLINE_INTERVALS}
+            liquidity = {i: analysis[i]["liquidity"] for i in KLINE_INTERVALS}
             counts = {i: len(c) for i, c in self.candles.items()}
             checks = {
                 "connected": bool(self.connected),
@@ -1077,6 +1346,8 @@ class MarketStream:
                 "technical": technical,
                 "structure": structure,
                 "liquidity": liquidity,
+                "analysis": analysis,
+                "analysis_full_6_of_6": all(analysis[i]["ready"] for i in KLINE_INTERVALS),
             }
 
     def _handle_message(self, message):
