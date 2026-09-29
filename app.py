@@ -519,6 +519,86 @@ def test_kline_batch():
 # START SERVER
 # ============================================================
 
+@app.get("/test-public-kline")
+def test_public_kline():
+    symbols = ("ENAUSDT", "BTCUSDT", "ETHUSDT")
+    today = datetime.now(timezone.utc).date()
+    results = {}
+
+    for symbol in symbols:
+        symbol_results = []
+        found = None
+
+        # Проверяем последние 7 завершённых дней:
+        # архив может публиковаться с задержкой.
+        for offset in range(1, 8):
+            day = (today - timedelta(days=offset)).isoformat()
+
+            url = (
+                f"https://public.bybit.com/kline/"
+                f"{symbol}/{day}/1min.csv.gz"
+            )
+
+            try:
+                with requests.get(
+                    url,
+                    stream=True,
+                    timeout=(8, 15),
+                    headers={
+                        "User-Agent": "Mozilla/5.0 scalp-market-bridge/1.0",
+                        "Accept": "*/*",
+                    },
+                ) as r:
+
+                    item = {
+                        "date": day,
+                        "http": r.status_code,
+                        "url": url,
+                        "content_type": r.headers.get("Content-Type"),
+                        "content_length": r.headers.get("Content-Length"),
+                    }
+
+                    if r.status_code == 200:
+                        first_bytes = b""
+
+                        for chunk in r.iter_content(chunk_size=128):
+                            if chunk:
+                                first_bytes = chunk[:32]
+                                break
+
+                        item["gzip_magic_ok"] = (
+                            first_bytes[:2] == b"\x1f\x8b"
+                        )
+
+                        found = item
+                        symbol_results.append(item)
+                        break
+
+                    symbol_results.append(item)
+
+            except requests.RequestException as exc:
+                symbol_results.append({
+                    "date": day,
+                    "url": url,
+                    "error": f"{type(exc).__name__}: {exc}",
+                })
+
+        results[symbol] = {
+            "pass": found is not None
+                    and found.get("http") == 200
+                    and found.get("gzip_magic_ok") is True,
+            "found": found,
+            "attempts": symbol_results,
+        }
+
+    return jsonify({
+        "test": "Bybit public Kline archive",
+        "all_pass": all(
+            item["pass"] for item in results.values()
+        ),
+        "results": results,
+    })
+
 if __name__ == "__main__":
 
     port = int(
