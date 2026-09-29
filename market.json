@@ -1,5 +1,25 @@
 {
-  "test": "CLOUDFLARE-TO-GITHUB-WORKS",
-  "version": 3,
-  "updated_at": "2026-09-29T09:38:01.226Z"
+  "ok": true,
+  "source": "Bybit",
+  "symbol": "BTCUSDT",
+  "generated_at": "2026-09-29T09:38:07.490Z",
+  "price": {
+    "best_bid": 83951.7,
+    "best_ask": 83951.8,
+    "mid": 83951.75,
+    "spread": 0.10000000000582077
+  },
+  "orderbook": {
+    "levels": 200,
+    "bid_qty": 64.30800000000004,
+    "ask_qty": 82.56500000000005,
+    "imbalance": -0.1243046713827593
+  },
+  "trades": {
+    "count": 1000,
+    "taker_buy_qty": 7.752000000000045,
+    "taker_sell_qty": 13.422999999999927,
+    "delta_qty": -5.670999999999882,
+    "taker_imbalance": -0.26781582054308806
+  }
 }
