@@ -80,7 +80,7 @@ class MarketStream:
         with self.lock:
             self.status = "stopping"
 
-    def _run_forever(self):
+    def_run_forever(self):
         backoff = 1
 
         while not self.stop_event.is_set():
