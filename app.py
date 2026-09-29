@@ -599,6 +599,70 @@ def test_public_kline():
         "results": results,
     })
 
+@app.get("/test-binance-seed")
+def test_binance_seed():
+    tests = {
+        "ENA_1d": (
+            "https://data.binance.vision/data/futures/um/monthly/"
+            "klines/ENAUSDT/1d/ENAUSDT-1d-2026-08.zip"
+        ),
+        "ENA_4h": (
+            "https://data.binance.vision/data/futures/um/monthly/"
+            "klines/ENAUSDT/4h/ENAUSDT-4h-2026-08.zip"
+        ),
+        "BTC_1d": (
+            "https://data.binance.vision/data/futures/um/monthly/"
+            "klines/BTCUSDT/1d/BTCUSDT-1d-2026-08.zip"
+        ),
+    }
+
+    results = {}
+
+    for name, url in tests.items():
+        try:
+            with requests.get(
+                url,
+                stream=True,
+                timeout=(8, 20),
+                headers={
+                    "User-Agent": "Mozilla/5.0 scalp-market-bridge/1.0",
+                    "Accept": "*/*",
+                },
+            ) as r:
+
+                first_bytes = b""
+
+                if r.status_code == 200:
+                    for chunk in r.iter_content(chunk_size=64):
+                        if chunk:
+                            first_bytes = chunk[:16]
+                            break
+
+                results[name] = {
+                    "pass": (
+                        r.status_code == 200
+                        and first_bytes[:2] == b"PK"
+                    ),
+                    "http": r.status_code,
+                    "content_type": r.headers.get("Content-Type"),
+                    "content_length": r.headers.get("Content-Length"),
+                    "zip_magic_ok": first_bytes[:2] == b"PK",
+                    "url": url,
+                }
+
+        except requests.RequestException as exc:
+            results[name] = {
+                "pass": False,
+                "error": f"{type(exc).__name__}: {exc}",
+                "url": url,
+            }
+
+    return jsonify({
+        "test": "Binance USD-M Futures historical Kline seed",
+        "all_pass": all(x["pass"] for x in results.values()),
+        "results": results,
+    })
+
 if __name__ == "__main__":
 
     port = int(
