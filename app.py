@@ -4,6 +4,7 @@ from flask import Flask, jsonify
 
 from collector import collector
 from spot_collector import spot_collector
+from dynamic_collector import dynamic_manager
 
 app = Flask(__name__)
 
@@ -261,6 +262,10 @@ def market_btcusdt():
 @app.get("/market/BTCUSDT/spot")
 def market_btcusdt_spot():
     return jsonify(spot_collector.get_snapshot())
+
+@app.get("/market/<symbol>")
+def market_dynamic(symbol):
+    return jsonify(dynamic_manager.snapshot(symbol))
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
