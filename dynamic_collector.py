@@ -1599,7 +1599,7 @@ class MarketStream:
         ready=bool(technical.get("ready") and ctx.get("ready"))
         return {
             "ready":ready,
-            "engine_version":"scan_plus_v3_1",
+            "engine_version":"scan_plus_v3_2",
             "pipeline":["technical","structure","fibonacci","elliott","harmonics","divergences","liquidity","smart_money","regime_levels","confluence"],
             "technical":technical,
             "structure":ctx["base"],
@@ -3025,7 +3025,7 @@ class DynamicMarketManager:
         return {
             "symbol": symbol,
             "generated_at": time.time(),
-            "engine_version": "scan_plus_v3_1",
+            "engine_version": "scan_plus_v3_2",
             "linear": linear,
             "spot": spot,
             "driver": self._driver(linear, spot),
@@ -3033,6 +3033,96 @@ class DynamicMarketManager:
                 "mtf": mtf,
                 "execution": execution,
                 "setup": setup,
+            },
+        }
+
+    def scan(self, symbol):
+        full=self.snapshot(symbol)
+        linear=full.get("linear",{})
+        analysis=linear.get("analysis",{})
+        sp=full.get("scan_plus",{})
+        mtf=sp.get("mtf",{})
+        execution=sp.get("execution",{})
+        setup=sp.get("setup",{})
+
+        tf_summary={}
+        for tf in ("D","240","60","15","5","1"):
+            a=analysis.get(tf,{})
+            ell=a.get("elliott",{})
+            harm=a.get("harmonics",{})
+            div=a.get("divergences",{})
+            reg=a.get("regime_levels",{})
+            smc=a.get("smart_money",{})
+            liq=a.get("liquidity",{})
+            tf_summary[tf]={
+                "ready":a.get("ready",False),
+                "structure":{
+                    "state":a.get("structure",{}).get("state"),
+                    "phase":a.get("structure",{}).get("phase"),
+                    "event":a.get("structure",{}).get("last_event"),
+                    "overlap":a.get("structure",{}).get("overlap"),
+                },
+                "elliott":{
+                    "primary":ell.get("primary"),
+                    "alternatives":ell.get("alternatives",[])[:2],
+                    "ambiguous":ell.get("ambiguous",False),
+                },
+                "fib_clusters":(a.get("fibonacci",{}).get("clusters") or [])[:5],
+                "harmonics":{
+                    "confirmed":harm.get("confirmed",[])[:3],
+                    "developing":harm.get("developing",[])[:2],
+                },
+                "divergences":{
+                    "consensus":div.get("consensus",{}),
+                    "events":div.get("events",[])[:5],
+                },
+                "levels":{
+                    "supports":reg.get("supports",[])[:4],
+                    "resistances":reg.get("resistances",[])[:4],
+                    "atr":reg.get("atr"),
+                    "atr_pct":reg.get("atr_pct"),
+                    "volatility_regime":reg.get("volatility_regime"),
+                },
+                "liquidity":{
+                    "sweep":liq.get("sweep"),
+                    "equal_highs":liq.get("equal_highs"),
+                    "equal_lows":liq.get("equal_lows"),
+                },
+                "smc":{
+                    "dealing_range":smc.get("dealing_range"),
+                    "fvg":smc.get("fvg",[])[:4],
+                    "order_blocks":smc.get("order_blocks",[])[:3],
+                },
+                "confluence":a.get("confluence",{}),
+            }
+
+        failed=[k for k,v in setup.get("required",{}).items() if not v]
+        return {
+            "symbol":full.get("symbol"),
+            "generated_at":full.get("generated_at"),
+            "engine_version":full.get("engine_version"),
+            "price":execution.get("price"),
+            "status":{
+                "linear_connected":linear.get("connected"),
+                "spot_connected":full.get("spot",{}).get("connected"),
+                "execution_ready":execution.get("ready"),
+                "historical_ready":all(analysis.get(tf,{}).get("ready",False) for tf in ("D","240","60","15","5")),
+            },
+            "mtf":mtf,
+            "timeframes":tf_summary,
+            "execution":{
+                "driver":execution.get("driver"),
+                "flow_divergences":execution.get("flow_divergences",[]),
+                "oi_context":execution.get("oi_context"),
+                "funding_rate":execution.get("funding_rate"),
+                "book_pressure":execution.get("book_pressure"),
+                "book_imbalance":execution.get("book_imbalance"),
+                "spread_bps":execution.get("spread_bps"),
+                "windows":execution.get("windows",{}),
+            },
+            "setup":{
+                **setup,
+                "failed_requirements":failed,
             },
         }
 
