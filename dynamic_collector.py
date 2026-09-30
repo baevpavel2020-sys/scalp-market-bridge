@@ -250,10 +250,9 @@ class MarketStream:
             self.session_started_at = time.time()
             self.last_message_at = time.time()
 
-            # New connection = new trustworthy session.
-            self.trades.clear()
-            self.oi_samples.clear()
-
+            # Preserve rolling trades/OI across reconnects. A transport reconnect must
+            # not erase still-fresh market evidence. _cleanup() expires it by timestamp.
+            # Only transport-local state is reset here.
             self.bids.clear()
             self.asks.clear()
 
@@ -334,12 +333,20 @@ class MarketStream:
                         or "subscription rejected"
                     )
 
+                    reason_l = str(reason).lower()
+                    # Only an explicit symbol/topic-not-supported rejection is an
+                    # authoritative capability result. Rate limits, server errors,
+                    # auth/transport glitches and generic rejects are transient.
+                    unsupported_tokens = (
+                        "symbol is invalid", "invalid symbol", "symbol not found",
+                        "does not exist", "not supported", "unsupported",
+                        "topic is invalid", "invalid topic", "unknown symbol",
+                    )
+                    explicitly_unsupported = any(t in reason_l for t in unsupported_tokens)
                     with self.lock:
-
-                        self.available = False
-                        self.status = "unavailable"
+                        self.available = False if explicitly_unsupported else None
+                        self.status = "unavailable" if explicitly_unsupported else "reconnecting"
                         self.last_error = reason
-
                     return
 
                 self._handle_message(message)
@@ -2227,7 +2234,7 @@ class MarketStream:
         legacy=self._confluence_engine_v2(technical,ctx,fib,elliott,harmonics,divergences,liquidity,smc)
         confluence={**legacy,"decision_authority":False,"deprecated_vote_model":True,"evidence_graph":evidence}
         ready=bool(technical.get("ready") and ctx.get("ready"))
-        return {"ready":ready,"engine_version":"scan_plus_v3_8_4","closed_candles":len(rows),
+        return {"ready":ready,"engine_version":"scan_plus_v3_8_5","closed_candles":len(rows),
                 "excluded_open_candles":max(0,len(raw_rows)-len(rows)),"last_confirmed_start":rows[-1].get("start") if rows else None,
                 "last_confirmed_close":rows[-1].get("close") if rows else None,
                 "pipeline":["technical","structure","fibonacci","elliott","harmonics","divergences","liquidity","smart_money","freshness","evidence_graph"],
@@ -2710,29 +2717,46 @@ class MarketStream:
     # FLOW METRICS
     # ========================================================
 
-    def _flow_window_ready(self, now_ms, duration):
-        """True only when the current rolling window has usable two-sided-time flow data.
+    def _flow_window_stats(self, now_ms, duration):
+        """Quality-aware rolling-flow readiness.
 
-        We require at least two valid trades with positive quantity and a non-zero
-        time span inside the requested window. This keeps low-liquidity symbols from
-        being marked warm merely because older trades exist in the retained deque.
+        Short and long windows use different minimum sample/coverage requirements so
+        the same 2-3 prints cannot make 1m, 5m, 15m and 1h all look independently warm.
+        Requirements are deliberately modest for illiquid symbols, but confidence is
+        proportional to sample size and temporal coverage.
         """
+        rules = {
+            WINDOWS["1m"]: (3, 10_000),
+            WINDOWS["5m"]: (4, 30_000),
+            WINDOWS["15m"]: (6, 60_000),
+            WINDOWS["1h"]: (8, 120_000),
+        }
+        min_count, min_coverage = rules.get(duration, (3, min(duration // 5, 60_000)))
         cutoff = now_ms - duration
-        count = 0
-        newest_ts = None
-        oldest_ts = None
-        total = 0.0
+        valid=[]
         for timestamp_ms, side, price, qty in reversed(self.trades):
             if timestamp_ms < cutoff:
                 break
             if side not in ("Buy", "Sell") or price is None or qty is None or qty <= 0:
                 continue
-            count += 1
-            total += qty
-            if newest_ts is None:
-                newest_ts = timestamp_ms
-            oldest_ts = timestamp_ms
-        return bool(count >= 2 and total > 0 and newest_ts is not None and oldest_ts is not None and newest_ts > oldest_ts)
+            valid.append((timestamp_ms, qty))
+        count=len(valid)
+        newest=valid[0][0] if valid else None
+        oldest=valid[-1][0] if valid else None
+        coverage=max(0, newest-oldest) if newest is not None and oldest is not None else 0
+        total=sum(q for _,q in valid)
+        ready=bool(count >= min_count and total > 0 and coverage >= min_coverage)
+        count_quality=min(1.0, count / max(min_count * 3.0, 1.0))
+        coverage_quality=min(1.0, coverage / max(min_coverage * 3.0, 1.0))
+        quality=(count_quality * coverage_quality) ** 0.5 if ready else 0.0
+        return {
+            "ready":ready,"trade_count":count,"coverage_ms":coverage,
+            "required_trade_count":min_count,"required_coverage_ms":min_coverage,
+            "quality":round(quality,4),
+        }
+
+    def _flow_window_ready(self, now_ms, duration):
+        return self._flow_window_stats(now_ms, duration)["ready"]
 
     def _flow_metrics(
         self,
@@ -2878,97 +2902,32 @@ class MarketStream:
     # OPEN INTEREST METRICS
     # ========================================================
 
-    def _oi_metrics(
-        self,
-        now_ms,
-    ):
-
+    def _oi_metrics(self, now_ms):
         if self.market != "linear":
             return None
-
-        current = fnum(
-            self.ticker.get(
-                "openInterest"
-            )
-        )
-
-        result = {
-            "current":
-                current,
-
-            "windows":
-                {},
-        }
-
-        for (
-            name,
-            duration,
-        ) in WINDOWS.items():
-
-            cutoff = (
-                now_ms
-                - duration
-            )
-
-            base = None
-
-            for (
-                timestamp_ms,
-                oi,
-            ) in self.oi_samples:
-
-                if timestamp_ms >= cutoff:
-
-                    base = oi
-                    break
-
-            change = None
-            change_pct = None
-
-            if (
-                current is not None
-                and base is not None
-            ):
-
-                change = (
-                    current
-                    - base
-                )
-
-                if base != 0:
-
-                    change_pct = (
-                        change
-                        / base
-                        * 100
-                    )
-
-            result[
-                "windows"
-            ][name] = {
-
-                "start":
-                    base,
-
-                "change": (
-                    round(
-                        change,
-                        8,
-                    )
-                    if change is not None
-                    else None
-                ),
-
-                "change_pct": (
-                    round(
-                        change_pct,
-                        6,
-                    )
-                    if change_pct is not None
-                    else None
-                ),
+        current=fnum(self.ticker.get("openInterest"))
+        result={"current":current,"windows":{}}
+        # OI needs temporal coverage too; a 20-second collector history must not be
+        # labelled as a 1h OI change.
+        min_cov={"1m":10_000,"5m":30_000,"15m":60_000,"1h":120_000}
+        samples=list(self.oi_samples)
+        for name,duration in WINDOWS.items():
+            cutoff=now_ms-duration
+            inside=[(ts,oi) for ts,oi in samples if ts>=cutoff]
+            base=inside[0][1] if inside else None
+            oldest_ts=inside[0][0] if inside else None
+            newest_ts=inside[-1][0] if inside else None
+            coverage=max(0,newest_ts-oldest_ts) if oldest_ts is not None and newest_ts is not None else 0
+            required=min_cov.get(name,30_000)
+            usable=bool(current is not None and base not in (None,0) and len(inside)>=2 and coverage>=required)
+            change=(current-base) if usable else None
+            change_pct=(change/base*100) if usable else None
+            result["windows"][name]={
+                "start":base,"change":round(change,8) if change is not None else None,
+                "change_pct":round(change_pct,6) if change_pct is not None else None,
+                "sample_count":len(inside),"coverage_ms":coverage,
+                "required_coverage_ms":required,"usable":usable,
             }
-
         return result
 
     # ========================================================
@@ -3180,10 +3139,11 @@ class MarketStream:
                 # A reconnect must not make already collected flow "cold".
                 # Warmth is based on actual trade-history coverage, not websocket session age.
                 "warmup": {
-                    # Warm means the CURRENT rolling window itself contains enough
-                    # usable trades to calculate flow. Historical coverage elsewhere
-                    # in self.trades must not make an empty/sparse current window warm.
                     name: self._flow_window_ready(now_ms, duration)
+                    for name, duration in WINDOWS.items()
+                },
+                "flow_quality": {
+                    name: self._flow_window_stats(now_ms, duration)
                     for name, duration in WINDOWS.items()
                 },
 
@@ -3513,7 +3473,10 @@ class DynamicMarketManager:
             sd=s.get("delta_ratio")
             pp=l.get("price_change_pct")
             sp=s.get("price_change_pct")
+            lq=(linear.get("flow_quality") or {}).get(w,{})
+            sq=(spot.get("flow_quality") or {}).get(w,{})
             warm=bool(linear.get("warmup",{}).get(w,False) and spot.get("warmup",{}).get(w,False))
+            sample_quality=min(float(lq.get("quality") or 0.0), float(sq.get("quality") or 0.0))
 
             driver="unknown"
             confidence=0.0
@@ -3531,6 +3494,13 @@ class DynamicMarketManager:
                     driver="mixed"
                     confidence=min(1.0,max(ap,as_)+0.35)
                     driver_votes["mixed"]+=confidence
+
+                # Sparse/short-lived samples must never report perfect confidence.
+                # Re-weight the vote that was just added by quality.
+                if driver in driver_votes:
+                    driver_votes[driver] -= confidence
+                    confidence *= sample_quality
+                    driver_votes[driver] += confidence
 
                 # Flow disagreement / non-confirmation.
                 if pd*sd < 0 and abs(pd-sd)>=0.18:
@@ -3563,6 +3533,11 @@ class DynamicMarketManager:
                 "spot_trade_count":s.get("trade_count",0),
                 "perp_flow_usable":bool(l.get("trade_count",0) >= 2 and pd is not None and pp is not None),
                 "spot_flow_usable":bool(s.get("trade_count",0) >= 2 and sd is not None and sp is not None),
+                "perp_flow_quality":lq,
+                "spot_flow_quality":sq,
+                "sample_quality":round(sample_quality,4),
+                "oi_usable":bool(o.get("usable")),
+                "oi_coverage_ms":o.get("coverage_ms"),
                 "driver":driver,
                 "driver_confidence":round(confidence,4),
             }
@@ -3571,7 +3546,11 @@ class DynamicMarketManager:
         ranked=sorted(driver_votes.items(),key=lambda kv:kv[1],reverse=True)
         overall_driver=ranked[0][0] if ranked and ranked[0][1]>0 else "unknown"
         total_votes=sum(driver_votes.values())
-        overall_conf=(ranked[0][1]/total_votes) if total_votes and ranked else 0.0
+        category_share=(ranked[0][1]/total_votes) if total_votes and ranked else 0.0
+        # Confidence is not category share: four nested windows are correlated.
+        # Cap it by the strongest quality-adjusted single-window evidence.
+        strongest=max((float(d.get("driver_confidence") or 0.0) for d in windows.values() if d.get("driver")==overall_driver), default=0.0)
+        overall_conf=min(category_share, strongest)
 
         imbalance=book.get("imbalance_50") if book.get("ready") else None
         pressure="neutral"
@@ -3585,7 +3564,7 @@ class DynamicMarketManager:
             ow=windows.get(w,{})
             ch=ow.get("oi_change_pct")
             pc=ow.get("perp_price_change_pct")
-            if ch is None or pc is None:
+            if not ow.get("oi_usable") or ch is None or pc is None:
                 continue
             if ch>0 and pc>0: oi_context="new_longs_or_trend_participation"
             elif ch>0 and pc<0: oi_context="new_shorts_or_bearish_participation"
@@ -3597,11 +3576,12 @@ class DynamicMarketManager:
         warmed_flow_windows=[
             w for w,data in windows.items()
             if data.get("linear_warm") and data.get("spot_warm")
-            and data.get("perp_delta_ratio") is not None
-            and data.get("spot_delta_ratio") is not None
+            and data.get("perp_flow_usable") and data.get("spot_flow_usable")
+            and float(data.get("sample_quality") or 0.0) > 0
         ]
         flow_ready=bool(warmed_flow_windows)
-        driver_ready=bool(overall_driver!="unknown" and overall_conf>=0.35)
+        best_quality=max((float(windows.get(w,{}).get("sample_quality") or 0.0) for w in warmed_flow_windows), default=0.0)
+        driver_ready=bool(overall_driver!="unknown" and overall_conf>=0.20 and best_quality>=0.20)
         trade_data_ready=bool(transport_ready and price is not None and flow_ready and driver_ready)
 
         return {
@@ -3926,12 +3906,14 @@ class DynamicMarketManager:
         mode="perp_only" if spot_available is False else "spot_perp"
         windows=base.get("windows",{})
         if mode=="perp_only":
-            warmed=[w for w,d in windows.items() if d.get("linear_warm") and d.get("perp_delta_ratio") is not None]
+            warmed=[w for w,d in windows.items() if d.get("linear_warm") and d.get("perp_flow_usable") and float(d.get("perp_flow_quality",{}).get("quality") or 0.0)>0]
             base["warmed_flow_windows"]=warmed
             base["flow_ready"]=bool(warmed)
             base["driver_ready"]=bool(warmed)
+            pq=max((float(windows[w].get("perp_flow_quality",{}).get("quality") or 0.0) for w in warmed), default=0.0)
             base["driver"]={"primary":"perp_only" if warmed else "unknown",
-                            "confidence":1.0 if warmed else 0.0,"votes":{"perp_only":1.0 if warmed else 0.0}}
+                            "confidence":round(pq,4),"votes":{"perp_only":round(pq,4)}}
+            base["driver_ready"]=bool(warmed and pq>=0.20)
             base["ready"]=bool(linear.get("connected") and (linear.get("orderbook") or {}).get("ready"))
             base["trade_data_ready"]=bool(base["ready"] and base.get("price") is not None and warmed)
             base["flow_divergences"]=[]
@@ -4180,8 +4162,11 @@ class DynamicMarketManager:
             state="DATA_BLOCK"; block_class="DATA_BLOCK"; retry=True
         elif hard_invalidations:
             state="INVALID"; block_class="MARKET_BLOCK"; retry=False
-        elif direction=="neutral":
+        elif direction=="neutral" or "direction_provisional" in market_reasons:
+            # A missed entry cannot be declared before the directional thesis exists.
             state="WAIT_DIRECTION"; block_class="MARKET_BLOCK"; retry=True
+        elif any(r in market_reasons for r in ("invalidation_missing","target_missing","price_order_invalid","rr_below_1_5","invalidation_from_htf","stop_too_many_atr","stop_pct_too_large","scale_mismatch")):
+            state="INVALID"; block_class="MARKET_BLOCK"; retry=False
         elif missed_entry:
             state="MISSED_ENTRY"; block_class="EXECUTION_BLOCK"; retry=True
         elif extreme_extension or setup_state=="pullback":
@@ -4212,9 +4197,12 @@ class DynamicMarketManager:
             "trade_scale":{"stop_pct":None if stop_pct is None else round(stop_pct,4),"target_pct":None if target_pct is None else round(target_pct,4),"stop_atr":None if stop_atr is None else round(stop_atr,3),"valid":scale_ok,"reason":scale_reason,"execution_atr":atr,"invalidation_timeframe":inv_tf},
             "scenario_coherence":{"direction":direction,"setup_timeframe":"5","trigger_timeframe":"1","invalidation_timeframe":inv_tf,"t1_timeframe":None if not target1 else target1[1],"rr_uses_t1":True,"stop_moved_for_rr":False},
             "smc_scenario":{"5m":smc5,"1m":smc1},"hard_invalidations":hard_invalidations,"block_class":block_class,"block_reasons":reasons,"retryable":retry,
-            "setup_state":setup_state,"trigger_state":trigger_state,"trade_style":mtf.get("trade_style"),
+            "setup_state":setup_state,"trigger_state":trigger_state,
+            "trigger_direction_aligned":bool(trigger_state=="aligned"),
+            "trigger_confirmed":trigger_ok,
+            "trade_style":mtf.get("trade_style"),
             "execution_regime":execution.get("execution_regime"),"dislocated_execution_timeframes":dislocated,
-            "required":{"direction_confirmed":direction!="neutral","transport_ready":bool(execution.get("ready")),"trade_data_ready":bool(execution.get("trade_data_ready")),"price_order_valid":order_ok,"rr_min_1_5":rr is not None and rr>=1.5,"trade_scale_valid":scale_ok,"setup_aligned":setup_state=="aligned","trigger_confirmed":trigger_ok,"flow_not_opposed":not flow_opposed,"execution_not_opposed":execution_ok,"no_upstream_hard_invalidation":not bool(hard_invalidations)}
+            "required":{"direction_confirmed":bool(direction!="neutral" and (mtf.get("direction") or {}).get("state")=="confirmed"),"transport_ready":bool(execution.get("ready")),"trade_data_ready":bool(execution.get("trade_data_ready")),"price_order_valid":order_ok,"rr_min_1_5":rr is not None and rr>=1.5,"trade_scale_valid":scale_ok,"setup_aligned":setup_state=="aligned","trigger_confirmed":trigger_ok,"flow_not_opposed":not flow_opposed,"execution_not_opposed":execution_ok,"no_upstream_hard_invalidation":not bool(hard_invalidations)}
         }
 
     def snapshot(
@@ -4253,7 +4241,7 @@ class DynamicMarketManager:
         return {
             "symbol": symbol,
             "generated_at": time.time(),
-            "engine_version": "scan_plus_v3_8_4",
+            "engine_version": "scan_plus_v3_8_5",
             "linear": linear,
             "spot": spot,
             "driver": self._driver(linear, spot),
@@ -4377,6 +4365,28 @@ class DynamicMarketManager:
                 "failed_requirements":failed,
             },
         }
+
+    def replay_no_lookahead(self, candles_by_tf, checkpoints=None):
+        """Deterministic prefix replay for regression tests.
+
+        Each checkpoint analyzes only candles whose start is <= that checkpoint and
+        only confirmed candles enter _analysis_bundle. This is intentionally a test
+        harness, not a trading signal endpoint.
+        """
+        checkpoints = list(checkpoints or [])
+        if not checkpoints:
+            starts=sorted({int(r.get("start")) for rows in candles_by_tf.values() for r in rows if r.get("start") is not None})
+            checkpoints=starts[-10:]
+        out=[]
+        # Use a bare MarketStream analysis object: analysis methods do not require WS.
+        analyzer=MarketStream.__new__(MarketStream)
+        for cp in checkpoints:
+            frame={}
+            for tf,rows in candles_by_tf.items():
+                prefix=[dict(r) for r in rows if int(r.get("start",0))<=int(cp)]
+                frame[tf]=analyzer._analysis_bundle(prefix) if prefix else {"ready":False}
+            out.append({"checkpoint":cp,"analysis":frame})
+        return out
 
     def diagnostics(self, symbol):
         symbol = self.activate(symbol)
