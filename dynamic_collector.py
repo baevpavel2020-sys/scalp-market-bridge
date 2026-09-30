@@ -4502,6 +4502,25 @@ class DynamicMarketManager:
             "required":{"direction_confirmed":bool(direction!="neutral" and (mtf.get("direction") or {}).get("state")=="confirmed"),"transport_ready":bool(execution.get("ready")),"trade_data_ready":bool(execution.get("trade_data_ready")),"price_order_valid":order_ok,"rr_min_1_5":rr is not None and rr>=1.5,"trade_scale_valid":scale_ok,"setup_aligned":setup_state=="aligned","trigger_confirmed":trigger_ok,"flow_not_opposed":not flow_opposed,"execution_not_opposed":execution_ok,"no_upstream_hard_invalidation":not bool(hard_invalidations)}
         }
 
+    def realtime_readiness(self, symbol):
+        """Probe only realtime execution/flow readiness; no full Scan+ decision pass."""
+        symbol = self.activate(symbol)
+        with self.lock:
+            self.last_access[symbol] = time.time()
+            pair = self.streams[symbol]
+        linear = pair["linear"].snapshot()
+        spot = pair["spot"].snapshot()
+        execution = self._execution_engine_v37(linear, spot)
+        return {
+            "symbol": symbol,
+            "ready": bool(execution.get("ready")),
+            "trade_data_ready": bool(execution.get("trade_data_ready")),
+            "flow_ready": bool(execution.get("flow_ready")),
+            "driver_ready": bool(execution.get("driver_ready")),
+            "execution_mode": execution.get("execution_mode"),
+            "warmed_flow_windows": execution.get("warmed_flow_windows") or [],
+        }
+
     def snapshot(
         self,
         symbol,
@@ -6856,10 +6875,11 @@ class ScanJobManager:
     occurred when several scans were executed inside one HTTP request.
     """
 
-    VERSION = "scan_job_manager_v3_warmup"
+    VERSION = "scan_job_manager_v3_1_adaptive_warmup"
     MAX_JOBS = 20
     JOB_TTL_SECONDS = 3600
     AUTO_WARMUP_SECONDS = max(30, min(90, int(os.environ.get("SCAN_AUTO_WARMUP_SECONDS", "40"))))
+    AUTO_WARMUP_MAX_SECONDS = max(AUTO_WARMUP_SECONDS, min(180, int(os.environ.get("SCAN_AUTO_WARMUP_MAX_SECONDS", "120"))))
     AUTO_WARMUP_POLL_SECONDS = max(1, min(10, int(os.environ.get("SCAN_AUTO_WARMUP_POLL_SECONDS", "2"))))
     _lock = threading.RLock()
     _jobs = {}
@@ -6969,20 +6989,54 @@ class ScanJobManager:
         if not activated:
             return [], activation_errors, 0.0
 
-        # All collectors are now alive concurrently.  The engine's shortest
-        # quality gate requires 30s flow coverage, so default warm-up is 40s.
-        # Poll only the clock/job state; do NOT call scan()/snapshot() here.
+        # Phase 1: mandatory simultaneous warm-up.
         warm_started = time.monotonic()
-        deadline = warm_started + cls.AUTO_WARMUP_SECONDS
+        minimum_deadline = warm_started + cls.AUTO_WARMUP_SECONDS
+        maximum_deadline = warm_started + cls.AUTO_WARMUP_MAX_SECONDS
         while True:
-            remaining = deadline - time.monotonic()
+            remaining = minimum_deadline - time.monotonic()
             if remaining <= 0:
                 break
             cls._progress(jid, done=0, total=len(activated), current_symbol=None,
                           stage="WARMING", warmup_remaining=remaining)
             time.sleep(min(cls.AUTO_WARMUP_POLL_SECONDS, remaining))
 
+        # Phase 2: after 40s, wait only if actual realtime data is still cold.
+        # This probe runs execution/flow readiness only — never MTF/trade analysis.
+        last_readiness = {}
+        while True:
+            ready_count = 0
+            cold = []
+            for symbol in activated:
+                try:
+                    rd = dynamic_manager.realtime_readiness(symbol)
+                except Exception as exc:
+                    rd = {"symbol":symbol, "trade_data_ready":False,
+                          "probe_error":f"{type(exc).__name__}:{exc}"}
+                last_readiness[symbol] = rd
+                if rd.get("trade_data_ready"):
+                    ready_count += 1
+                else:
+                    cold.append(symbol)
+
+            if ready_count == len(activated):
+                break
+            remaining = maximum_deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            cls._progress(jid, done=ready_count, total=len(activated),
+                          current_symbol=(cold[0] if len(cold)==1 else None),
+                          stage="WAITING_DATA_READY", warmup_remaining=remaining)
+            time.sleep(min(cls.AUTO_WARMUP_POLL_SECONDS, remaining))
+
         warm_elapsed = time.monotonic() - warm_started
+        cls._update_job(
+            jid,
+            warmup_readiness=last_readiness,
+            warmup_ready_count=sum(1 for x in last_readiness.values() if x.get("trade_data_ready")),
+            warmup_total_count=len(activated),
+            warmup_timed_out=bool(last_readiness and not all(x.get("trade_data_ready") for x in last_readiness.values())),
+        )
         cls._progress(jid, done=0, total=len(activated), current_symbol=None,
                       stage="FINAL_SCAN", warmup_remaining=0)
         return activated, activation_errors, warm_elapsed
@@ -7057,7 +7111,7 @@ class ScanJobManager:
                 errors = dict(activation_errors)
                 errors.update(scan_errors)
                 result = {
-                    "orchestrator_version": "scan_orchestrator_v2_warmup",
+                    "orchestrator_version": "scan_orchestrator_v2_1_adaptive_warmup",
                     "mode": "auto",
                     "prescan_used": True,
                     "prescan": {
@@ -7071,6 +7125,11 @@ class ScanJobManager:
                     "activated_symbols": activated,
                     "warmup_seconds": round(warm_elapsed, 2),
                     "warmup_target_seconds": cls.AUTO_WARMUP_SECONDS,
+                    "warmup_max_seconds": cls.AUTO_WARMUP_MAX_SECONDS,
+                    "warmup_readiness": dict((cls._jobs.get(jid) or {}).get("warmup_readiness") or {}),
+                    "warmup_ready_count": (cls._jobs.get(jid) or {}).get("warmup_ready_count"),
+                    "warmup_total_count": (cls._jobs.get(jid) or {}).get("warmup_total_count"),
+                    "warmup_timed_out": bool((cls._jobs.get(jid) or {}).get("warmup_timed_out")),
                     "scan_plus_count": len(results),
                     "scan_plus_results": results,
                     "errors": errors,
