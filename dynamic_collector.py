@@ -7,6 +7,7 @@ import os
 import re
 import urllib.error
 import urllib.request
+import urllib.parse
 import zipfile
 import threading
 import time
@@ -5490,3 +5491,261 @@ class BybitPreScanWSProbe:
 def run_bybit_prescan_ws_probe(symbols=None, timeout=12.0):
     """Public callable for the HTTP layer: return JSON-serialisable probe data."""
     return BybitPreScanWSProbe.run(symbols=symbols, timeout=timeout)
+
+
+# ============================================================
+# ON-DEMAND PRESCAN V1.1 -- BYBIT WS DISCOVERY + FRESH HISTORY
+# ============================================================
+
+class OnDemandPreScanService:
+    """Manual PreScan. No permanent universe collector and no Scan+ activation."""
+
+    VERSION = "prescan_v1_1_on_demand"
+    # Deliberately broad but static v1 universe. Invalid/delisted symbols are
+    # isolated by recursive WS batches and cannot poison the whole run.
+    DEFAULT_UNIVERSE = (
+        "BTCUSDT","ETHUSDT","SOLUSDT","XRPUSDT","DOGEUSDT","ADAUSDT","BNBUSDT","LINKUSDT","AVAXUSDT","SUIUSDT",
+        "ENAUSDT","TAOUSDT","AAVEUSDT","LTCUSDT","BCHUSDT","NEARUSDT","APTUSDT","ARBUSDT","OPUSDT","WIFUSDT",
+        "1000PEPEUSDT","1000SHIBUSDT","DOTUSDT","UNIUSDT","ATOMUSDT","ETCUSDT","FILUSDT","TRXUSDT","TONUSDT","ICPUSDT",
+        "INJUSDT","SEIUSDT","TIAUSDT","JUPUSDT","PYTHUSDT","RENDERUSDT","FETUSDT","RUNEUSDT","GALAUSDT","SANDUSDT",
+        "MANAUSDT","CRVUSDT","LDOUSDT","MKRUSDT","ONDOUSDT","PENDLEUSDT","STXUSDT","IMXUSDT","GRTUSDT","ALGOUSDT",
+        "HBARUSDT","VETUSDT","KASUSDT","ZECUSDT","XLMUSDT","EOSUSDT","FLOWUSDT","DYDXUSDT","SNXUSDT","COMPUSDT",
+        "SUSHIUSDT","APEUSDT","CHZUSDT","MINAUSDT","ORDIUSDT","WLDUSDT","ARKMUSDT","STRKUSDT","MATICUSDT","POLUSDT",
+        "NOTUSDT","JASMYUSDT","BONKUSDT","1000BONKUSDT","FLOKIUSDT","1000FLOKIUSDT","MEMEUSDT","PEOPLEUSDT","BLURUSDT","GMXUSDT",
+        "EIGENUSDT","ETHFIUSDT","WUSDT","ZROUSDT","ZKUSDT","AEROUSDT","BERAUSDT","HYPEUSDT","QNTUSDT","RVNUSDT",
+    )
+    TF_MAP = {"5": "5m", "15": "15m", "60": "1h"}
+    HISTORY_LIMIT = 120
+    TOP_BY_TURNOVER = 30
+    CACHE_TTL = 120.0
+    _cache_lock = threading.RLock()
+    _history_cache = {}
+
+    @staticmethod
+    def _clean_symbols(symbols):
+        out, seen = [], set()
+        for raw in symbols:
+            s = str(raw or "").upper().strip()
+            if SYMBOL_RE.match(s) and s not in seen:
+                seen.add(s); out.append(s)
+        return out
+
+    @classmethod
+    def _ticker_batch(cls, symbols, timeout=5.0):
+        if not symbols:
+            return {}, []
+        ws = None
+        rows, errors = {}, []
+        try:
+            ws = websocket.create_connection(WS_URLS["linear"], timeout=min(8.0, timeout + 2.0))
+            ws.settimeout(0.75)
+            ws.send(json.dumps({"op": "subscribe", "args": [f"tickers.{s}" for s in symbols]}))
+            deadline = time.time() + timeout
+            while time.time() < deadline and len(rows) < len(symbols):
+                try:
+                    raw = ws.recv()
+                except websocket.WebSocketTimeoutException:
+                    continue
+                if not raw:
+                    continue
+                try:
+                    msg = json.loads(raw)
+                except Exception:
+                    continue
+                if msg.get("op") == "subscribe" and msg.get("success") is False:
+                    errors.append(str(msg.get("ret_msg") or msg.get("retMsg") or "subscription_rejected"))
+                    break
+                topic = str(msg.get("topic") or "")
+                data = msg.get("data")
+                if topic.startswith("tickers.") and isinstance(data, dict):
+                    symbol = topic.rsplit(".", 1)[-1].upper()
+                    if symbol in symbols:
+                        current = rows.setdefault(symbol, {})
+                        current.update(data)
+                        current["_ts"] = msg.get("ts")
+        except Exception as exc:
+            errors.append(f"{type(exc).__name__}: {exc}")
+        finally:
+            if ws is not None:
+                try: ws.close()
+                except Exception: pass
+        return rows, errors
+
+    @classmethod
+    def _discover_tickers(cls, symbols, batch_size=15):
+        """Invalid symbols cannot reject the full universe: failed batches split."""
+        results, errors = {}, []
+
+        def collect(batch):
+            rows, errs = cls._ticker_batch(batch)
+            results.update(rows)
+            missing = [s for s in batch if s not in rows]
+            if missing and len(batch) > 1 and (errs or len(rows) == 0):
+                mid = len(batch) // 2
+                collect(batch[:mid]); collect(batch[mid:])
+            elif missing:
+                for s in missing:
+                    errors.append(f"{s}:no_ticker")
+            for e in errs:
+                errors.append(e)
+
+        for i in range(0, len(symbols), batch_size):
+            collect(symbols[i:i + batch_size])
+        return results, errors
+
+    @staticmethod
+    def _rest_candle(row):
+        if not isinstance(row, list) or len(row) < 8:
+            return None
+        try:
+            c = {"start": int(row[0]), "open": float(row[1]), "high": float(row[2]), "low": float(row[3]),
+                 "close": float(row[4]), "volume": float(row[5]), "end": int(row[6]), "turnover": float(row[7]),
+                 "confirm": True, "source": "binance_futures_rest"}
+        except (TypeError, ValueError):
+            return None
+        return c if c["low"] <= c["high"] and c["end"] < int(time.time() * 1000) else None
+
+    @classmethod
+    def _fetch_history(cls, symbol, interval):
+        key = (symbol, interval)
+        now = time.time()
+        with cls._cache_lock:
+            cached = cls._history_cache.get(key)
+            if cached and now - cached[0] <= cls.CACHE_TTL:
+                return [dict(x) for x in cached[1]], "memory_cache", None
+        tf = cls.TF_MAP[interval]
+        url = ("https://fapi.binance.com/fapi/v1/klines?" +
+               urllib.parse.urlencode({"symbol": symbol, "interval": tf, "limit": cls.HISTORY_LIMIT}))
+        req = urllib.request.Request(url, headers={"User-Agent": "scalp-market-bridge/1.0", "Accept": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=8) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            rows = [c for c in (cls._rest_candle(r) for r in payload) if c is not None]
+            rows.sort(key=lambda x: x["start"])
+            if len(rows) < PreScanEngine.MIN_CANDLES[interval]:
+                return rows, "binance_futures_rest", "insufficient_history"
+            # Freshness is a hard gate. Manual PreScan must never rank a symbol
+            # from a stale archive/cache as if it described the current market.
+            interval_ms = int(interval) * 60_000
+            max_age_ms = max(interval_ms * 2, 10 * 60_000)
+            latest_end = int(rows[-1].get("end") or 0)
+            if latest_end <= 0 or int(time.time() * 1000) - latest_end > max_age_ms:
+                return rows, "binance_futures_rest", "stale_history"
+            with cls._cache_lock:
+                cls._history_cache[key] = (now, rows)
+            return [dict(x) for x in rows], "binance_futures_rest", None
+        except urllib.error.HTTPError as exc:
+            return [], "binance_futures_rest", f"HTTP_{exc.code}"
+        except Exception as exc:
+            return [], "binance_futures_rest", f"{type(exc).__name__}:{exc}"
+
+    @staticmethod
+    def _structure(rows):
+        # Canonical Scan+ Structure implementation, without constructing a
+        # MarketStream (constructor would bootstrap six TFs and defeat PreScan).
+        adapter = object.__new__(MarketStream)
+        return MarketStream._structure_metrics(adapter, rows)
+
+    @classmethod
+    def _analyze_rows(cls, symbol, ticker, histories, sources):
+        frames = {}
+        for tf in ("5", "15", "60"):
+            rows = histories.get(tf, [])
+            if len(rows) < PreScanEngine.MIN_CANDLES[tf]:
+                return {"engine_version": cls.VERSION, "symbol": symbol, "status": "REJECT", "priority": 0.0,
+                        "eligible_for_scan_plus": False, "reasons": [f"history_unavailable:{tf}"], "history_sources": sources}
+            structure = cls._structure(rows)
+            frames[tf] = {"rows": rows, "structure": structure, "direction": PreScanEngine._direction(structure)}
+        if not all(frames[x]["structure"].get("ready") for x in frames):
+            return {"engine_version": cls.VERSION, "symbol": symbol, "status": "REJECT", "priority": 0.0,
+                    "eligible_for_scan_plus": False, "reasons": ["structure_not_ready"], "history_sources": sources}
+
+        d60, d15 = frames["60"]["direction"], frames["15"]["direction"]
+        aligned = d60 == d15 and d60 in ("bullish", "bearish")
+        direction = d60 if aligned else "neutral"
+        loc = PreScanEngine._location(frames["5"]["rows"], frames["5"]["structure"], direction)
+        a5, a15 = PreScanEngine._activity(frames["5"]["rows"]), PreScanEngine._activity(frames["15"]["rows"])
+        turnover = fnum(ticker.get("turnover24h")) or 0.0
+        oi_value = fnum(ticker.get("openInterestValue")) or 0.0
+        bid, ask = fnum(ticker.get("bid1Price")), fnum(ticker.get("ask1Price"))
+        mid = (bid + ask) / 2.0 if bid and ask and bid > 0 and ask > 0 else None
+        spread_bps = ((ask - bid) / mid * 10000.0) if mid and ask >= bid else None
+        market_quality = turnover > 0 and (spread_bps is None or spread_bps <= 25.0)
+
+        priority = 0.0
+        if aligned: priority += 45
+        if loc.get("favorable_phase"): priority += 15
+        if not loc.get("extended"): priority += 10
+        if a5.get("lifecycle") in ("awakening", "compression"): priority += 12
+        if a15.get("lifecycle") in ("awakening", "compression"): priority += 8
+        if oi_value > 0: priority += 5
+        if market_quality: priority += 5
+        priority = round(min(priority, 100.0), 2)
+
+        reasons = []
+        if not aligned: reasons.append("1h_15m_not_aligned")
+        if loc.get("extended"): reasons.append("price_extended_from_structure")
+        if not market_quality: reasons.append("market_quality_reject")
+        if not market_quality:
+            status = "REJECT"
+        elif not aligned or loc.get("extended"):
+            status = "COLD"
+        elif priority >= 80:
+            status = "HOT"
+        elif priority >= 60:
+            status = "WARMING"
+        else:
+            status = "COLD"
+        if not reasons: reasons.append("candidate_discovery_only")
+        return {
+            "engine_version": cls.VERSION, "symbol": symbol, "status": status,
+            "eligible_for_scan_plus": status in ("HOT", "WARMING"), "priority": priority,
+            "direction": {"aligned": aligned, "effective": direction, "1h": d60, "15m": d15},
+            "location_5m": loc, "activity": {"5m": a5, "15m": a15},
+            "market": {"last_price": fnum(ticker.get("lastPrice")), "turnover24h": turnover,
+                       "open_interest": fnum(ticker.get("openInterest")), "open_interest_value": oi_value,
+                       "funding_rate": fnum(ticker.get("fundingRate")), "spread_bps": None if spread_bps is None else round(spread_bps, 4)},
+            "history_sources": sources, "reasons": reasons,
+        }
+
+    @classmethod
+    def run(cls, universe=None, top_n=8, shortlist=30):
+        started = time.time()
+        symbols = cls._clean_symbols(universe or cls.DEFAULT_UNIVERSE)
+        shortlist = max(5, min(int(shortlist), cls.TOP_BY_TURNOVER, len(symbols)))
+        top_n = max(1, min(int(top_n), 20))
+        tickers, ws_errors = cls._discover_tickers(symbols)
+        ranked = sorted(tickers, key=lambda s: fnum(tickers[s].get("turnover24h")) or 0.0, reverse=True)[:shortlist]
+        history = {s: {} for s in ranked}; sources = {s: {} for s in ranked}; hist_errors = {}
+        jobs = []
+        with ThreadPoolExecutor(max_workers=min(12, max(1, len(ranked) * 3))) as pool:
+            for s in ranked:
+                for tf in ("5", "15", "60"):
+                    jobs.append((pool.submit(cls._fetch_history, s, tf), s, tf))
+            for future, s, tf in jobs:
+                try:
+                    rows, source, err = future.result()
+                except Exception as exc:
+                    rows, source, err = [], "history_worker", f"{type(exc).__name__}:{exc}"
+                history[s][tf] = rows; sources[s][tf] = source
+                if err: hist_errors[f"{s}:{tf}"] = err
+        candidates = [cls._analyze_rows(s, tickers[s], history[s], sources[s]) for s in ranked]
+        candidates.sort(key=lambda x: (PreScanEngine.STATUS_ORDER.get(x.get("status"), 0), x.get("priority", 0),
+                                       x.get("market", {}).get("turnover24h", 0)), reverse=True)
+        actionable = [x for x in candidates if x.get("eligible_for_scan_plus")][:top_n]
+        analyzable = [x for x in candidates if not any(str(r).startswith("history_unavailable:") for r in x.get("reasons", []))]
+        overall = "FAIL" if not tickers else ("PASS" if analyzable else "PARTIAL")
+        return {
+            "engine_version": cls.VERSION, "mode": "manual_on_demand", "status": overall,
+            "universe_size": len(symbols), "ws_ticker_count": len(tickers), "shortlist_size": len(ranked),
+            "top_n": top_n, "elapsed_ms": round((time.time() - started) * 1000.0, 2),
+            "candidates": candidates[:top_n], "scan_plus_candidates": [x["symbol"] for x in actionable],
+            "diagnostics": {"ws_errors": ws_errors[-20:], "history_errors": hist_errors,
+                            "history_error_count": len(hist_errors)},
+            "guardrails": {"runs_continuously": False, "uses_dynamic_manager": False, "activates_scan_plus": False,
+                           "trade_decision": False, "closed_history_only": True, "scan_plus_logic_unchanged": True},
+        }
+
+
+def run_prescan(universe=None, top_n=8, shortlist=30):
+    return OnDemandPreScanService.run(universe=universe, top_n=top_n, shortlist=shortlist)
