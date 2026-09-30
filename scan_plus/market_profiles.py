@@ -25,6 +25,21 @@ MARKET_PROFILES = {
 }
 
 INSTRUMENT_PROFILES = {
+    "NVDA": {
+        "market": "stocks", "group": "tech_equity", "product": "bybit_tokenized_stock",
+        "prescan": ["underlying_volume", "gaps", "session", "volatility", "levels"],
+        "scan": ["gaps", "fibonacci", "structure_mtf", "underlying_volume", "session_liquidity", "elliott", "harmonics"],
+    },
+    "AAPL": {"market":"stocks","group":"tech_equity","product":"bybit_tokenized_stock"},
+    "MSFT": {"market":"stocks","group":"tech_equity","product":"bybit_tokenized_stock"},
+    "EURUSD": {
+        "market":"forex","group":"major_fx","product":"spot_fx",
+        "prescan":["active_session","volatility","session_high_low","structure","relative_strength"],
+        "scan":["structure_mtf","elliott","session_liquidity","fibonacci","relative_strength","harmonics"],
+    },
+    "GBPUSD": {"market":"forex","group":"major_fx","product":"spot_fx"},
+    "USDJPY": {"market":"forex","group":"major_fx","product":"spot_fx"},
+
     "XAUUSD": {
         "market": "commodities", "group": "metals",
         "prescan": ["volatility", "active_session", "session_high_low", "structure", "liquidity"],
