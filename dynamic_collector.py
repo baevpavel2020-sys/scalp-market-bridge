@@ -5500,7 +5500,7 @@ def run_bybit_prescan_ws_probe(symbols=None, timeout=12.0):
 class OnDemandPreScanService:
     """Manual PreScan. No permanent universe collector and no Scan+ activation."""
 
-    VERSION = "prescan_v1_6_final"
+    VERSION = "prescan_v1_8_audited_final"
     # Deliberately broad but static v1 universe. Invalid/delisted symbols are
     # isolated by recursive WS batches and cannot poison the whole run.
     DEFAULT_UNIVERSE = (
@@ -5660,39 +5660,198 @@ class OnDemandPreScanService:
             return None
         return c if c["low"] <= c["high"] and c["end"] < int(time.time() * 1000) else None
 
+    @staticmethod
+    def _tv_frame(method, params):
+        payload = json.dumps({"m": method, "p": params}, separators=(",", ":"))
+        return f"~m~{len(payload.encode('utf-8'))}~m~{payload}"
+
+    @staticmethod
+    def _tv_payloads(raw):
+        """Parse concatenated TradingView ~m~ frames without trusting packet boundaries."""
+        if not isinstance(raw, str):
+            return []
+        out = []
+        pos = 0
+        marker = "~m~"
+        while True:
+            start = raw.find(marker, pos)
+            if start < 0:
+                break
+            len_start = start + len(marker)
+            len_end = raw.find(marker, len_start)
+            if len_end < 0:
+                break
+            try:
+                size = int(raw[len_start:len_end])
+            except ValueError:
+                pos = len_end + len(marker)
+                continue
+            payload_start = len_end + len(marker)
+            # Protocol length is UTF-8 bytes. Messages used here are ASCII JSON/heartbeat,
+            # so character slicing is equivalent; reject truncated frames defensively.
+            payload = raw[payload_start:payload_start + size]
+            if len(payload.encode("utf-8")) != size:
+                break
+            out.append(payload)
+            pos = payload_start + len(payload)
+        return out
+
     @classmethod
-    def _fetch_history(cls, symbol, interval):
-        key = (symbol, interval)
-        now = time.time()
-        with cls._cache_lock:
-            cached = cls._history_cache.get(key)
-            if cached and now - cached[0] <= cls.CACHE_TTL:
-                return [dict(x) for x in cached[1]], "memory_cache", None
-        tf = cls.TF_MAP[interval]
-        url = ("https://fapi.binance.com/fapi/v1/klines?" +
-               urllib.parse.urlencode({"symbol": symbol, "interval": tf, "limit": cls.HISTORY_LIMIT}))
-        req = urllib.request.Request(url, headers={"User-Agent": "scalp-market-bridge/1.0", "Accept": "application/json"})
+    def _tv_history_bundle(cls, symbol, timeout=6.0):
+        """Fetch 5m/15m/1h Bybit perpetual history through TradingView WebSocket.
+
+        One symbol = one short-lived socket and three series. No exchange REST is used.
+        Only fully closed bars are returned.
+        """
+        intervals = {"5": "5", "15": "15", "60": "60"}
+        series_ids = {"5": "sds_5", "15": "sds_15", "60": "sds_60"}
+        rows = {tf: [] for tf in intervals}
+        errors = {}
+        ws = None
+        now_ms = int(time.time() * 1000)
+        cs = "cs_" + uuid.uuid4().hex[:12]
+        tv_symbol = f"BYBIT:{symbol}.P"
+
+        total_deadline = time.monotonic() + timeout
         try:
-            with urllib.request.urlopen(req, timeout=4) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-            rows = [c for c in (cls._rest_candle(r) for r in payload) if c is not None]
-            rows.sort(key=lambda x: x["start"])
-            if len(rows) < PreScanEngine.MIN_CANDLES[interval]:
-                return rows, "binance_futures_rest", "insufficient_history"
-            # Freshness is a hard gate. Manual PreScan must never rank a symbol
-            # from a stale archive/cache as if it described the current market.
-            interval_ms = int(interval) * 60_000
-            max_age_ms = max(interval_ms * 2, 10 * 60_000)
-            latest_end = int(rows[-1].get("end") or 0)
-            if latest_end <= 0 or int(time.time() * 1000) - latest_end > max_age_ms:
-                return rows, "binance_futures_rest", "stale_history"
-            with cls._cache_lock:
-                cls._history_cache[key] = (now, rows)
-            return [dict(x) for x in rows], "binance_futures_rest", None
-        except urllib.error.HTTPError as exc:
-            return [], "binance_futures_rest", f"HTTP_{exc.code}"
+            ws = websocket.create_connection(
+                "wss://data.tradingview.com/socket.io/websocket",
+                timeout=min(3.0, timeout),
+                origin="https://data.tradingview.com",
+                header=["User-Agent: Mozilla/5.0"],
+            )
+            ws.settimeout(0.50)
+
+            def send(method, params):
+                ws.send(cls._tv_frame(method, params))
+
+            send("set_auth_token", ["unauthorized_user_token"])
+            send("chart_create_session", [cs, ""])
+            descriptor = "=" + json.dumps(
+                {"symbol": tv_symbol, "adjustment": "splits", "session": "regular"},
+                separators=(",", ":"),
+            )
+            send("resolve_symbol", [cs, "prescan_sym", descriptor])
+            for tf, tv_tf in intervals.items():
+                sid = series_ids[tf]
+                send("create_series", [cs, sid, f"ser_{tf}", "prescan_sym", tv_tf, cls.HISTORY_LIMIT])
+
+            completed = set()
+            deadline = total_deadline
+            while time.monotonic() < deadline and len(completed) < len(series_ids):
+                try:
+                    raw = ws.recv()
+                except websocket.WebSocketTimeoutException:
+                    continue
+                if not raw:
+                    continue
+                for payload in cls._tv_payloads(raw):
+                    if payload.startswith("~h~"):
+                        # Heartbeat must be echoed with the same TradingView framing.
+                        ws.send(f"~m~{len(payload)}~m~{payload}")
+                        continue
+                    try:
+                        msg = json.loads(payload)
+                    except Exception:
+                        continue
+                    method = msg.get("m")
+                    params = msg.get("p") or []
+
+                    if method in ("symbol_error", "series_error"):
+                        detail = ":".join(str(x) for x in params[-2:])
+                        for tf in intervals:
+                            errors.setdefault(tf, f"{method}:{detail}")
+                        if method == "symbol_error":
+                            return rows, errors
+                        continue
+
+                    if method in ("du", "timescale_update") and len(params) > 1 and isinstance(params[1], dict):
+                        series_map = params[1]
+                        for tf, sid in series_ids.items():
+                            node = series_map.get(sid)
+                            if not isinstance(node, dict):
+                                continue
+                            items = node.get("s")
+                            if not isinstance(items, list):
+                                continue
+                            parsed = {}
+                            interval_ms = int(tf) * 60_000
+                            for item in items:
+                                vals = item.get("v") if isinstance(item, dict) else None
+                                if not isinstance(vals, list) or len(vals) < 5:
+                                    continue
+                                try:
+                                    start_ms = int(float(vals[0]) * 1000)
+                                    candle = {
+                                        "start": start_ms,
+                                        "end": start_ms + interval_ms - 1,
+                                        "open": float(vals[1]),
+                                        "high": float(vals[2]),
+                                        "low": float(vals[3]),
+                                        "close": float(vals[4]),
+                                        "volume": float(vals[5]) if len(vals) > 5 and vals[5] is not None else 0.0,
+                                        "turnover": 0.0,
+                                        "confirm": True,
+                                        "source": "tradingview_ws_bybit",
+                                    }
+                                except (TypeError, ValueError, OverflowError):
+                                    continue
+                                if (all(math.isfinite(candle[k]) for k in ("open","high","low","close","volume"))
+                                        and candle["low"] <= candle["high"]
+                                        and candle["end"] < now_ms):
+                                    parsed[start_ms] = candle
+                            if parsed:
+                                rows[tf] = [parsed[k] for k in sorted(parsed)][-cls.HISTORY_LIMIT:]
+
+                    if method == "series_completed" and len(params) >= 2:
+                        sid = str(params[1])
+                        for tf, expected_sid in series_ids.items():
+                            if sid == expected_sid:
+                                completed.add(tf)
+
+            for tf in intervals:
+                if len(rows[tf]) < PreScanEngine.MIN_CANDLES[tf]:
+                    errors.setdefault(tf, "insufficient_history")
+                    continue
+                interval_ms = int(tf) * 60_000
+                latest_end = int(rows[tf][-1]["end"])
+                # Two bars tolerance handles source propagation delay but rejects stale history.
+                if now_ms - latest_end > interval_ms * 2 + 60_000:
+                    errors.setdefault(tf, "stale_history")
+            return rows, errors
         except Exception as exc:
-            return [], "binance_futures_rest", f"{type(exc).__name__}:{exc}"
+            err = f"{type(exc).__name__}:{exc}"
+            return rows, {tf: err for tf in intervals}
+        finally:
+            if ws is not None:
+                try:
+                    ws.close()
+                except Exception:
+                    pass
+
+    @classmethod
+    def _fetch_history_bundle(cls, symbol):
+        now = time.time()
+        cached_rows = {}
+        complete_cache = True
+        with cls._cache_lock:
+            for tf in ("5", "15", "60"):
+                cached = cls._history_cache.get((symbol, tf))
+                if cached and now - cached[0] <= cls.CACHE_TTL:
+                    cached_rows[tf] = [dict(x) for x in cached[1]]
+                else:
+                    complete_cache = False
+        if complete_cache:
+            return cached_rows, {tf: "memory_cache" for tf in ("5","15","60")}, {}
+
+        bundle, errors = cls._tv_history_bundle(symbol)
+        sources = {tf: "tradingview_ws_bybit" for tf in ("5","15","60")}
+        with cls._cache_lock:
+            for tf, rows in bundle.items():
+                if rows and tf not in errors:
+                    cls._history_cache[(symbol, tf)] = (now, [dict(x) for x in rows])
+        return bundle, sources, errors
+
 
     @staticmethod
     def _structure(rows):
@@ -5791,7 +5950,7 @@ class OnDemandPreScanService:
                                 "analysis_errors": {}, "analysis_error_count": 0},
                 "guardrails": {"runs_continuously": False, "uses_dynamic_manager": False,
                                "activates_scan_plus": False, "trade_decision": False,
-                               "closed_history_only": True, "scan_plus_logic_unchanged": True},
+                               "closed_history_only": True, "exchange_rest_used": False, "scan_plus_logic_unchanged": True},
             })
 
         shortlist = max(1, min(int(shortlist), cls.TOP_BY_TURNOVER, len(symbols)))
@@ -5806,36 +5965,39 @@ class OnDemandPreScanService:
         sources = {s: {} for s in ranked}
         hist_errors = {}
 
-        # Keep the whole history stage safely below Gunicorn's common 30 s timeout.
-        # 18 workers x 4 s per HTTP request gives bounded waves; global budget is 14 s.
+        # One short-lived history WS per symbol; each socket requests all 3 TFs.
+        # Bounded pool avoids connection storms and keeps endpoint latency controlled.
         executor = None
         future_meta = {}
         try:
             if ranked:
-                executor = ThreadPoolExecutor(max_workers=min(18, max(1, len(ranked) * 3)))
+                executor = ThreadPoolExecutor(max_workers=min(10, len(ranked)))
                 for s in ranked:
-                    for tf in ("5", "15", "60"):
-                        future = executor.submit(cls._fetch_history, s, tf)
-                        future_meta[future] = (s, tf)
+                    future = executor.submit(cls._fetch_history_bundle, s)
+                    future_meta[future] = s
 
-                done, pending = wait(list(future_meta), timeout=14.0)
+                done, pending = wait(list(future_meta), timeout=18.0)
                 for future in done:
-                    s, tf = future_meta[future]
+                    s = future_meta[future]
                     try:
-                        rows, source, err = future.result()
+                        bundle, bundle_sources, bundle_errors = future.result()
                     except Exception as exc:
-                        rows, source, err = [], "history_worker", f"{type(exc).__name__}:{exc}"
-                    history[s][tf] = rows
-                    sources[s][tf] = source
-                    if err:
-                        hist_errors[f"{s}:{tf}"] = err
+                        bundle, bundle_sources = {}, {}
+                        bundle_errors = {tf: f"{type(exc).__name__}:{exc}" for tf in ("5","15","60")}
+                    for tf in ("5","15","60"):
+                        history[s][tf] = list(bundle.get(tf) or [])
+                        sources[s][tf] = bundle_sources.get(tf, "tradingview_ws_bybit")
+                        err = bundle_errors.get(tf)
+                        if err:
+                            hist_errors[f"{s}:{tf}"] = err
 
                 for future in pending:
-                    s, tf = future_meta[future]
+                    s = future_meta[future]
                     future.cancel()
-                    history[s][tf] = []
-                    sources[s][tf] = "history_timeout"
-                    hist_errors[f"{s}:{tf}"] = "global_history_timeout"
+                    for tf in ("5","15","60"):
+                        history[s][tf] = []
+                        sources[s][tf] = "history_timeout"
+                        hist_errors[f"{s}:{tf}"] = "global_history_timeout"
         finally:
             if executor is not None:
                 executor.shutdown(wait=False, cancel_futures=True)
@@ -5894,7 +6056,7 @@ class OnDemandPreScanService:
             "guardrails": {
                 "runs_continuously": False, "uses_dynamic_manager": False,
                 "activates_scan_plus": False, "trade_decision": False,
-                "closed_history_only": True, "scan_plus_logic_unchanged": True,
+                "closed_history_only": True, "exchange_rest_used": False, "scan_plus_logic_unchanged": True,
             },
         }
         return cls._json_safe(result)
