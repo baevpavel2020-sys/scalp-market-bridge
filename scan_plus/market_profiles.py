@@ -19,7 +19,7 @@ MARKET_PROFILES = {
         "scan": ["structure_mtf", "elliott", "fibonacci", "session_liquidity", "harmonics", "indicators"],
     },
     "commodities": {
-        "prescan": ["volatility", "active_session", "structure", "liquidity", "relative_strength"],
+        "prescan": ["volatility", "structure", "liquidity"],
         "scan": ["structure_mtf", "liquidity", "fibonacci", "elliott", "volume", "harmonics"],
     },
 }
