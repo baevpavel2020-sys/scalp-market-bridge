@@ -9,6 +9,10 @@ class CoreApiTests(unittest.TestCase):
         out=engine.analyze_profiled([],["structure_mtf","not_a_real_block"])
         self.assertEqual(set(out),{"structure"})
 
+    def test_empty_profile_selection_does_not_run_optional_blocks(self):
+        out=AnalyticalEngine(LegacyCryptoBackend()).analyze_profiled([],["gaps"])
+        self.assertEqual(set(out),{"structure"})
+
     def test_profile_does_not_mutate_global_configuration(self):
         first=resolve_priorities("stocks","NVDA","gap")
         first["profile"]["scan"].append("corrupted")
