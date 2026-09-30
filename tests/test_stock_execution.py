@@ -40,7 +40,7 @@ class StockExecutionTests(unittest.TestCase):
             candidate=self.candidate(),frames={"15m":{"analysis":{
                 "structure":{"last_swing_low":{"price":101}},
                 "fibonacci":{"extensions":{"1.618":106}}
-            }}},price=100,equity=10000)
+            }}},price=100,equity=10000,risk_fraction=.01)
         self.assertEqual(out["status"],"WAIT")
 
 
