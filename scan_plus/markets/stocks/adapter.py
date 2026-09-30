@@ -8,6 +8,7 @@ from scan_plus.core.sessions import active_sessions
 from scan_plus.core.gaps import gap_from_previous
 from scan_plus.core.session_levels import session_high_low
 from scan_plus.markets.stocks.bybit_xstocks import BybitXStocksLoader
+from scan_plus.markets.stocks.session_gap import classify_gap, gap_fill_progress
 
 
 class StocksMarketAdapter(MarketAdapter):
@@ -45,13 +46,15 @@ class StocksMarketAdapter(MarketAdapter):
         symbol = str(symbol).upper()
         ticker = self.loader.ticker(symbol)
         underlying = self._underlying(symbol)
+        gap = self._gap_context(underlying)
         return {
             "market": self.market, "symbol": symbol, "status": "OK",
             "profile": self.profile(symbol),
             "product": ticker["product"], "token_symbol": ticker["symbol"],
             "last_price": ticker["last_price"], "volume_24h": ticker["volume_24h"],
             "underlying": underlying,
-            "gap": self._gap_context(underlying),
+            "gap": gap,
+            "gap_classification": classify_gap(gap),
             "underlying_sessions": active_sessions("stocks_us"),
         }
 
@@ -71,10 +74,20 @@ class StocksMarketAdapter(MarketAdapter):
                 )
             frames[label] = frame
         ticker = self.loader.ticker(symbol)
+        gap = self._gap_context(underlying)
+        fill = None
+        if underlying and gap.get("ready"):
+            fill = gap_fill_progress(
+                underlying.get("session_open"),
+                underlying.get("previous_close"),
+                ticker.get("last_price"),
+            )
         return {
             "market": self.market, "symbol": symbol, "status": "OK",
             "profile": profile, "ticker": ticker, "underlying": underlying,
-            "gap": self._gap_context(underlying),
+            "gap": gap,
+            "gap_classification": classify_gap(gap),
+            "gap_fill": fill,
             "underlying_sessions": active_sessions("stocks_us"),
             "priority": resolve_priorities("stocks", symbol, None),
             "frames": frames,
