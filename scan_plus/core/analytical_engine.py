@@ -4,8 +4,7 @@ The core owns *what* evidence is requested, not *where* market data comes from.
 The legacy Crypto implementation remains the reference backend during extraction.
 New market adapters can replace the backend without changing orchestration.
 """
-from typing import Any, Mapping, Protocol
-import copy
+from typing import Protocol
 
 
 class AnalyticalBackend(Protocol):
