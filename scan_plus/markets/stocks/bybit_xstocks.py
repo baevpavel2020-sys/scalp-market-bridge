@@ -6,6 +6,8 @@ NVDA to their xStock symbols (e.g. NVDAXUSDT) and keeps product metadata explici
 """
 from typing import Any, Mapping
 import requests
+from scan_plus.core.sessions import active_sessions
+from scan_plus.core.gaps import gap_from_previous
 
 XSTOCK_MAP={"NVDA":"NVDAXUSDT","AAPL":"AAPLXUSDT","MSFT":"MSFTXUSDT","TSLA":"TSLAXUSDT",
             "META":"METAXUSDT","GOOGL":"GOOGLXUSDT","AMZN":"AMZNXUSDT","COIN":"COINXUSDT",
@@ -38,6 +40,21 @@ class BybitXStocksLoader:
         return {"source":"bybit","product":"xstock_spot","symbol":token,"underlying":str(symbol).upper(),
                 "last_price":float(item["lastPrice"]),"bid":float(item.get("bid1Price") or 0),
                 "ask":float(item.get("ask1Price") or 0),"volume_24h":float(item.get("volume24h") or 0)}
+
+    def context(self,symbol,underlying_quote=None):
+        """Return xStock/underlying/session context without merging analytical evidence."""
+        token=self.token_symbol(symbol)
+        context={"product":"xstock_spot","token_symbol":token,"underlying":str(symbol).upper(),
+                 "xstock_24_7":True,"active_underlying_sessions":active_sessions("stocks_us")}
+        if underlying_quote is not None:
+            context["underlying_quote"]=dict(underlying_quote)
+        return context
+
+    def gap_from_daily(self,symbol,limit=3):
+        data=self.klines(symbol,interval="D",limit=limit)
+        candles=data["candles"]
+        if len(candles)<2: return None
+        return gap_from_previous(candles[-1]["open"],candles[-2]["close"])
 
     def klines(self,symbol,interval="5",limit=200):
         token=self.token_symbol(symbol)
