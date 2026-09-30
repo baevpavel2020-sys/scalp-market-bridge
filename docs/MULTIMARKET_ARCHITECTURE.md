@@ -402,3 +402,17 @@ Immediate audit:
 - Added regression tests for metals, energy and adapter exposure.
 
 Commodity status: 2/4 complete.
+
+
+## Cycle 5 — Commodities — step 3/4 + immediate audit
+
+Implemented:
+- Added instrument-group-aware Commodity Candidate Engine.
+- Metals, energy and softs share the same directional gate but expose different provider-context confirmation sets.
+- Structure is the primary directional gate; explicit Fibonacci and Elliott readiness are required on the same confirmation timeframe.
+- Commodity-specific context is confirmatory only; missing context never blocks or creates direction by itself.
+- Candidate output records available context and its evidence policy.
+
+Immediate audit:
+- Initial implementation allowed structural direction on one timeframe while Fibonacci/Elliott confirmation came from another. Fixed: shared confirmation must now be on the same timeframe as the structural direction.
+- Added regression tests for valid candidate creation, unresolved structure, missing context, and cross-timeframe confirmation leakage.
