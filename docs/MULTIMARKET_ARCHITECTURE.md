@@ -416,3 +416,21 @@ Implemented:
 Immediate audit:
 - Initial implementation allowed structural direction on one timeframe while Fibonacci/Elliott confirmation came from another. Fixed: shared confirmation must now be on the same timeframe as the structural direction.
 - Added regression tests for valid candidate creation, unresolved structure, missing context, and cross-timeframe confirmation leakage.
+
+
+## Cycle 5 — Commodities — step 4/4 + immediate audit
+
+Implemented:
+- Added a non-executing Commodity Execution/Risk planner.
+- Uses the candidate confirmation timeframe as the execution evidence anchor.
+- Structural invalidation provides the stop; Fibonacci extension is preferred for target; deterministic RR fallback is used when no valid extension is available.
+- Position sizing uses explicit account equity and risk fraction.
+- No contract multiplier, tick value, margin, leverage, inventory or macro value is invented.
+- Order submission remains disabled in the analytical layer.
+
+Immediate audit fixes:
+- Commodity-specific context was initially collected across all timeframes. It is now bound to the same confirmation timeframe as Structure/Fibonacci/Elliott, preventing cross-timeframe context leakage.
+- Execution target lookup was initially allowed to search other timeframes. It is now restricted to the candidate confirmation timeframe; otherwise it falls back to the configured RR target.
+- Added regression tests for cash-risk sizing, WATCH blocking, and confirmation-timeframe enforcement.
+
+Commodity cycle status: CLOSED after implementation + audit.
