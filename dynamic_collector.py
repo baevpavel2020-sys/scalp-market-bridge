@@ -5500,7 +5500,7 @@ def run_bybit_prescan_ws_probe(symbols=None, timeout=12.0):
 class OnDemandPreScanService:
     """Manual PreScan. No permanent universe collector and no Scan+ activation."""
 
-    VERSION = "prescan_v2_1_production"
+    VERSION = "prescan_v2_2_profiled_cache"
     # Deliberately broad but static v1 universe. Invalid/delisted symbols are
     # isolated by recursive WS batches and cannot poison the whole run.
     DEFAULT_UNIVERSE = (
@@ -5518,6 +5518,10 @@ class OnDemandPreScanService:
     HISTORY_LIMIT = 120
     TOP_BY_TURNOVER = 30
     CACHE_TTL = 120.0
+    DISK_CACHE_TTL = 6 * 3600.0
+    PRESCAN_CACHE_DIR = os.environ.get("PRESCAN_CACHE_DIR", "/tmp/scalp-market-bridge/prescan")
+    HISTORY_WORKERS = 6
+    HISTORY_GLOBAL_TIMEOUT = 18.0
     _cache_lock = threading.RLock()
     _history_cache = {}
 
@@ -5996,6 +6000,55 @@ class OnDemandPreScanService:
         return bundle, errors
 
     @classmethod
+    def _disk_cache_path(cls, symbol):
+        safe = re.sub(r"[^A-Z0-9_-]", "_", str(symbol).upper())
+        return os.path.join(cls.PRESCAN_CACHE_DIR, safe + ".json")
+
+    @classmethod
+    def _load_disk_history(cls, symbol):
+        """Warm-start cache. It is only a seed; freshness is checked before use."""
+        path = cls._disk_cache_path(symbol)
+        try:
+            st = os.stat(path)
+            if time.time() - st.st_mtime > cls.DISK_CACHE_TTL:
+                return None
+            with open(path, "r", encoding="utf-8") as fh:
+                payload = json.load(fh)
+            bundle = payload.get("bundle") or {}
+            source = str(payload.get("provider") or "disk_cache")
+            checked = {}
+            for tf in ("5","15","60"):
+                rows, err = cls._validate_provider_rows(bundle.get(tf) or [], tf)
+                if err or len(rows) < PreScanEngine.MIN_CANDLES[tf]:
+                    return None
+                checked[tf] = rows
+            return checked, source
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return None
+
+    @classmethod
+    def _save_disk_history(cls, symbol, bundle, provider):
+        """Atomic best-effort cache write; cache failure must never fail PreScan."""
+        try:
+            os.makedirs(cls.PRESCAN_CACHE_DIR, exist_ok=True)
+            path = cls._disk_cache_path(symbol)
+            tmp = path + "." + uuid.uuid4().hex + ".tmp"
+            payload = {
+                "saved_at": time.time(),
+                "provider": provider,
+                "bundle": {tf: list(bundle.get(tf) or [])[-cls.HISTORY_LIMIT:] for tf in ("5","15","60")},
+            }
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh, separators=(",",":"), allow_nan=False)
+            os.replace(tmp, path)
+        except Exception:
+            try:
+                if 'tmp' in locals() and os.path.exists(tmp):
+                    os.unlink(tmp)
+            except OSError:
+                pass
+
+    @classmethod
     def _fetch_history_bundle(cls, symbol):
         """Fetch a compact fresh 3-TF history without TradingView.
 
@@ -6017,6 +6070,14 @@ class OnDemandPreScanService:
         if complete_cache:
             return cached_rows, {tf: "memory_cache" for tf in ("5","15","60")}, {}
 
+        disk = cls._load_disk_history(symbol)
+        if disk is not None:
+            disk_rows, disk_provider = disk
+            with cls._cache_lock:
+                for tf in ("5","15","60"):
+                    cls._history_cache[(symbol, tf)] = (now, [dict(x) for x in disk_rows[tf]])
+            return disk_rows, {tf: "disk_cache:" + disk_provider for tf in ("5","15","60")}, {}
+
         attempts = {}
         providers = (
             ("okx_swap_rest", cls._okx_history_bundle),
@@ -6030,6 +6091,7 @@ class OnDemandPreScanService:
                 with cls._cache_lock:
                     for tf in ("5","15","60"):
                         cls._history_cache[(symbol, tf)] = (now, [dict(x) for x in bundle[tf]])
+                cls._save_disk_history(symbol, bundle, provider_name)
                 return bundle, {tf: provider_name for tf in ("5","15","60")}, {}
 
         # Fail closed. We do not resurrect the unofficial TradingView transport
@@ -6142,7 +6204,9 @@ class OnDemandPreScanService:
             })
 
         shortlist = max(1, min(int(shortlist), cls.TOP_BY_TURNOVER, len(symbols)))
+        stage_t0 = time.time()
         tickers, ws_errors, skipped_symbols = cls._discover_tickers(symbols)
+        ticker_ms = round((time.time() - stage_t0) * 1000.0, 2)
         ranked = sorted(
             tickers,
             key=lambda s: fnum(tickers[s].get("turnover24h")) or 0.0,
@@ -6152,6 +6216,7 @@ class OnDemandPreScanService:
         history = {s: {} for s in ranked}
         sources = {s: {} for s in ranked}
         hist_errors = {}
+        history_t0 = time.time()
 
         # Fresh history uses bounded public REST fallback chain; no TradingView.
         # Ten workers overlap network latency; the global pacer still caps aggregate provider request rate.
@@ -6159,12 +6224,12 @@ class OnDemandPreScanService:
         future_meta = {}
         try:
             if ranked:
-                executor = ThreadPoolExecutor(max_workers=min(10, len(ranked)))
+                executor = ThreadPoolExecutor(max_workers=min(cls.HISTORY_WORKERS, len(ranked)))
                 for s in ranked:
                     future = executor.submit(cls._fetch_history_bundle, s)
                     future_meta[future] = s
 
-                done, pending = wait(list(future_meta), timeout=24.0)
+                done, pending = wait(list(future_meta), timeout=cls.HISTORY_GLOBAL_TIMEOUT)
                 for future in done:
                     s = future_meta[future]
                     try:
@@ -6190,7 +6255,10 @@ class OnDemandPreScanService:
             if executor is not None:
                 executor.shutdown(wait=False, cancel_futures=True)
 
+        history_ms = round((time.time() - history_t0) * 1000.0, 2)
+
         # A single pathological market must never fail the endpoint.
+        analysis_t0 = time.time()
         candidates = []
         analysis_errors = {}
         for s in ranked:
@@ -6206,6 +6274,7 @@ class OnDemandPreScanService:
                 }
             candidates.append(candidate)
 
+        analysis_ms = round((time.time() - analysis_t0) * 1000.0, 2)
         candidates.sort(
             key=lambda x: (
                 PreScanEngine.STATUS_ORDER.get(x.get("status"), 0),
@@ -6235,6 +6304,13 @@ class OnDemandPreScanService:
             "elapsed_ms": round((time.time() - started) * 1000.0, 2),
             "candidates": candidates[:top_n],
             "scan_plus_candidates": [x["symbol"] for x in actionable],
+            "profile": {
+                "ticker_ms": ticker_ms,
+                "history_ms": history_ms,
+                "analysis_ms": analysis_ms,
+                "history_workers": cls.HISTORY_WORKERS,
+                "history_global_timeout_s": cls.HISTORY_GLOBAL_TIMEOUT,
+            },
             "diagnostics": {
                 "ws_errors": ws_errors[-20:], "ws_error_count": len(ws_errors),
                 "skipped_symbols": skipped_symbols, "skipped_symbol_count": len(skipped_symbols),
