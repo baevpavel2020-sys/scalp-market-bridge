@@ -1059,6 +1059,7 @@ class MarketStream:
                 "level": ref_high["price"],
                 "close": last["close"],
                 "confirmed_by_close": True,
+                "start": last.get("start"),
                 "break_atr": (
                     round((last["close"] - ref_high["price"]) / atr, 4)
                     if atr else None
@@ -1073,6 +1074,7 @@ class MarketStream:
                 "level": ref_low["price"],
                 "close": last["close"],
                 "confirmed_by_close": True,
+                "start": last.get("start"),
                 "break_atr": (
                     round((ref_low["price"] - last["close"]) / atr, 4)
                     if atr else None
@@ -1084,6 +1086,7 @@ class MarketStream:
                 "direction": "buy_side",
                 "level": ref_high["price"],
                 "confirmed_by_close": False,
+                "start": last.get("start"),
             }
         elif ref_low and last["low"] < ref_low["price"] and last["close"] >= ref_low["price"]:
             event = {
@@ -1091,6 +1094,7 @@ class MarketStream:
                 "direction": "sell_side",
                 "level": ref_low["price"],
                 "confirmed_by_close": False,
+                "start": last.get("start"),
             }
 
         legs = [
@@ -1782,7 +1786,7 @@ class MarketStream:
         ready=bool(technical.get("ready") and ctx.get("ready"))
         return {
             "ready":ready,
-            "engine_version":"scan_plus_v3_6",
+            "engine_version":"scan_plus_v3_7_1",
             "closed_candles":len(rows),
             "excluded_open_candles":max(0,len(raw_rows)-len(rows)),
             "last_confirmed_start":rows[-1].get("start") if rows else None,
@@ -3413,6 +3417,339 @@ class DynamicMarketManager:
             "note":"Position size is intentionally not calculated here; it requires current account equity and chosen risk percent.",
         }
 
+
+    # ========================================================
+    # SCAN+ V3.7 DECISION ARCHITECTURE
+    # Context (D/4H) -> Direction (1H/15m) -> Setup (5m)
+    # -> Trigger (1m) -> Execution -> Thesis risk/targets.
+    # ========================================================
+
+    @staticmethod
+    def _direction_from_frame_v37(a):
+        """Direction without allowing live price-discovery to rewrite confirmed TF structure."""
+        c=a.get("confluence",{}) or {}
+        state=(a.get("structure",{}) or {}).get("state","unknown")
+        bull=float(c.get("bullish",0) or 0); bear=float(c.get("bearish",0) or 0)
+        raw=c.get("direction","neutral")
+        if state=="uptrend" and bull>=bear: return "bullish"
+        if state=="downtrend" and bear>=bull: return "bearish"
+        if raw in ("bullish","bearish") and abs(bull-bear)>=2: return raw
+        return "neutral"
+
+    @staticmethod
+    def _signal_freshness_v37(a, tf):
+        # TTL is bar-based; expired items remain diagnostic only.
+        ttl={"1":8,"5":10,"15":12,"60":14,"240":16,"D":20}.get(tf,10)
+        last_start=a.get("last_confirmed_start")
+        event=(a.get("structure",{}) or {}).get("last_event") or {}
+        event_start=event.get("start") or event.get("at") or event.get("timestamp")
+        # Most structure events do not expose a timestamp in older schema. In that
+        # case we do not invent age; freshness is unknown rather than expired.
+        return {"ttl_bars":ttl,"last_confirmed_start":last_start,
+                "structure_event_start":event_start,"structure_event_expired":False if event else None}
+
+    @staticmethod
+    def _smc_scenario_v37(a, direction):
+        smc=a.get("smart_money",{}) or {}
+        liq=a.get("liquidity",{}) or {}
+        structure=a.get("structure",{}) or {}
+        ev=structure.get("last_event") or {}
+        sweep=liq.get("sweep")
+        fvgs=[x for x in smc.get("fvg",[]) if not x.get("fully_filled")]
+        obs=smc.get("order_blocks",[]) or []
+        displacement=bool(ev.get("confirmed_by_close") and ev.get("type") in ("BOS","CHoCH"))
+        mss=bool(ev.get("confirmed_by_close") and ev.get("type")=="CHoCH")
+        dir_ok=(ev.get("direction")==direction) if ev else False
+        stage="idle"
+        if sweep: stage="liquidity_sweep"
+        if displacement and dir_ok: stage="displacement"
+        if mss and dir_ok: stage="mss"
+        if (mss or displacement) and dir_ok and fvgs: stage="poi_created"
+        return {
+            "direction":direction if direction in ("bullish","bearish") else None,
+            "stage":stage,"sweep":sweep,"displacement":displacement and dir_ok,
+            "mss":mss and dir_ok,"active_fvg_count":len(fvgs),"order_block_count":len(obs),
+            "ready_for_retrace":bool(dir_ok and (mss or displacement) and (fvgs or obs)),
+        }
+
+    @staticmethod
+    def _execution_engine_v37(linear, spot):
+        # Preserve V3.6 calculations, but capability-aware transport/flow readiness.
+        base=DynamicMarketManager._execution_engine_v3(linear,spot)
+        spot_available=spot.get("available")
+        # False is authoritative subscription rejection; None means not established yet.
+        mode="perp_only" if spot_available is False else "spot_perp"
+        windows=base.get("windows",{})
+        if mode=="perp_only":
+            warmed=[w for w,d in windows.items() if d.get("linear_warm") and d.get("perp_delta_ratio") is not None]
+            base["warmed_flow_windows"]=warmed
+            base["flow_ready"]=bool(warmed)
+            base["driver_ready"]=bool(warmed)
+            base["driver"]={"primary":"perp_only" if warmed else "unknown",
+                            "confidence":1.0 if warmed else 0.0,"votes":{"perp_only":1.0 if warmed else 0.0}}
+            base["ready"]=bool(linear.get("connected") and (linear.get("orderbook") or {}).get("ready"))
+            base["trade_data_ready"]=bool(base["ready"] and base.get("price") is not None and warmed)
+            base["flow_divergences"]=[]
+        base["execution_mode"]=mode
+        base["market_capabilities"]={"linear":linear.get("available") is not False,
+                                     "spot":spot_available is not False,
+                                     "spot_state":spot_available}
+
+        # Rich execution regime; context only, never a direction vote by itself.
+        regime="unknown"
+        for w in ("1m","5m","15m","1h"):
+            d=windows.get(w,{})
+            if not d.get("linear_warm"): continue
+            pd=d.get("perp_delta_ratio"); sd=d.get("spot_delta_ratio"); oi=d.get("oi_change_pct"); pc=d.get("perp_price_change_pct")
+            if pd is None or pc is None: continue
+            if mode=="perp_only": regime="perp_only"; break
+            if sd is not None and pd*sd<0 and abs(pd-sd)>=0.18: regime="spot_perp_divergence"
+            elif pc>0 and pd>0.08 and oi is not None and oi<0: regime="short_covering"
+            elif pc<0 and pd<-0.08 and oi is not None and oi<0: regime="long_liquidation"
+            elif sd is not None and sd>0.12 and pc>=0: regime="spot_led_accumulation"
+            elif sd is not None and sd<-0.12 and pc<=0: regime="spot_led_distribution"
+            elif abs(pd)>=0.12 and oi is not None and oi>0: regime="perp_led_expansion"
+            elif oi is not None and oi<0: regime="deleveraging"
+            else: regime="mixed"
+            break
+        base["execution_regime"]=regime
+        return base
+
+    @staticmethod
+    def _mtf_engine_v37(linear, execution):
+        analysis=linear.get("analysis",{})
+        live=DynamicMarketManager._live_structure_context_v33(linear,execution)
+        frames={}
+        for tf in ("D","240","60","15","5","1"):
+            a=analysis.get(tf,{})
+            confirmed=DynamicMarketManager._direction_from_frame_v37(a)
+            lc=live.get(tf,{})
+            frames[tf]={"ready":a.get("ready",False),"direction":confirmed,
+                        "raw_confluence":(a.get("confluence") or {}).get("direction","neutral"),
+                        "structure":(a.get("structure") or {}).get("state","unknown"),
+                        "live_mode":lc.get("mode"),"price_gap_atr":lc.get("price_gap_atr"),
+                        "transition":lc.get("mode") in ("price_discovery_up","price_discovery_down") and
+                                     ((lc.get("mode")=="price_discovery_up" and confirmed!="bullish") or
+                                      (lc.get("mode")=="price_discovery_down" and confirmed!="bearish"))}
+        # D/4H = context only.
+        ctx_dirs=[frames[x]["direction"] for x in ("D","240") if frames[x]["ready"]]
+        if ctx_dirs.count("bullish")>ctx_dirs.count("bearish"): context_dir="bullish"
+        elif ctx_dirs.count("bearish")>ctx_dirs.count("bullish"): context_dir="bearish"
+        else: context_dir="neutral"
+        # 1H/15m = direction. 55/45, but a neutral frame does not manufacture agreement.
+        d60=frames["60"]["direction"]; d15=frames["15"]["direction"]
+        score=(0.55 if d60=="bullish" else -0.55 if d60=="bearish" else 0)+(0.45 if d15=="bullish" else -0.45 if d15=="bearish" else 0)
+        if d60 in ("bullish","bearish") and d15 in ("bullish","bearish") and d60!=d15:
+            direction="neutral"; direction_state="uncertain"
+        elif score>=0.45: direction="bullish"; direction_state="confirmed" if d60==d15=="bullish" else "provisional"
+        elif score<=-0.45: direction="bearish"; direction_state="confirmed" if d60==d15=="bearish" else "provisional"
+        else: direction="neutral"; direction_state="uncertain"
+        if direction=="neutral": style="mixed_context"
+        elif context_dir=="neutral": style="mixed_context"
+        elif context_dir==direction: style="with_context"
+        else: style="countertrend"
+        setup_dir=frames["5"]["direction"]; trigger_dir=frames["1"]["direction"]
+        setup_state="aligned" if direction!="neutral" and setup_dir==direction else "pullback" if direction!="neutral" and setup_dir not in ("neutral",direction) else "forming"
+        trigger_state="aligned" if direction!="neutral" and trigger_dir==direction else "opposed" if direction!="neutral" and trigger_dir not in ("neutral",direction) else "waiting"
+        return {"ready":all(frames[x]["ready"] for x in ("D","240","60","15","5")),
+                "context":{"direction":context_dir,"frames":{"D":frames["D"],"240":frames["240"]}},
+                "direction":{"direction":direction,"state":direction_state,"score":round(score,3),"frames":{"60":frames["60"],"15":frames["15"]}},
+                "setup_state":setup_state,"trigger_state":trigger_state,"trade_style":style,
+                "frames":frames,"live_context":live}
+
+    @staticmethod
+    def _trade_engine_v37(linear, mtf, execution):
+        """V3.7.1 scenario-coherent trade construction.
+
+        Order is intentionally strict:
+        direction -> setup/trigger -> thesis invalidation -> T1/T2 -> RR/scale.
+        RR is never used to move the stop or manufacture a farther T1.
+        """
+        analysis=linear.get("analysis",{}); price=execution.get("price")
+        direction=(mtf.get("direction") or {}).get("direction","neutral")
+        if not price:
+            return {"ready":False,"status":"DATA_BLOCK","trade_state":"DATA_BLOCK","block_class":"DATA_BLOCK","block_reasons":["no_realtime_price"],"retryable":True}
+
+        def reg(tf): return (analysis.get(tf,{}) or {}).get("regime_levels",{}) or {}
+        def smc(tf):
+            a=analysis.get(tf,{}) or {}
+            return a.get("smart_money") or a.get("smc") or {}
+        def liq(tf): return (analysis.get(tf,{}) or {}).get("liquidity",{}) or {}
+        def add_unique(items, value, tf, source, rank, meta=None):
+            try: value=float(value)
+            except (TypeError,ValueError): return
+            if not math.isfinite(value) or value<=0: return
+            key=(round(value,12),tf,source)
+            if any(x[5]==key for x in items): return
+            items.append((value,tf,source,rank,meta or {},key))
+
+        atr5=((analysis.get("5",{}).get("technical") or {}).get("atr14") or reg("5").get("atr"))
+        atr15=((analysis.get("15",{}).get("technical") or {}).get("atr14") or reg("15").get("atr"))
+        atr=float(atr5 or atr15 or 0) or None
+        spread_bps=execution.get("spread_bps"); spread_abs=price*float(spread_bps)/10000 if spread_bps is not None else 0.0
+        noise=max((atr or 0)*0.75,spread_abs*3)
+        buffer=max((atr or 0)*0.25,spread_abs*2)
+
+        # ---------- thesis invalidation ----------
+        # Prefer the same scale as the setup: 1m trigger -> 5m setup -> 15m direction.
+        # HTF levels are fallback only and are later rejected by the scale gate if unsuitable.
+        invalid=[]
+        inv_rank={"1":0,"5":1,"15":2,"60":4,"240":6,"D":7}
+        for tf in ("1","5","15","60","240","D"):
+            r=reg(tf); m=smc(tf); q=liq(tf); rank=inv_rank[tf]
+            levels=r.get("supports",[]) if direction=="bullish" else r.get("resistances",[])
+            for x in levels:
+                if (direction=="bullish" and x<price) or (direction=="bearish" and x>price):
+                    add_unique(invalid,x,tf,"structural_swing",rank,{"thesis":"structure"})
+            # Order block boundary is a thesis level only when it is on the invalidation side.
+            for ob in m.get("order_blocks",[]) or []:
+                if ob.get("direction")!=direction: continue
+                x=ob.get("low") if direction=="bullish" else ob.get("high")
+                if x and ((direction=="bullish" and x<price) or (direction=="bearish" and x>price)):
+                    add_unique(invalid,x,tf,"order_block",rank-0.15,{"start":ob.get("start")})
+            sw=q.get("sweep") or {}
+            sx=sw.get("price") or sw.get("level")
+            if sx and ((direction=="bullish" and sx<price) or (direction=="bearish" and sx>price)):
+                add_unique(invalid,sx,tf,"liquidity_sweep_extreme",rank-0.25,{"sweep":sw})
+
+        # Rank by scenario scale first, then nearest valid level inside that scale.
+        invalid.sort(key=lambda x:(x[3],abs(x[0]-price)))
+        inv=invalid[0] if invalid else None
+        logical=inv[0] if inv else None
+        if logical is not None:
+            stop=(logical-buffer) if direction=="bullish" else (logical+buffer)
+            if direction=="bullish": stop=min(stop,price-noise)
+            elif direction=="bearish": stop=max(stop,price+noise)
+            inv_source=f"{inv[2]}_{inv[1]}"; inv_tf=inv[1]
+        elif atr and direction in ("bullish","bearish"):
+            stop=price-1.5*atr if direction=="bullish" else price+1.5*atr
+            inv_source="atr_fallback"; inv_tf="5"
+        else:
+            stop=None; inv_source=None; inv_tf=None
+
+        # ---------- scenario targets ----------
+        # T1 must be a realistic objective on the same intraday scale. T2 may be farther.
+        targets=[]
+        target_rank={"1":0,"5":1,"15":2,"60":3,"240":5,"D":6}
+        for tf in ("1","5","15","60","240","D"):
+            r=reg(tf); m=smc(tf); q=liq(tf); rank=target_rank[tf]
+            levels=r.get("resistances",[]) if direction=="bullish" else r.get("supports",[])
+            for x in levels:
+                if (direction=="bullish" and x>price) or (direction=="bearish" and x<price):
+                    add_unique(targets,x,tf,"previous_swing",rank,{"thesis":"structure"})
+            # External/equal liquidity is a preferred target when it lies ahead of price.
+            eq=q.get("equal_highs") if direction=="bullish" else q.get("equal_lows")
+            if eq:
+                x=eq.get("price")
+                if x and ((direction=="bullish" and x>price) or (direction=="bearish" and x<price)):
+                    add_unique(targets,x,tf,"external_liquidity",rank-0.25,{"liquidity":eq})
+            # Unfilled FVG can be a magnet/target; use nearest boundary beyond price.
+            for f in m.get("fvg",[]) or []:
+                if f.get("fully_filled"): continue
+                vals=[v for v in (f.get("from"),f.get("to")) if isinstance(v,(int,float))]
+                ahead=[v for v in vals if (direction=="bullish" and v>price) or (direction=="bearish" and v<price)]
+                if ahead:
+                    x=min(ahead) if direction=="bullish" else max(ahead)
+                    add_unique(targets,x,tf,"fvg",rank+0.1,{"start":f.get("start"),"type":f.get("type")})
+
+        # Price-discovery projection is fallback and never confirms direction.
+        for tf in ("15","60","240","D"):
+            lc=(mtf.get("live_context") or {}).get(tf,{})
+            for x in lc.get("projection_targets",[]):
+                if (direction=="bullish" and x>price) or (direction=="bearish" and 0<x<price):
+                    add_unique(targets,x,tf,"projection",8,{"live_mode":lc.get("mode")})
+
+        min_target_distance=max(atr or 0,spread_abs*3)
+        targets=[x for x in targets if abs(x[0]-price)>=min_target_distance]
+        targets.sort(key=lambda x:(x[3],abs(x[0]-price)))
+        target1=targets[0] if targets else None
+        # T2 must be materially beyond T1 and may use a higher scale.
+        target2=next((x for x in targets[1:] if target1 and abs(x[0]-price)>=abs(target1[0]-price)*1.25),None)
+        t1=target1[0] if target1 else None; t2=target2[0] if target2 else None
+
+        order_ok=bool((direction=="bullish" and stop is not None and t1 is not None and stop<price<t1) or (direction=="bearish" and stop is not None and t1 is not None and t1<price<stop))
+        risk=abs(price-stop) if stop is not None else None; reward=abs(t1-price) if t1 is not None else None
+        rr=reward/risk if order_ok and risk else None
+        stop_pct=(risk/price*100) if risk else None; target_pct=(reward/price*100) if reward else None; stop_atr=(risk/atr) if risk and atr else None
+
+        # Scale coherence: percentage + ATR + source timeframe. Never tighten a logical stop just to pass.
+        intraday_inv_tf=inv_tf in ("1","5","15","60") if inv_tf else False
+        scale_ok=bool(risk and (stop_atr is None or stop_atr<=6.0) and (stop_pct is None or stop_pct<=12.0) and (intraday_inv_tf or inv_source=="atr_fallback"))
+        scale_reason=None
+        if risk and not scale_ok:
+            if inv_tf in ("240","D"): scale_reason="invalidation_from_htf"
+            elif stop_atr is not None and stop_atr>6.0: scale_reason="stop_too_many_atr"
+            elif stop_pct is not None and stop_pct>12.0: scale_reason="stop_pct_too_large"
+            else: scale_reason="scale_mismatch"
+
+        dislocated=[tf for tf in ("15","5","1") if (mtf.get("live_context") or {}).get(tf,{}).get("stale_or_dislocated")]
+        extreme_extension=len(dislocated)>=2
+
+        # Setup/trigger are timing gates, not direction votes.
+        setup_state=mtf.get("setup_state"); trigger_state=mtf.get("trigger_state")
+        smc5=DynamicMarketManager._smc_scenario_v37(analysis.get("5",{}),direction)
+        smc1=DynamicMarketManager._smc_scenario_v37(analysis.get("1",{}),direction)
+        trigger_ok=(trigger_state=="aligned" and (smc1.get("mss") or smc1.get("displacement") or setup_state=="aligned"))
+
+        flow_divs=execution.get("flow_divergences",[]) or []
+        flow_opposed=any((direction=="bullish" and e.get("type")=="price_up_perp_led_spot_not_confirming") or (direction=="bearish" and e.get("type")=="price_down_perp_led_spot_not_confirming") for e in flow_divs)
+        book=execution.get("book_pressure","neutral"); execution_ok=book in ("neutral",direction)
+
+        data_reasons=[]; market_reasons=[]; exec_reasons=[]
+        if not mtf.get("ready"): data_reasons.append("mtf_not_ready")
+        if not execution.get("ready"): data_reasons.append("transport_not_ready")
+        if not execution.get("trade_data_ready"): data_reasons.append("trade_data_not_ready")
+        if direction=="neutral": market_reasons.append("direction_not_confirmed")
+        if (mtf.get("direction") or {}).get("state")!="confirmed": market_reasons.append("direction_provisional")
+        if extreme_extension: market_reasons.append("extended_wait_pullback")
+        if stop is None: market_reasons.append("invalidation_missing")
+        if t1 is None: market_reasons.append("target_missing")
+        if not order_ok: market_reasons.append("price_order_invalid")
+        if rr is None or rr<1.5: market_reasons.append("rr_below_1_5")
+        if not scale_ok: market_reasons.append(scale_reason or "scale_mismatch")
+        if setup_state=="pullback": exec_reasons.append("setup_pullback_active")
+        elif setup_state!="aligned": exec_reasons.append("setup_not_aligned")
+        if not trigger_ok: exec_reasons.append("trigger_not_confirmed")
+        if flow_opposed: exec_reasons.append("flow_opposed")
+        if not execution_ok: exec_reasons.append("book_opposed")
+
+        if data_reasons:
+            state="DATA_BLOCK"; block_class="DATA_BLOCK"; retry=True
+        elif direction=="neutral":
+            state="WAIT_DIRECTION"; block_class="MARKET_BLOCK"; retry=True
+        elif extreme_extension or setup_state=="pullback":
+            state="WAIT_PULLBACK"; block_class="EXECUTION_BLOCK"; retry=True
+        elif setup_state!="aligned":
+            state="WAIT_SETUP"; block_class="EXECUTION_BLOCK"; retry=True
+        elif not trigger_ok:
+            state="WAIT_TRIGGER"; block_class="EXECUTION_BLOCK"; retry=True
+        elif flow_opposed or not execution_ok:
+            state="WAIT_FLOW"; block_class="EXECUTION_BLOCK"; retry=True
+        elif market_reasons:
+            state="INVALID"; block_class="MARKET_BLOCK"; retry=False
+        else:
+            state="SETUP"; block_class=None; retry=False
+
+        reasons=data_reasons+market_reasons+exec_reasons
+        return {
+            "ready":True,"status":state,"trade_state":state,"direction":direction if direction!="neutral" else None,
+            "entry_reference":price,
+            "invalidation":stop,
+            "invalidation_thesis":{"logical_level":logical,"source":inv_source,"source_timeframe":inv_tf,"buffer":buffer,"noise_floor":noise,"rule":"stop_beyond_thesis_level_then_noise_buffer"},
+            "targets":{
+                "t1":t1,"t1_source":None if not target1 else f"{target1[2]}_{target1[1]}","t1_timeframe":None if not target1 else target1[1],
+                "t2":t2,"t2_source":None if not target2 else f"{target2[2]}_{target2[1]}","t2_timeframe":None if not target2 else target2[1],
+                "rr_basis":"t1","rule":"nearest_valid_scenario_target_same_intraday_scale_first"
+            },
+            "risk_reward":None if rr is None else round(rr,3),"risk_distance":risk,"reward_distance":reward,
+            "trade_scale":{"stop_pct":None if stop_pct is None else round(stop_pct,4),"target_pct":None if target_pct is None else round(target_pct,4),"stop_atr":None if stop_atr is None else round(stop_atr,3),"valid":scale_ok,"reason":scale_reason,"execution_atr":atr,"invalidation_timeframe":inv_tf},
+            "scenario_coherence":{"direction":direction,"setup_timeframe":"5","trigger_timeframe":"1","invalidation_timeframe":inv_tf,"t1_timeframe":None if not target1 else target1[1],"rr_uses_t1":True,"stop_moved_for_rr":False},
+            "smc_scenario":{"5m":smc5,"1m":smc1},"block_class":block_class,"block_reasons":reasons,"retryable":retry,
+            "setup_state":setup_state,"trigger_state":trigger_state,"trade_style":mtf.get("trade_style"),
+            "execution_regime":execution.get("execution_regime"),"dislocated_execution_timeframes":dislocated,
+            "required":{"direction_confirmed":direction!="neutral","transport_ready":bool(execution.get("ready")),"trade_data_ready":bool(execution.get("trade_data_ready")),"price_order_valid":order_ok,"rr_min_1_5":rr is not None and rr>=1.5,"trade_scale_valid":scale_ok,"setup_aligned":setup_state=="aligned","trigger_confirmed":trigger_ok,"flow_not_opposed":not flow_opposed,"execution_not_opposed":execution_ok}
+        }
+
     def snapshot(
         self,
         symbol,
@@ -3442,14 +3779,14 @@ class DynamicMarketManager:
             .snapshot()
         )
 
-        execution = self._execution_engine_v3(linear, spot)
-        mtf = self._mtf_engine_v3(linear, execution)
-        setup = self._setup_engine_v3(linear, mtf, execution)
+        execution = self._execution_engine_v37(linear, spot)
+        mtf = self._mtf_engine_v37(linear, execution)
+        setup = self._trade_engine_v37(linear, mtf, execution)
 
         return {
             "symbol": symbol,
             "generated_at": time.time(),
-            "engine_version": "scan_plus_v3_6",
+            "engine_version": "scan_plus_v3_7_1",
             "linear": linear,
             "spot": spot,
             "driver": self._driver(linear, spot),
@@ -3518,6 +3855,7 @@ class DynamicMarketManager:
                     "order_blocks":smc.get("order_blocks",[])[:3],
                 },
                 "confluence":a.get("confluence",{}),
+                "signal_freshness":self._signal_freshness_v37(a,tf),
             }
 
         failed=[k for k,v in setup.get("required",{}).items() if not v]
@@ -3536,9 +3874,24 @@ class DynamicMarketManager:
                 "historical_ready":all(analysis.get(tf,{}).get("ready",False) for tf in ("D","240","60","15","5")),
             },
             "mtf":mtf,
+            "context":mtf.get("context"),
+            "direction":mtf.get("direction"),
+            "setup_state":setup.get("setup_state"),
+            "trigger_state":setup.get("trigger_state"),
+            "trade_state":setup.get("trade_state"),
+            "trade_style":setup.get("trade_style"),
+            "execution_mode":execution.get("execution_mode"),
+            "market_capabilities":execution.get("market_capabilities"),
+            "execution_regime":execution.get("execution_regime"),
+            "block_class":setup.get("block_class"),
+            "block_reasons":setup.get("block_reasons",[]),
+            "retryable":setup.get("retryable"),
             "timeframes":tf_summary,
             "execution":{
                 "driver":execution.get("driver"),
+                "execution_mode":execution.get("execution_mode"),
+                "execution_regime":execution.get("execution_regime"),
+                "market_capabilities":execution.get("market_capabilities"),
                 "trade_data_ready":execution.get("trade_data_ready"),
                 "flow_ready":execution.get("flow_ready"),
                 "driver_ready":execution.get("driver_ready"),
