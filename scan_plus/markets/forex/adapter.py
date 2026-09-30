@@ -14,6 +14,7 @@ from scan_plus.core.session_levels import session_high_low
 from scan_plus.markets.forex.stooq import StooqFXLoader
 from scan_plus.markets.forex.session_liquidity import session_interaction, session_sweep
 from scan_plus.markets.forex.candidate import build_forex_candidate
+from scan_plus.markets.forex.execution import build_forex_execution_plan
 
 
 class ForexMarketAdapter(MarketAdapter):
