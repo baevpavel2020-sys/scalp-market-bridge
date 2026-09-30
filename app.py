@@ -4,7 +4,7 @@ from flask import Flask, jsonify, request
 
 from collector import collector
 from spot_collector import spot_collector
-from dynamic_collector import dynamic_manager, run_bybit_prescan_ws_probe
+from dynamic_collector import dynamic_manager, run_bybit_prescan_ws_probe, run_prescan
 
 app = Flask(__name__)
 
@@ -57,6 +57,25 @@ def provider_test():
             "error": f"{type(exc).__name__}: {exc}",
             "source": "bybit_public_linear_websocket",
         }), 500
+
+
+@app.get("/prescan")
+def prescan_manual():
+    try:
+        raw_top = request.args.get("top", "8")
+        raw_shortlist = request.args.get("shortlist", "30")
+        try:
+            top_n = int(raw_top)
+            shortlist = int(raw_shortlist)
+        except (TypeError, ValueError):
+            return jsonify({"error": "top and shortlist must be integers"}), 400
+        raw_symbols = request.args.get("symbols", "")
+        symbols = [s.strip() for s in raw_symbols.split(",") if s.strip()] or None
+        return jsonify(run_prescan(universe=symbols, top_n=top_n, shortlist=shortlist))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"status": "FAIL", "error": f"{type(exc).__name__}: {exc}"}), 500
 
 
 @app.get("/market/BTCUSDT")
