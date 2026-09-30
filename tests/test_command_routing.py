@@ -16,6 +16,10 @@ class CommandRoutingTests(unittest.TestCase):
         self.assertEqual(parse_scan_command("Скан нефть")["markets"], ("commodities",))
         self.assertEqual(parse_scan_command("Скан какао")["markets"], ("commodities",))
 
+    def test_named_symbol_auto_resolves_market(self):
+        self.assertEqual(parse_scan_command("Скан EURUSD")["markets"], ("forex",))
+        self.assertEqual(parse_scan_command("Скан NVDA")["markets"], ("stocks",))
+
     def test_explicit_symbols_survive_routing(self):
         parsed = parse_scan_command("Скан крипта ENAUSDT HYPEUSDT")
         self.assertEqual(parsed["markets"], ("crypto",))
