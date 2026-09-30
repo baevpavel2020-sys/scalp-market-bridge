@@ -10,9 +10,11 @@ def manipulation_x25_state(evidence: Mapping[str, Any]):
     if not abnormal:
         return {"state": "INACTIVE", "action": "NO SHORT", "reason": "no_abnormal_pump"}
 
-    healthy_acceptance = bool(evidence.get("acceptance_above_high")) or bool(evidence.get("healthy_spot_demand"))
+    healthy_acceptance = (bool(evidence.get("acceptance_above_high")) or
+                          bool(evidence.get("healthy_spot_demand")) or
+                          bool(evidence.get("healthy_continuation")))
     if healthy_acceptance:
-        return {"state": "WATCH", "action": "NO SHORT", "reason": "healthy_acceptance_or_spot_demand"}
+        return {"state": "WATCH", "action": "NO SHORT", "reason": "healthy_acceptance_spot_or_continuation"}
 
     armed = all(bool(evidence.get(k)) for k in (
         "exhaustion", "leverage_fragility", "failed_acceptance",
