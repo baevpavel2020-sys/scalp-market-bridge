@@ -26,6 +26,8 @@ class CryptoAdapterTests(unittest.TestCase):
         self.assertEqual(result["trade_state"], "WAIT_TRIGGER")
         self.assertIn("event_engine", result)
         self.assertFalse(result["event_engine"]["affects_trade_decision"])
+        self.assertIn("adaptive_abnormal_pump", result["event_engine"])
+        self.assertIsNone(result["event_engine"]["adaptive_abnormal_pump"]["confirmed"])
         self.assertEqual(adapter.prescan()["status"], "PASS")
 
     def test_registry_isolates_adapter_failure(self):
