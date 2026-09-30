@@ -153,3 +153,19 @@ Not yet claimed complete:
 - Extraction of the common Structure/MTF/Elliott/Fibonacci/Harmonics engine from dynamic_collector.py.
 - Historical underlying-equity feed integration and FX intraday/session high-low provider validation.
 - End-to-end CI execution on the current branch (status checks are not attached to the latest commit).
+
+
+## Shared analytical core checkpoint
+
+The first extraction boundary is now in `scan_plus/core/analytical_engine.py`.
+It exposes Structure, Fibonacci, Elliott and Harmonics through an injected backend.
+Crypto currently uses a compatibility backend that delegates to the canonical legacy
+implementation, so extraction does not silently alter existing Crypto decisions.
+
+Priority configuration now exposes both ordered evidence and non-destructive weights.
+Weights affect decision emphasis only; lower-priority evidence remains available and
+can invalidate a setup.
+
+Next extraction rule: move one calculation family at a time behind this boundary,
+compare legacy and extracted outputs on the same snapshots, and only then switch the
+default backend. No blind rewrite of the monolithic collector.
