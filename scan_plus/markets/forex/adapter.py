@@ -13,6 +13,7 @@ from scan_plus.core.sessions import active_sessions, session_overlap
 from scan_plus.core.session_levels import session_high_low
 from scan_plus.markets.forex.stooq import StooqFXLoader
 from scan_plus.markets.forex.session_liquidity import session_interaction, session_sweep
+from scan_plus.markets.forex.candidate import build_forex_candidate
 
 
 class ForexMarketAdapter(MarketAdapter):
@@ -116,6 +117,11 @@ class ForexMarketAdapter(MarketAdapter):
             "active_sessions":active,
             "session_overlap":session_overlap("forex",latest_ts),
             "frames":frames,
+            "candidate":build_forex_candidate(
+                frames=frames,
+                active_sessions=active,
+                overlap=session_overlap("forex",latest_ts),
+            ),
             "execution_context":{
                 "product":"spot_fx",
                 "session_sensitive":True,
