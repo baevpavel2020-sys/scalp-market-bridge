@@ -82,6 +82,9 @@ class MarketStream:
         self.status = "created"
         self.connected = False
         self.available = None
+        # Capability is independent from transport connectivity.
+        # unknown -> subscribed -> active; explicit unsupported is authoritative.
+        self.capability_state = "unknown"
 
         self.last_error = None
         self.last_message_at = None
@@ -105,6 +108,7 @@ class MarketStream:
         self.asks = {}
 
         self.orderbook_ready = False
+        self.orderbook_updated_at = None
 
         self.ticker = {}
         # Kline / candle storage for Technical Engine
@@ -189,7 +193,17 @@ class MarketStream:
 
                 self._run_connection()
 
+                # Explicit unsupported is a stable capability result, not a reason
+                # to hammer the websocket endpoint in a zero-delay reconnect loop.
+                with self.lock:
+                    unsupported = self.available is False and self.capability_state == "unsupported"
+                if unsupported:
+                    break
+
                 backoff = 1
+                # A clean remote close is still a reconnect event; throttle it.
+                if not self.stop_event.wait(backoff):
+                    backoff = min(backoff * 2, 30)
 
             except Exception as exc:
 
@@ -214,7 +228,7 @@ class MarketStream:
         with self.lock:
 
             self.connected = False
-            self.status = "stopped"
+            self.status = "unavailable" if self.available is False and self.capability_state == "unsupported" else "stopped"
 
     # ========================================================
     # WEBSOCKET
@@ -240,7 +254,11 @@ class MarketStream:
             self.successful_connections += 1
 
             self.connected = True
-            self.available = True
+            # A websocket connection only proves transport availability, not that
+            # this symbol/topic exists on the selected market.
+            if self.available is not False:
+                self.available = None
+                self.capability_state = "unknown"
 
             self.status = "connected"
             self.last_error = None
@@ -320,8 +338,17 @@ class MarketStream:
                 with self.lock:
                     self.last_message_at = time.time()
 
-                # Subscription rejected.
-                # Useful for coins without spot market.
+                # Subscription acknowledgement establishes capability separately
+                # from transport connectivity.
+                if message.get("op") == "subscribe" and message.get("success") is True:
+                    with self.lock:
+                        self.available = True
+                        self.capability_state = "subscribed"
+                        self.status = "subscribed"
+                        self.last_error = None
+                    continue
+
+                # Subscription rejected. Useful for coins without spot market.
                 if (
                     message.get("op") == "subscribe"
                     and message.get("success") is False
@@ -345,6 +372,7 @@ class MarketStream:
                     explicitly_unsupported = any(t in reason_l for t in unsupported_tokens)
                     with self.lock:
                         self.available = False if explicitly_unsupported else None
+                        self.capability_state = "unsupported" if explicitly_unsupported else "transient_unavailable"
                         self.status = "unavailable" if explicitly_unsupported else "reconnecting"
                         self.last_error = reason
                     return
@@ -2234,7 +2262,7 @@ class MarketStream:
         legacy=self._confluence_engine_v2(technical,ctx,fib,elliott,harmonics,divergences,liquidity,smc)
         confluence={**legacy,"decision_authority":False,"deprecated_vote_model":True,"evidence_graph":evidence}
         ready=bool(technical.get("ready") and ctx.get("ready"))
-        return {"ready":ready,"engine_version":"scan_plus_v3_8_5","closed_candles":len(rows),
+        return {"ready":ready,"engine_version":"scan_plus_v3_8_7","closed_candles":len(rows),
                 "excluded_open_candles":max(0,len(raw_rows)-len(rows)),"last_confirmed_start":rows[-1].get("start") if rows else None,
                 "last_confirmed_close":rows[-1].get("close") if rows else None,
                 "pipeline":["technical","structure","fibonacci","elliott","harmonics","divergences","liquidity","smart_money","freshness","evidence_graph"],
@@ -2329,6 +2357,12 @@ class MarketStream:
             "topic",
             "",
         )
+        if topic:
+            # First valid market-data topic is definitive proof that the symbol is
+            # active on this market.
+            with self.lock:
+                self.available = True
+                self.capability_state = "active"
 
         if topic.startswith("publicTrade."):
 
@@ -2579,6 +2613,7 @@ class MarketStream:
                 )
 
                 self.orderbook_ready = True
+                self.orderbook_updated_at = time.time()
 
             elif message_type == "delta":
 
@@ -2594,6 +2629,7 @@ class MarketStream:
                     self.asks,
                     asks,
                 )
+                self.orderbook_updated_at = time.time()
 
     @staticmethod
     def _apply_book(book, rows):
@@ -2720,18 +2756,18 @@ class MarketStream:
     def _flow_window_stats(self, now_ms, duration):
         """Quality-aware rolling-flow readiness.
 
-        Short and long windows use different minimum sample/coverage requirements so
-        the same 2-3 prints cannot make 1m, 5m, 15m and 1h all look independently warm.
-        Requirements are deliberately modest for illiquid symbols, but confidence is
-        proportional to sample size and temporal coverage.
+        A horizon is warm only after observing a meaningful fraction of that actual
+        horizon. Nested windows therefore cannot all become warm from the same brief
+        burst of trades. Counts protect illiquid symbols; coverage protects semantics.
         """
-        rules = {
-            WINDOWS["1m"]: (3, 10_000),
-            WINDOWS["5m"]: (4, 30_000),
-            WINDOWS["15m"]: (6, 60_000),
-            WINDOWS["1h"]: (8, 120_000),
+        min_counts = {
+            WINDOWS["1m"]: 3,
+            WINDOWS["5m"]: 4,
+            WINDOWS["15m"]: 6,
+            WINDOWS["1h"]: 8,
         }
-        min_count, min_coverage = rules.get(duration, (3, min(duration // 5, 60_000)))
+        min_count = min_counts.get(duration, 3)
+        min_coverage = max(10_000, int(duration * 0.50))
         cutoff = now_ms - duration
         valid=[]
         for timestamp_ms, side, price, qty in reversed(self.trades):
@@ -2739,18 +2775,21 @@ class MarketStream:
                 break
             if side not in ("Buy", "Sell") or price is None or qty is None or qty <= 0:
                 continue
-            valid.append((timestamp_ms, qty))
+            valid.append((timestamp_ms, side, price, qty))
         count=len(valid)
         newest=valid[0][0] if valid else None
         oldest=valid[-1][0] if valid else None
         coverage=max(0, newest-oldest) if newest is not None and oldest is not None else 0
-        total=sum(q for _,q in valid)
+        total=sum(row[3] for row in valid)
         ready=bool(count >= min_count and total > 0 and coverage >= min_coverage)
         count_quality=min(1.0, count / max(min_count * 3.0, 1.0))
-        coverage_quality=min(1.0, coverage / max(min_coverage * 3.0, 1.0))
-        quality=(count_quality * coverage_quality) ** 0.5 if ready else 0.0
+        coverage_ratio=min(1.0, coverage / max(duration, 1))
+        # Full confidence requires broad temporal coverage, not merely crossing the
+        # readiness threshold. At 50% coverage the coverage component is 0.5.
+        quality=(count_quality * coverage_ratio) ** 0.5 if ready else 0.0
         return {
             "ready":ready,"trade_count":count,"coverage_ms":coverage,
+            "window_ms":duration,"coverage_ratio":round(coverage_ratio,4),
             "required_trade_count":min_count,"required_coverage_ms":min_coverage,
             "quality":round(quality,4),
         }
@@ -2794,23 +2833,20 @@ class MarketStream:
 
                 if timestamp_ms < cutoff:
                     break
+                if side not in ("Buy", "Sell") or price is None or qty is None or qty <= 0:
+                    continue
 
                 count += 1
 
-                # Because we iterate backwards,
-                # last_price is newest trade,
-                # first_price ends as oldest trade.
+                # Because we iterate backwards, last_price is newest and
+                # first_price ends as oldest valid trade.
                 first_price = price
-
                 if last_price is None:
                     last_price = price
 
                 if side == "Buy":
-
                     buy += qty
-
-                elif side == "Sell":
-
+                else:
                     sell += qty
 
             total = (
@@ -2909,7 +2945,6 @@ class MarketStream:
         result={"current":current,"windows":{}}
         # OI needs temporal coverage too; a 20-second collector history must not be
         # labelled as a 1h OI change.
-        min_cov={"1m":10_000,"5m":30_000,"15m":60_000,"1h":120_000}
         samples=list(self.oi_samples)
         for name,duration in WINDOWS.items():
             cutoff=now_ms-duration
@@ -2918,14 +2953,15 @@ class MarketStream:
             oldest_ts=inside[0][0] if inside else None
             newest_ts=inside[-1][0] if inside else None
             coverage=max(0,newest_ts-oldest_ts) if oldest_ts is not None and newest_ts is not None else 0
-            required=min_cov.get(name,30_000)
+            required=max(10_000, int(duration * 0.50))
             usable=bool(current is not None and base not in (None,0) and len(inside)>=2 and coverage>=required)
             change=(current-base) if usable else None
             change_pct=(change/base*100) if usable else None
             result["windows"][name]={
                 "start":base,"change":round(change,8) if change is not None else None,
                 "change_pct":round(change_pct,6) if change_pct is not None else None,
-                "sample_count":len(inside),"coverage_ms":coverage,
+                "sample_count":len(inside),"coverage_ms":coverage,"window_ms":duration,
+                "coverage_ratio":round(min(1.0, coverage/max(duration,1)),4),
                 "required_coverage_ms":required,"usable":usable,
             }
         return result
@@ -2936,14 +2972,19 @@ class MarketStream:
 
     def _book_metrics(self):
 
+        age_seconds = (time.time() - self.orderbook_updated_at) if self.orderbook_updated_at else None
+        fresh = bool(age_seconds is not None and age_seconds <= 15.0)
         if (
             not self.orderbook_ready
             or not self.bids
             or not self.asks
+            or not fresh
         ):
 
             return {
-                "ready": False
+                "ready": False,
+                "fresh": fresh,
+                "age_seconds": round(age_seconds, 3) if age_seconds is not None else None,
             }
 
         best_bid = max(
@@ -3002,6 +3043,8 @@ class MarketStream:
 
             "ready":
                 True,
+            "fresh": True,
+            "age_seconds": round(age_seconds, 3) if age_seconds is not None else None,
 
             "best_bid":
                 best_bid,
@@ -3108,6 +3151,9 @@ class MarketStream:
 
                 "available":
                     self.available,
+
+                "capability_state":
+                    self.capability_state,
 
                 "session_id":
                     self.session_id,
@@ -3531,8 +3577,8 @@ class DynamicMarketManager:
                 "spot_warm":spot.get("warmup",{}).get(w,False),
                 "perp_trade_count":l.get("trade_count",0),
                 "spot_trade_count":s.get("trade_count",0),
-                "perp_flow_usable":bool(l.get("trade_count",0) >= 2 and pd is not None and pp is not None),
-                "spot_flow_usable":bool(s.get("trade_count",0) >= 2 and sd is not None and sp is not None),
+                "perp_flow_usable":bool(lq.get("ready") and pd is not None and pp is not None),
+                "spot_flow_usable":bool(sq.get("ready") and sd is not None and sp is not None),
                 "perp_flow_quality":lq,
                 "spot_flow_quality":sq,
                 "sample_quality":round(sample_quality,4),
@@ -3550,7 +3596,12 @@ class DynamicMarketManager:
         # Confidence is not category share: four nested windows are correlated.
         # Cap it by the strongest quality-adjusted single-window evidence.
         strongest=max((float(d.get("driver_confidence") or 0.0) for d in windows.values() if d.get("driver")==overall_driver), default=0.0)
-        overall_conf=min(category_share, strongest)
+        # Nested horizons are correlated. Confidence may mature only as genuinely
+        # distinct rolling horizons become quality-ready; one minute of tape must
+        # not produce a categorical 1.0 driver call.
+        agreeing_ready=[w for w,d in windows.items() if d.get("driver")==overall_driver and d.get("linear_warm") and d.get("spot_warm")]
+        horizon_cap={0:0.0,1:0.55,2:0.75,3:0.90,4:0.97}.get(len(agreeing_ready),0.97)
+        overall_conf=min(category_share, strongest, horizon_cap)
 
         imbalance=book.get("imbalance_50") if book.get("ready") else None
         pressure="neutral"
@@ -3572,7 +3623,10 @@ class DynamicMarketManager:
             elif ch<0 and pc<0: oi_context="long_liquidation_or_position_reduction"
             break
 
-        transport_ready=bool(linear.get("connected") and spot.get("connected") and book.get("ready"))
+        ticker_updated=fnum(ticker.get("updated_at"))
+        ticker_age=(time.time()-ticker_updated) if ticker_updated is not None else None
+        ticker_fresh=bool(ticker_age is not None and ticker_age <= 15.0)
+        transport_ready=bool(linear.get("connected") and spot.get("connected") and book.get("ready") and ticker_fresh)
         warmed_flow_windows=[
             w for w,data in windows.items()
             if data.get("linear_warm") and data.get("spot_warm")
@@ -3592,6 +3646,9 @@ class DynamicMarketManager:
             "warmed_flow_windows":warmed_flow_windows,
             "price":price,
             "spread_bps":book.get("spread_bps"),
+            "orderbook_age_seconds":book.get("age_seconds"),
+            "ticker_age_seconds":round(ticker_age,3) if ticker_age is not None else None,
+            "ticker_fresh":ticker_fresh,
             "book_imbalance":imbalance,
             "book_pressure":pressure,
             "funding_rate":funding,
@@ -3911,22 +3968,31 @@ class DynamicMarketManager:
             base["flow_ready"]=bool(warmed)
             base["driver_ready"]=bool(warmed)
             pq=max((float(windows[w].get("perp_flow_quality",{}).get("quality") or 0.0) for w in warmed), default=0.0)
+            maturity_cap={0:0.0,1:0.55,2:0.75,3:0.90,4:0.97}.get(len(warmed),0.97)
+            pq=min(pq,maturity_cap)
             base["driver"]={"primary":"perp_only" if warmed else "unknown",
                             "confidence":round(pq,4),"votes":{"perp_only":round(pq,4)}}
             base["driver_ready"]=bool(warmed and pq>=0.20)
-            base["ready"]=bool(linear.get("connected") and (linear.get("orderbook") or {}).get("ready"))
-            base["trade_data_ready"]=bool(base["ready"] and base.get("price") is not None and warmed)
+            ticker=(linear.get("ticker") or {})
+            tu=fnum(ticker.get("updated_at")); tfresh=bool(tu is not None and time.time()-tu<=15.0)
+            base["ticker_age_seconds"]=round(time.time()-tu,3) if tu is not None else None
+            base["ticker_fresh"]=tfresh
+            base["ready"]=bool(linear.get("connected") and (linear.get("orderbook") or {}).get("ready") and tfresh)
+            base["trade_data_ready"]=bool(base["ready"] and base.get("price") is not None and base["driver_ready"] and warmed)
             base["flow_divergences"]=[]
         base["execution_mode"]=mode
         base["market_capabilities"]={"linear":linear.get("available") is not False,
                                      "spot":spot_available is not False,
-                                     "spot_state":spot_available}
+                                     "spot_state":spot_available,
+                                     "linear_capability_state":linear.get("capability_state","unknown"),
+                                     "spot_capability_state":spot.get("capability_state","unknown")}
 
         # Rich execution regime; context only, never a direction vote by itself.
         regime="unknown"
         for w in ("1m","5m","15m","1h"):
             d=windows.get(w,{})
-            if not d.get("linear_warm"): continue
+            if not d.get("linear_warm") or not d.get("perp_flow_usable"): continue
+            if mode=="spot_perp" and (not d.get("spot_warm") or not d.get("spot_flow_usable")): continue
             pd=d.get("perp_delta_ratio"); sd=d.get("spot_delta_ratio"); oi=d.get("oi_change_pct"); pc=d.get("perp_price_change_pct")
             if pd is None or pc is None: continue
             if mode=="perp_only": regime="perp_only"; break
@@ -4241,7 +4307,7 @@ class DynamicMarketManager:
         return {
             "symbol": symbol,
             "generated_at": time.time(),
-            "engine_version": "scan_plus_v3_8_5",
+            "engine_version": "scan_plus_v3_8_7",
             "linear": linear,
             "spot": spot,
             "driver": self._driver(linear, spot),
@@ -4358,6 +4424,9 @@ class DynamicMarketManager:
                 "book_pressure":execution.get("book_pressure"),
                 "book_imbalance":execution.get("book_imbalance"),
                 "spread_bps":execution.get("spread_bps"),
+                "orderbook_age_seconds":execution.get("orderbook_age_seconds"),
+                "ticker_age_seconds":execution.get("ticker_age_seconds"),
+                "ticker_fresh":execution.get("ticker_fresh"),
                 "windows":execution.get("windows",{}),
             },
             "setup":{
@@ -4369,21 +4438,23 @@ class DynamicMarketManager:
     def replay_no_lookahead(self, candles_by_tf, checkpoints=None):
         """Deterministic prefix replay for regression tests.
 
-        Each checkpoint analyzes only candles whose start is <= that checkpoint and
-        only confirmed candles enter _analysis_bundle. This is intentionally a test
-        harness, not a trading signal endpoint.
+        Each checkpoint analyzes only candles that were fully closed by that
+        checkpoint. A candle whose start precedes the checkpoint but whose end is in
+        the future is excluded even if the stored row later has confirm=True. This is
+        intentionally a test harness, not a trading signal endpoint.
         """
         checkpoints = list(checkpoints or [])
         if not checkpoints:
-            starts=sorted({int(r.get("start")) for rows in candles_by_tf.values() for r in rows if r.get("start") is not None})
-            checkpoints=starts[-10:]
+            ends=sorted({int(r.get("end")) for rows in candles_by_tf.values() for r in rows if r.get("end") is not None and r.get("confirm")})
+            checkpoints=ends[-10:]
         out=[]
         # Use a bare MarketStream analysis object: analysis methods do not require WS.
         analyzer=MarketStream.__new__(MarketStream)
         for cp in checkpoints:
             frame={}
             for tf,rows in candles_by_tf.items():
-                prefix=[dict(r) for r in rows if int(r.get("start",0))<=int(cp)]
+                prefix=[dict(r) for r in rows
+                        if r.get("confirm") and r.get("end") is not None and int(r.get("end",0))<=int(cp)]
                 frame[tf]=analyzer._analysis_bundle(prefix) if prefix else {"ready":False}
             out.append({"checkpoint":cp,"analysis":frame})
         return out
@@ -4401,10 +4472,13 @@ class DynamicMarketManager:
             "linear": linear,
             "spot": spot,
             "overall": {
-                "realtime_pass": bool(linear["realtime_pass"] and spot["realtime_pass"]),
+                "execution_mode": "perp_only" if spot.get("available") is False else "spot_perp",
+                "realtime_pass": bool(linear["realtime_pass"] and (spot["realtime_pass"] if spot.get("available") is not False else True)),
                 "historical_analysis_pass": bool(linear.get("analysis_full_6_of_6")),
                 "linear_technical_pass": bool(linear["full_technical_pass"]),
                 "spot_realtime_only": True,
+                "spot_required": spot.get("available") is not False,
+                "spot_capability_state": spot.get("capability_state","unknown"),
             },
         }
 
