@@ -7,6 +7,9 @@ New market adapters can replace the backend without changing orchestration.
 from typing import Protocol
 
 
+SHARED_BLOCKS = frozenset({"structure_mtf", "structure", "fibonacci", "elliott", "harmonics"})
+
+
 class AnalyticalBackend(Protocol):
     def structure(self, rows): ...
     def fibonacci(self, rows, structure): ...
@@ -14,8 +17,12 @@ class AnalyticalBackend(Protocol):
     def harmonics(self, structure): ...
 
 
-class LegacyCryptoBackend:
-    """Compatibility backend wrapping the existing canonical Scan+ calculations."""
+class CanonicalPricePatternBackend:
+    """Market-neutral compatibility backend for canonical price-pattern calculations.
+
+    The implementation source is still the legacy reference during extraction, but
+    the analytical contract itself contains no Crypto-specific market assumptions.
+    """
     def __init__(self):
         from dynamic_collector import MarketStream
         self._stream_cls=MarketStream
@@ -32,6 +39,10 @@ class LegacyCryptoBackend:
 
     def harmonics(self, structure):
         return self._stream_cls._harmonic_metrics(self._instance, structure)
+
+
+class LegacyCryptoBackend(CanonicalPricePatternBackend):
+    """Backward-compatible name for tests/integration during migration."""
 
 
 class AnalyticalEngine:
@@ -57,17 +68,32 @@ class AnalyticalEngine:
             result["harmonics"]=self.backend.harmonics(structure)
         return result
 
-    def analyze_profiled(self, rows, priorities):
-        """Run only the requested blocks, preserving priority order."""
+    @staticmethod
+    def split_priorities(priorities):
         ordered=list(priorities or [])
         aliases={
             "structure_mtf":"structure",
+            "structure":"structure",
             "fibonacci":"fibonacci",
             "elliott":"elliott",
             "harmonics":"harmonics",
         }
-        requested=[aliases[name] for name in ordered if name in aliases]
-        return self.analyze(rows,requested=requested)
+        shared=[]
+        context=[]
+        for name in ordered:
+            if name in aliases:
+                if aliases[name] not in shared:
+                    shared.append(aliases[name])
+            else:
+                context.append(name)
+        return shared, context
+
+    def analyze_profiled(self, rows, priorities):
+        """Run shared blocks only and explicitly return market-context requests."""
+        shared, context=self.split_priorities(priorities)
+        result=self.analyze(rows,requested=shared)
+        result["_context_blocks_requested"]=context
+        return result
 
     @staticmethod
     def compare(reference, candidate):
