@@ -5,6 +5,7 @@ from flask import Flask, jsonify, request
 from collector import collector
 from spot_collector import spot_collector
 from dynamic_collector import (dynamic_manager, run_bybit_prescan_ws_probe, run_prescan, run_scan_auto, run_scan_single, run_scan_batch, start_scan_auto_job, start_scan_batch_job, get_scan_job)
+from scan_plus.markets.crypto.shadow_report import evaluate_recorded_symbol
 
 app = Flask(__name__)
 
@@ -160,6 +161,20 @@ def scan_dynamic(symbol):
         return jsonify(dynamic_manager.scan(symbol))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@app.get("/shadow-x25/<symbol>")
+def shadow_x25_report(symbol):
+    """Diagnostics only. Never authorizes a trade."""
+    try:
+        min_triggers = int(request.args.get("min_triggers", "30"))
+        if min_triggers < 1:
+            raise ValueError("min_triggers must be >= 1")
+        return jsonify(evaluate_recorded_symbol(symbol, min_triggers=min_triggers))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"status":"FAIL","error":f"{type(exc).__name__}: {exc}"}), 500
 
 
 @app.get("/diagnostics/<symbol>")
