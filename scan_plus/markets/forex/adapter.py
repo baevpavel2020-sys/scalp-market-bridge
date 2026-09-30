@@ -12,6 +12,7 @@ from scan_plus.core.analytical_engine import AnalyticalEngine, CanonicalPricePat
 from scan_plus.core.sessions import active_sessions, session_overlap
 from scan_plus.core.session_levels import session_high_low
 from scan_plus.markets.forex.stooq import StooqFXLoader
+from scan_plus.markets.forex.session_liquidity import session_interaction, session_sweep
 
 
 class ForexMarketAdapter(MarketAdapter):
@@ -83,10 +84,21 @@ class ForexMarketAdapter(MarketAdapter):
         for label,interval in (("5m","5"),("15m","15"),("1h","60"),("4h","240")):
             data=self.loader.candles(symbol,interval=interval)
             rows=self._normalize_rows(data.get("candles"))
+            sessions=self._session_context(rows)
             frames[label]={
                 "bars":len(rows),
                 "analysis":self.engine.analyze_profiled(rows,profile.get("scan") or []),
-                "sessions":self._session_context(rows),
+                "sessions":sessions,
+                "session_liquidity":{
+                    "asia":session_interaction(rows[-1].get("close") if rows else None,sessions.get("asia")),
+                    "london":session_interaction(rows[-1].get("close") if rows else None,sessions.get("london")),
+                    "new_york":session_interaction(rows[-1].get("close") if rows else None,sessions.get("new_york")),
+                    "latest_candle_sweeps":{
+                        "asia":session_sweep(rows,sessions.get("asia")),
+                        "london":session_sweep(rows,sessions.get("london")),
+                        "new_york":session_sweep(rows,sessions.get("new_york")),
+                    },
+                },
             }
         # Use the newest candle across frames for the situation timestamp.
         all_ts=[]
