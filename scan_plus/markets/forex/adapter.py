@@ -57,7 +57,7 @@ class ForexMarketAdapter(MarketAdapter):
         context={}
         ts=self._latest_timestamp(rows)
         for name in ("asia","london","new_york"):
-            context[name]=session_high_low(rows,market="forex",session=name)
+            context[name]=session_high_low(rows,market="forex",session=name,before_timestamp_ms=ts)
         context["active"]=active_sessions("forex",ts)
         context["overlap"]=session_overlap("forex",ts)
         context["timestamp_ms"]=ts
