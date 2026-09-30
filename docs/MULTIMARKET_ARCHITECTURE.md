@@ -306,3 +306,13 @@ The two previously identified integration gates are now addressed:
 2. Analytical priorities are explicitly split into `shared` blocks and `market context` blocks. `AnalyticalEngine.analyze_profiled()` now reports requested context blocks instead of silently dropping them. Market adapters remain responsible for implementing their own context evidence.
 
 This prevents a priority profile from claiming that a market-specific block was calculated when only the shared analytical core ran.
+
+
+## Cycle 4 — Forex — step 2/4
+
+- Added FX-specific session-liquidity context separate from the shared analytical core.
+- Session interaction exposes whether price is inside/above/below the latest Asia/London/New York range.
+- Latest-candle range interaction can identify a session high/low sweep only when the candle returns inside the prior session range; it does not infer trade direction.
+- Forex adapter now exposes this evidence per timeframe.
+- Fixed the Forex adapter to use the market-neutral `CanonicalPricePatternBackend` after the previous conflict audit.
+- Session evidence remains context; it cannot override unresolved Structure/Elliott/Fibonacci analysis.
