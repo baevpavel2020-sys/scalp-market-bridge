@@ -19,7 +19,7 @@ def _structure_state(frames):
 def _fibo_ready(frames):
     for tf in ("15m","1h","4h"):
         fib=((frames.get(tf) or {}).get("analysis") or {}).get("fibonacci")
-        if isinstance(fib,Mapping) and fib:
+        if isinstance(fib,Mapping) and fib.get("ready") is True:
             return True,tf
     return False,None
 
