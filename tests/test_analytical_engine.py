@@ -16,6 +16,11 @@ class AnalyticalEngineTests(unittest.TestCase):
         self.assertNotIn("elliott",out)
         self.assertNotIn("harmonics",out)
 
+    def test_profiled_analysis_maps_priority_names(self):
+        out=AnalyticalEngine(FakeBackend()).analyze_profiled(
+            [],["structure_mtf","fibonacci"])
+        self.assertEqual(set(out),{"structure","fibonacci"})
+
     def test_legacy_backend_has_all_shared_tools(self):
         backend=LegacyCryptoBackend()
         self.assertTrue(all(callable(getattr(backend,name)) for name in
