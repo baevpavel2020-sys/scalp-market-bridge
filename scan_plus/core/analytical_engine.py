@@ -39,7 +39,10 @@ class AnalyticalEngine:
         self.backend=backend
 
     def analyze(self, rows, *, requested=None):
-        requested=set(requested or ("structure","fibonacci","elliott","harmonics"))
+        if requested is None:
+            requested={"structure","fibonacci","elliott","harmonics"}
+        else:
+            requested=set(requested)
         supported={"structure","fibonacci","elliott","harmonics"}
         requested &= supported
         result={}
