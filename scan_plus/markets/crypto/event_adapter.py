@@ -9,6 +9,7 @@ from scan_plus.core.liquidity_leverage import classify_liquidity_leverage
 from scan_plus.markets.crypto.manipulation_x25 import manipulation_x25_state
 from scan_plus.markets.crypto.post_pump import detect_post_pump_pipeline
 from scan_plus.markets.crypto.reversal_trigger import detect_bearish_reversal_trigger
+from scan_plus.markets.crypto.observables import extract_crypto_observables
 
 
 def _num(value):
@@ -22,38 +23,20 @@ def _tf(scan, tf):
     return ((scan.get("timeframes") or {}).get(tf) or {})
 
 
-def build_crypto_event_evidence(scan: Mapping[str, Any]):
+def build_crypto_event_evidence(scan: Mapping[str, Any], observables=None):
+    o=observables or extract_crypto_observables(scan)
     execution=scan.get("execution") or {}
     direction=(scan.get("direction") or {}).get("bias") or scan.get("direction")
     if isinstance(direction,dict):
         direction=direction.get("direction")
 
-    sweeps=[]
-    for tf in ("1","5","15","60"):
-        liq=_tf(scan,tf).get("liquidity") or {}
-        sweep=liq.get("sweep")
-        if sweep:
-            sweeps.append((tf,sweep))
-
-    # A buy-side sweep is bearish evidence only when acceptance/structure later fail;
-    # a sell-side sweep is bullish evidence under the mirror condition.
-    sweep_direction=None
-    if any(v=="buy_side_swept" for _,v in sweeps):
-        sweep_direction="bearish"
-    elif any(v=="sell_side_swept" for _,v in sweeps):
-        sweep_direction="bullish"
-
-    windows=execution.get("windows") or {}
-    window=windows.get("5m") or windows.get("15m") or {}
-    perp_delta=_num(window.get("perp_delta_ratio"))
-    spot_delta=_num(window.get("spot_delta_ratio"))
-    oi_change=_num(window.get("oi_change_pct"))
-    funding=_num(execution.get("funding_rate"))
-
-    divergences=execution.get("flow_divergences") or []
-    spot_not_confirming_up=any(
-        d.get("type")=="price_up_perp_led_spot_not_confirming" for d in divergences if isinstance(d,dict)
-    )
+    sweeps=o["sweeps"]
+    sweep_direction=o["sweep_direction"]
+    perp_delta=o["perp_delta_ratio"]
+    spot_delta=o["spot_delta_ratio"]
+    oi_change=o["oi_change_pct"]
+    funding=o["funding_rate"]
+    spot_not_confirming_up=o["spot_not_confirming_up"]
 
     # Conservative observable proxies. These are candidates, not final truth.
     crowded_long=bool(funding is not None and funding > 0 and oi_change is not None and oi_change > 0)
@@ -115,9 +98,10 @@ def build_crypto_event_evidence(scan: Mapping[str, Any]):
     return normalized, x25
 
 
-def observe_crypto_events(scan: Mapping[str, Any]):
-    normalized,x25=build_crypto_event_evidence(scan)
-    pipeline=detect_post_pump_pipeline(scan)
+def observe_crypto_events(scan: Mapping[str, Any], adaptive_abnormal=None):
+    observables=extract_crypto_observables(scan)
+    normalized,x25=build_crypto_event_evidence(scan, observables)
+    pipeline=detect_post_pump_pipeline(scan, observables, adaptive_abnormal=adaptive_abnormal)
     reversal=detect_bearish_reversal_trigger(scan)
 
     # Upgrade only with explicitly confirmed detector stages. Execution trigger
