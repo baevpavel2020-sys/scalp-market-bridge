@@ -24,12 +24,12 @@ class StocksMarketAdapter(MarketAdapter):
     def _underlying(self, symbol):
         if self.underlying_provider is None:
             return None
-        return dict(self.underlying_provider.quote(symbol))
+        return self.underlying_provider.normalize(symbol, self.underlying_provider.quote(symbol))
 
     @staticmethod
     def _gap_context(underlying):
-        if not underlying:
-            return {"ready": False, "reason": "underlying_provider_unavailable"}
+        if not underlying or not underlying.get("ready", True):
+            return {"ready": False, "reason": (underlying or {}).get("reason", "underlying_provider_unavailable")}
         current_open = underlying.get("session_open", underlying.get("open"))
         previous_close = underlying.get("previous_close", underlying.get("prev_close"))
         if current_open is None or previous_close is None:
