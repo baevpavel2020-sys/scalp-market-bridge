@@ -11,6 +11,7 @@ from scan_plus.priority_engine import resolve_priorities
 from scan_plus.core.analytical_engine import AnalyticalEngine, CanonicalPricePatternBackend
 from scan_plus.markets.commodities.loader import CommodityLoader
 from scan_plus.markets.commodities.context import build_commodity_context
+from scan_plus.markets.commodities.candidate import build_commodity_candidate
 
 
 class CommoditiesMarketAdapter(MarketAdapter):
@@ -92,6 +93,9 @@ class CommoditiesMarketAdapter(MarketAdapter):
             "priority":resolve_priorities("commodities",symbol,"continuation"),
             "frames":frames,
             "instrument_group":profile.get("group"),
+            "candidate":build_commodity_candidate(
+                symbol=symbol, group=profile.get("group"), frames=frames
+            ),
             "latest_timestamp_ms":latest,
             "execution_context":{
                 "product":"commodity",
