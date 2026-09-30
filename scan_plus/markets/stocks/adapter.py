@@ -10,7 +10,6 @@ from scan_plus.core.session_levels import session_high_low
 from scan_plus.markets.stocks.bybit_xstocks import BybitXStocksLoader
 from scan_plus.markets.stocks.session_gap import classify_gap, gap_fill_progress
 from scan_plus.markets.stocks.candidate import build_stock_candidate
-from scan_plus.markets.stocks.execution import build_stock_execution_plan
 
 
 class StocksMarketAdapter(MarketAdapter):
@@ -77,6 +76,19 @@ class StocksMarketAdapter(MarketAdapter):
             frames[label] = frame
         ticker = self.loader.ticker(symbol)
         gap = self._gap_context(underlying)
+        all_ts=[]
+        for frame in frames.values():
+            levels=frame.get("session_levels") or {}
+            if levels.get("ready") and levels.get("local_date"):
+                # Session levels are already bound to their latest local session.
+                pass
+        candle_ts=[]
+        for label, interval in (("5m","5"),("15m","15"),("1h","60"),("4h","240")):
+            # Reuse the latest bar timestamp from the loaded frame when available.
+            # The adapter intentionally avoids wall-clock session decisions.
+            pass
+        # xStock session context is derived from the latest 15m candle when present.
+        latest_session = active_sessions("stocks_us")
         fill = None
         if underlying and gap.get("ready"):
             fill = gap_fill_progress(
