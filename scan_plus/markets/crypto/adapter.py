@@ -10,6 +10,7 @@ from scan_plus.contracts import MarketAdapter
 from scan_plus.market_profiles import get_profile
 from scan_plus.markets.crypto.event_adapter import observe_crypto_events
 from scan_plus.core.rolling_baseline import RollingMoveBaseline
+from scan_plus.markets.crypto.shadow_recorder import ShadowRecorder
 
 
 class CryptoMarketAdapter(MarketAdapter):
@@ -19,6 +20,7 @@ class CryptoMarketAdapter(MarketAdapter):
         self._manager = manager or dynamic_manager
         self._prescan_runner = prescan_runner or run_prescan
         self._move_baselines = {}
+        self._shadow_recorder = ShadowRecorder()
 
     def profile(self, symbol=None):
         return get_profile(self.market, symbol)
@@ -58,6 +60,16 @@ class CryptoMarketAdapter(MarketAdapter):
             }
 
         result["event_engine"] = event_engine
+        # Record the exact point-in-time evidence used by shadow mode. Recording
+        # failure must never break the live scanner.
+        try:
+            self._shadow_recorder.record(legacy, event_engine)
+        except (OSError, TypeError, ValueError) as exc:
+            result["event_engine"]["shadow_recording"] = {
+                "ok": False, "error": f"{type(exc).__name__}: {exc}"
+            }
+        else:
+            result["event_engine"]["shadow_recording"] = {"ok": True}
         return result
 
     def diagnostics(self, symbol: str) -> Mapping[str, Any]:
