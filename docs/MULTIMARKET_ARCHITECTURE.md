@@ -316,3 +316,16 @@ This prevents a priority profile from claiming that a market-specific block was 
 - Forex adapter now exposes this evidence per timeframe.
 - Fixed the Forex adapter to use the market-neutral `CanonicalPricePatternBackend` after the previous conflict audit.
 - Session evidence remains context; it cannot override unresolved Structure/Elliott/Fibonacci analysis.
+
+
+## Forex step-2 audit — completed
+
+Audit found one substantive logic issue and fixed it:
+- Session liquidity was comparing the latest candle against the range of the same latest session. That cannot represent a true prior-session sweep and could make session evidence misleading.
+- `session_high_low()` now accepts an explicit `before_timestamp_ms` cutoff.
+- Forex session context now requests each Asia/London/New York range strictly before the current scan timestamp, so sweep evidence references the latest prior available session rather than the current session itself.
+
+The existing session rules remain timezone-aware and weekend-safe.
+The session-liquidity module still does not infer trade direction.
+
+Test-file creation for this exact new module was attempted but the GitHub write operation was blocked by the tool safety layer; therefore no test is claimed as created for that module. The logic remains an explicit audit item for the final regression pass.
