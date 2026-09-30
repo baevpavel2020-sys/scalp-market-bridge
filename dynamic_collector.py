@@ -1,4 +1,5 @@
 import csv
+import concurrent.futures
 import datetime as dt
 import io
 import json
@@ -5500,7 +5501,7 @@ def run_bybit_prescan_ws_probe(symbols=None, timeout=12.0):
 class OnDemandPreScanService:
     """Manual PreScan. No permanent universe collector and no Scan+ activation."""
 
-    VERSION = "prescan_v3_0_final"
+    VERSION = "prescan_v3_1_final_candidate"
     # Deliberately broad but static v1 universe. Invalid/delisted symbols are
     # isolated by recursive WS batches and cannot poison the whole run.
     DEFAULT_UNIVERSE = (
@@ -5525,17 +5526,33 @@ class OnDemandPreScanService:
     _cache_lock = threading.RLock()
     _history_cache = {}
     _provider_route_cache = {}
-    _ticker_cache = None
-    _ticker_cache_at = 0.0
-    TICKER_CACHE_TTL = 90.0
+
+    # Single-flight: one network history fetch per symbol at a time.
+    # Concurrent callers share the same Future instead of duplicating 3-TF REST work.
+    _inflight_lock = threading.RLock()
+    _history_inflight = {}
+
+    # Lightweight background snapshot cache. No Scan+ analysis runs here.
     WARM_CACHE_ENABLED = os.environ.get("PRESCAN_WARM_CACHE", "1").strip().lower() not in ("0","false","no")
     WARM_CACHE_INTERVAL = 240.0
+    WARM_CACHE_START_DELAY = 0.8
+    TICKER_CACHE_TTL = 90.0
+    _ticker_cache = None
+    _ticker_cache_at = 0.0
     _warm_symbols = []
-    _warmer_lock = threading.Lock()
+    _warmer_lock = threading.RLock()
     _warmer_started = False
     _warmer_thread = None
-    _warm_status = {"started_at":None,"last_finished_at":None,"last_elapsed_ms":None,
-                    "last_success":0,"last_failed":0,"ready_symbols":0,"last_error":None}
+    _warm_status = {
+        "started_at": None, "last_started_at": None, "last_finished_at": None,
+        "last_elapsed_ms": None, "last_success": 0, "last_failed": 0,
+        "ready_symbols": 0, "last_error": None,
+    }
+
+    # Cross-venue history is allowed only when its latest close is plausibly
+    # consistent with the current Bybit perpetual ticker. Prevents e.g. wrong
+    # contract/unit mappings from entering structural analysis.
+    PRICE_SANITY_MAX_RATIO = 1.35
 
     @staticmethod
     def _clean_symbols(symbols):
@@ -5895,7 +5912,7 @@ class OnDemandPreScanService:
     def _http_json(cls, url, timeout=4.0):
         cls._provider_throttle(url)
         req = urllib.request.Request(url, headers={
-            "User-Agent": "scalp-market-bridge/3.0",
+            "User-Agent": "scalp-market-bridge/3.1",
             "Accept": "application/json",
         })
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -6094,7 +6111,7 @@ class OnDemandPreScanService:
                 pass
 
     @classmethod
-    def _fetch_history_bundle(cls, symbol):
+    def _fetch_history_bundle_core(cls, symbol):
         """Fetch a compact fresh 3-TF history without TradingView.
 
         Provider order deliberately prefers derivative markets (OKX, KuCoin)
@@ -6108,12 +6125,8 @@ class OnDemandPreScanService:
         with cls._cache_lock:
             for tf in ("5", "15", "60"):
                 cached = cls._history_cache.get((symbol, tf))
-                if cached:
-                    rows, err = cls._validate_provider_rows(cached[1], tf)
-                    if not err and len(rows) >= PreScanEngine.MIN_CANDLES[tf]:
-                        cached_rows[tf] = [dict(x) for x in rows]
-                    else:
-                        complete_cache = False
+                if cached and now - cached[0] <= cls.CACHE_TTL:
+                    cached_rows[tf] = [dict(x) for x in cached[1]]
                 else:
                     complete_cache = False
         if complete_cache:
@@ -6155,16 +6168,54 @@ class OnDemandPreScanService:
             for tf in ("5","15","60")
         }
 
+    @classmethod
+    def _fetch_history_bundle(cls, symbol):
+        """Single-flight wrapper around the validated provider chain.
+
+        Exactly one caller owns a symbol's network fetch. Other concurrent
+        callers wait for and reuse that same result. This prevents the warmer
+        and /prescan from doubling REST load during startup.
+        """
+        # Fast path: validated memory/disk/provider logic may already return
+        # immediately. Single-flight is only useful around the whole operation,
+        # including a possible disk read, and keeps behavior deterministic.
+        owner = False
+        with cls._inflight_lock:
+            fut = cls._history_inflight.get(symbol)
+            if fut is None:
+                fut = concurrent.futures.Future()
+                cls._history_inflight[symbol] = fut
+                owner = True
+
+        if not owner:
+            try:
+                return fut.result(timeout=cls.HISTORY_GLOBAL_TIMEOUT + 2.0)
+            except Exception as exc:
+                return ({tf: [] for tf in ("5","15","60")},
+                        {tf: "unavailable" for tf in ("5","15","60")},
+                        {tf: f"shared_history_fetch_failed:{type(exc).__name__}:{exc}" for tf in ("5","15","60")})
+
+        try:
+            result = cls._fetch_history_bundle_core(symbol)
+            fut.set_result(result)
+            return result
+        except Exception as exc:
+            fut.set_exception(exc)
+            raise
+        finally:
+            with cls._inflight_lock:
+                if cls._history_inflight.get(symbol) is fut:
+                    cls._history_inflight.pop(symbol, None)
+
+
 
     @classmethod
     def _cache_symbol_ready(cls, symbol):
+        now = time.time()
         with cls._cache_lock:
             for tf in ("5","15","60"):
                 cached = cls._history_cache.get((symbol, tf))
-                if not cached:
-                    return False
-                rows, err = cls._validate_provider_rows(cached[1], tf)
-                if err or len(rows) < PreScanEngine.MIN_CANDLES[tf]:
+                if not cached or now - cached[0] > cls.CACHE_TTL:
                     return False
         return True
 
@@ -6172,49 +6223,53 @@ class OnDemandPreScanService:
     def _warm_once(cls):
         started = time.time()
         base = cls._clean_symbols(cls.DEFAULT_UNIVERSE)
-        try:
-            tickers, _, _ = cls._discover_tickers(base)
-            if tickers:
-                with cls._cache_lock:
-                    cls._ticker_cache = {k:dict(v) for k,v in tickers.items()}
-                    cls._ticker_cache_at = time.time()
-                universe = sorted(tickers, key=lambda s: fnum(tickers[s].get("turnover24h")) or 0.0,
-                                  reverse=True)[:cls.TOP_BY_TURNOVER]
-                cls._warm_symbols = list(universe)
-            else:
-                universe = list(cls._warm_symbols)
-        except Exception:
-            universe = list(cls._warm_symbols)
-        ok=failed=0
-        if universe:
-            with ThreadPoolExecutor(max_workers=min(cls.HISTORY_WORKERS,len(universe))) as ex:
-                fs={ex.submit(cls._fetch_history_bundle,s):s for s in universe}
-                done,pending=wait(list(fs),timeout=cls.HISTORY_GLOBAL_TIMEOUT)
-                for f in done:
-                    try:
-                        b,_,e=f.result()
-                        good=(not e and all(len(b.get(tf) or [])>=PreScanEngine.MIN_CANDLES[tf] for tf in ("5","15","60")))
-                        ok+=int(good); failed+=int(not good)
-                    except Exception:
-                        failed+=1
-                for f in pending:
-                    f.cancel(); failed+=1
+        tickers, ws_errors, _ = cls._discover_tickers(base)
+        if not tickers:
+            raise RuntimeError("warm_ticker_discovery_failed:" + ",".join(ws_errors[:3]))
+
+        ranked = sorted(tickers, key=lambda s: fnum(tickers[s].get("turnover24h")) or 0.0,
+                        reverse=True)[:cls.TOP_BY_TURNOVER]
+        with cls._cache_lock:
+            cls._ticker_cache = {k: dict(v) for k,v in tickers.items()}
+            cls._ticker_cache_at = time.time()
+            cls._warm_symbols = list(ranked)
+
+        ok = failed = 0
+        with ThreadPoolExecutor(max_workers=min(cls.HISTORY_WORKERS, max(1,len(ranked)))) as ex:
+            fs = {ex.submit(cls._fetch_history_bundle, s): s for s in ranked}
+            done, pending = wait(list(fs), timeout=cls.HISTORY_GLOBAL_TIMEOUT)
+            for f in done:
+                try:
+                    b, _, e = f.result()
+                    good = not e and all(len(b.get(tf) or []) >= PreScanEngine.MIN_CANDLES[tf]
+                                         for tf in ("5","15","60"))
+                    ok += int(good); failed += int(not good)
+                except Exception:
+                    failed += 1
+            for f in pending:
+                f.cancel(); failed += 1
+
         with cls._warmer_lock:
-            cls._warm_status.update({"last_finished_at":time.time(),
-                "last_elapsed_ms":round((time.time()-started)*1000,2),
-                "last_success":ok,"last_failed":failed,
-                "ready_symbols":sum(1 for s in universe if cls._cache_symbol_ready(s))})
-        return ok,failed
+            cls._warm_status.update({
+                "last_finished_at": time.time(),
+                "last_elapsed_ms": round((time.time()-started)*1000.0,2),
+                "last_success": ok, "last_failed": failed,
+                "ready_symbols": sum(1 for s in ranked if cls._cache_symbol_ready(s)),
+            })
 
     @classmethod
     def _warmer_loop(cls):
-        time.sleep(0.8)
+        time.sleep(cls.WARM_CACHE_START_DELAY)
         while True:
+            with cls._warmer_lock:
+                cls._warm_status["last_started_at"] = time.time()
             try:
                 cls._warm_once()
-                with cls._warmer_lock: cls._warm_status["last_error"]=None
+                with cls._warmer_lock:
+                    cls._warm_status["last_error"] = None
             except Exception as exc:
-                with cls._warmer_lock: cls._warm_status["last_error"]=f"{type(exc).__name__}:{exc}"
+                with cls._warmer_lock:
+                    cls._warm_status["last_error"] = f"{type(exc).__name__}:{exc}"
             time.sleep(cls.WARM_CACHE_INTERVAL)
 
     @classmethod
@@ -6224,10 +6279,11 @@ class OnDemandPreScanService:
         with cls._warmer_lock:
             if cls._warmer_started and cls._warmer_thread and cls._warmer_thread.is_alive():
                 return True
-            cls._warmer_started=True
-            cls._warm_status["started_at"]=time.time()
-            th=threading.Thread(target=cls._warmer_loop,name="prescan-cache-warmer",daemon=True)
-            cls._warmer_thread=th; th.start()
+            cls._warmer_started = True
+            cls._warm_status["started_at"] = time.time()
+            th = threading.Thread(target=cls._warmer_loop, name="prescan-cache-warmer", daemon=True)
+            cls._warmer_thread = th
+            th.start()
             return True
 
     @classmethod
@@ -6243,7 +6299,32 @@ class OnDemandPreScanService:
         return MarketStream._structure_metrics(adapter, rows)
 
     @classmethod
+    def _history_price_sanity(cls, ticker, histories):
+        bybit = fnum(ticker.get("lastPrice")) or fnum(ticker.get("last_price"))
+        if not bybit or bybit <= 0:
+            return False, "bybit_price_unavailable", None
+        closes = []
+        for tf in ("5","15","60"):
+            rows = histories.get(tf) or []
+            if not rows:
+                return False, f"history_price_unavailable:{tf}", None
+            c = fnum(rows[-1].get("close"))
+            if not c or c <= 0:
+                return False, f"history_price_invalid:{tf}", None
+            closes.append(c)
+        hist = closes[0]  # 5m latest close is the tightest current comparison.
+        ratio = max(bybit, hist) / min(bybit, hist)
+        if ratio > cls.PRICE_SANITY_MAX_RATIO:
+            return False, "cross_venue_price_mismatch", round(ratio, 6)
+        return True, None, round(ratio, 6)
+
+    @classmethod
     def _analyze_rows(cls, symbol, ticker, histories, sources):
+        sane, sanity_error, sanity_ratio = cls._history_price_sanity(ticker, histories)
+        if not sane:
+            return {"engine_version": cls.VERSION, "symbol": symbol, "status": "REJECT", "priority": 0.0,
+                    "eligible_for_scan_plus": False, "reasons": [sanity_error],
+                    "history_sources": sources, "price_sanity_ratio": sanity_ratio}
         frames = {}
         for tf in ("5", "15", "60"):
             rows = histories.get(tf, [])
@@ -6339,26 +6420,28 @@ class OnDemandPreScanService:
         shortlist = max(1, min(int(shortlist), cls.TOP_BY_TURNOVER, len(symbols)))
         stage_t0 = time.time()
         with cls._cache_lock:
-            ticker_cache_fresh = cls._ticker_cache is not None and time.time()-cls._ticker_cache_at <= cls.TICKER_CACHE_TTL
-            cached_tickers = {k:dict(v) for k,v in (cls._ticker_cache or {}).items()} if ticker_cache_fresh else {}
-        if cached_tickers:
-            tickers={s:cached_tickers[s] for s in symbols if s in cached_tickers}
-            ws_errors=[]; skipped_symbols=[s for s in symbols if s not in tickers]
-            ticker_source="background_cache"
+            cache_ok = cls._ticker_cache is not None and time.time()-cls._ticker_cache_at <= cls.TICKER_CACHE_TTL
+            tc = {k:dict(v) for k,v in (cls._ticker_cache or {}).items()} if cache_ok else {}
+        if tc:
+            tickers = {s:tc[s] for s in symbols if s in tc}
+            ws_errors = []
+            skipped_symbols = [s for s in symbols if s not in tickers]
+            ticker_source = "background_cache"
         else:
             tickers, ws_errors, skipped_symbols = cls._discover_tickers(symbols)
-            ticker_source="bybit_ws_live"
+            ticker_source = "bybit_ws_live"
             if tickers:
                 with cls._cache_lock:
-                    cls._ticker_cache={k:dict(v) for k,v in tickers.items()}
-                    cls._ticker_cache_at=time.time()
+                    cls._ticker_cache = {k:dict(v) for k,v in tickers.items()}
+                    cls._ticker_cache_at = time.time()
         ticker_ms = round((time.time() - stage_t0) * 1000.0, 2)
         ranked = sorted(
             tickers,
             key=lambda s: fnum(tickers[s].get("turnover24h")) or 0.0,
             reverse=True
         )[:shortlist]
-        cls._warm_symbols = list(ranked)
+        with cls._cache_lock:
+            cls._warm_symbols = list(ranked)
 
         history = {s: {} for s in ranked}
         sources = {s: {} for s in ranked}
