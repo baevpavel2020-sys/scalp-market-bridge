@@ -47,12 +47,19 @@ class ForexMarketAdapter(MarketAdapter):
             out.append(item)
         return out
 
+    @staticmethod
+    def _latest_timestamp(rows):
+        values=[r.get("timestamp_ms") for r in rows or [] if r.get("timestamp_ms") is not None]
+        return max(values) if values else None
+
     def _session_context(self, rows):
         context={}
+        ts=self._latest_timestamp(rows)
         for name in ("asia","london","new_york"):
             context[name]=session_high_low(rows,market="forex",session=name)
-        context["active"]=active_sessions("forex")
-        context["overlap"]=session_overlap("forex")
+        context["active"]=active_sessions("forex",ts)
+        context["overlap"]=session_overlap("forex",ts)
+        context["timestamp_ms"]=ts
         return context
 
     def prescan(self, symbol=None, **kwargs) -> Mapping[str, Any]:
@@ -81,8 +88,14 @@ class ForexMarketAdapter(MarketAdapter):
                 "analysis":self.engine.analyze_profiled(rows,profile.get("scan") or []),
                 "sessions":self._session_context(rows),
             }
+        # Use the newest candle across frames for the situation timestamp.
+        all_ts=[]
+        for frame in frames.values():
+            ts=frame.get("sessions",{}).get("timestamp_ms")
+            if ts is not None: all_ts.append(ts)
+        latest_ts=max(all_ts) if all_ts else None
         situation="continuation"
-        active=active_sessions("forex")
+        active=active_sessions("forex",latest_ts)
         if len(active)>=2: situation="session_overlap"
         return {
             "market":self.market,"symbol":symbol,"status":"OK",
