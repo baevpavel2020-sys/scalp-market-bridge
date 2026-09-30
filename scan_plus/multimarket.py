@@ -55,9 +55,29 @@ class MultiMarketOrchestrator:
     def __init__(self, registry=None):
         self.registry = registry or MarketRegistry()
 
+    @staticmethod
+    def build_requests(parsed):
+        markets=tuple(parsed.get("markets") or ())
+        symbols=tuple(parsed.get("symbols") or ())
+        if not symbols:
+            return [(market,None) for market in markets]
+        requests=[]
+        for symbol in symbols:
+            resolved=resolve_market(symbol)
+            if resolved:
+                if not markets or resolved in markets:
+                    requests.append((resolved,symbol))
+            elif len(markets)==1:
+                requests.append((markets[0],symbol))
+        return requests
+
     def scan_many(self, requests):
         """Run independent requests; one adapter error never aborts the batch."""
         results = []
         for market, symbol in requests:
+            if symbol is None:
+                results.append({"status":"PRESCAN_ONLY","market":market,
+                                "reason":"symbol_required_for_full_scan"})
+                continue
             results.append(self.registry.safe_scan(market, symbol))
         return results
