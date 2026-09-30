@@ -94,7 +94,10 @@ class StocksMarketAdapter(MarketAdapter):
                 frames=frames, gap=gap, underlying=underlying,
                 ticker=ticker, session=active_sessions("stocks_us"),
             ),
-            "priority": resolve_priorities("stocks", symbol, None),
+            "priority": resolve_priorities(
+                "stocks", symbol,
+                "gap" if classify_gap(gap).get("state") in ("gap_up","gap_down") else "continuation"
+            ),
             "frames": frames,
             "execution_context": {
                 "product": "xstock_spot", "xstock_24_7": True,
