@@ -72,10 +72,14 @@ class CommoditiesMarketAdapter(MarketAdapter):
                 "provider_error":data.get("error"),
                 "analysis":self.engine.analyze_profiled(rows,profile.get("scan") or []),
                 "provider_context":{k:v for k,v in data.items() if k!="candles"},
+                "latest_timestamp_ms":max(
+                    [r.get("timestamp_ms") for r in rows if r.get("timestamp_ms") is not None],
+                    default=None,
+                ),
             }
         latest=max(
-            [f.get("provider_context",{}).get("timestamp_ms") for f in frames.values()
-             if f.get("provider_context",{}).get("timestamp_ms") is not None],
+            [f.get("latest_timestamp_ms") for f in frames.values()
+             if f.get("latest_timestamp_ms") is not None],
             default=None,
         )
         return {
