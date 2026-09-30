@@ -4,7 +4,7 @@ from flask import Flask, jsonify, request
 
 from collector import collector
 from spot_collector import spot_collector
-from dynamic_collector import (dynamic_manager, run_bybit_prescan_ws_probe, run_prescan, run_scan_auto, run_scan_single, run_scan_batch)
+from dynamic_collector import (dynamic_manager, run_bybit_prescan_ws_probe, run_prescan, run_scan_auto, run_scan_single, run_scan_batch, start_scan_auto_job, start_scan_batch_job, get_scan_job)
 
 app = Flask(__name__)
 
@@ -98,10 +98,23 @@ def market_dynamic(symbol):
 
 @app.get("/scan-auto")
 def scan_auto():
+    """Compatibility route: now STARTS a background job instead of blocking."""
     try:
         top_n = int(request.args.get("top", "8"))
         shortlist = int(request.args.get("shortlist", "30"))
-        return jsonify(run_scan_auto(top_n=top_n, shortlist=shortlist))
+        return jsonify(start_scan_auto_job(top_n=top_n, shortlist=shortlist)), 202
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"status":"FAIL","error":f"{type(exc).__name__}: {exc}"}), 500
+
+
+@app.get("/scan-auto/start")
+def scan_auto_start():
+    try:
+        top_n = int(request.args.get("top", "8"))
+        shortlist = int(request.args.get("shortlist", "30"))
+        return jsonify(start_scan_auto_job(top_n=top_n, shortlist=shortlist)), 202
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     except Exception as exc:
@@ -110,14 +123,35 @@ def scan_auto():
 
 @app.get("/scan-batch")
 def scan_batch():
+    """Compatibility route: now STARTS a background job instead of blocking."""
     try:
         raw = request.args.get("symbols", "")
         symbols = [s.strip() for s in raw.split(",") if s.strip()]
-        return jsonify(run_scan_batch(symbols))
+        return jsonify(start_scan_batch_job(symbols)), 202
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     except Exception as exc:
         return jsonify({"status":"FAIL","error":f"{type(exc).__name__}: {exc}"}), 500
+
+
+@app.get("/scan-batch/start")
+def scan_batch_start():
+    try:
+        raw = request.args.get("symbols", "")
+        symbols = [s.strip() for s in raw.split(",") if s.strip()]
+        return jsonify(start_scan_batch_job(symbols)), 202
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"status":"FAIL","error":f"{type(exc).__name__}: {exc}"}), 500
+
+
+@app.get("/scan-job/<job_id>")
+def scan_job_status(job_id):
+    job = get_scan_job(job_id)
+    if job is None:
+        return jsonify({"error":"job not found or expired","job_id":job_id}), 404
+    return jsonify(job)
 
 
 @app.get("/scan/<symbol>")
