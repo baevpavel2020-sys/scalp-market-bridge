@@ -39,6 +39,7 @@ class StocksAdapterTests(unittest.TestCase):
         self.assertEqual(out["token_symbol"],"NVDAXUSDT")
         self.assertEqual(out["underlying"]["previous_close"],175.0)
         self.assertAlmostEqual(out["gap"]["pct"],100*6/175)
+        self.assertEqual(out["gap_classification"]["state"],"gap_up")
 
     def test_scan_has_independent_timeframes(self):
         out=self.adapter.scan("NVDA")
