@@ -21,7 +21,11 @@ class BrokenManager:
 class CryptoAdapterTests(unittest.TestCase):
     def test_crypto_adapter_preserves_legacy_result(self):
         adapter = CryptoMarketAdapter(manager=FakeManager(), prescan_runner=lambda **kw: {"status": "PASS"})
-        self.assertEqual(adapter.scan("BTCUSDT"), {"symbol": "BTCUSDT", "trade_state": "WAIT_TRIGGER"})
+        result = adapter.scan("BTCUSDT")
+        self.assertEqual(result["symbol"], "BTCUSDT")
+        self.assertEqual(result["trade_state"], "WAIT_TRIGGER")
+        self.assertIn("event_engine", result)
+        self.assertFalse(result["event_engine"]["affects_trade_decision"])
         self.assertEqual(adapter.prescan()["status"], "PASS")
 
     def test_registry_isolates_adapter_failure(self):
