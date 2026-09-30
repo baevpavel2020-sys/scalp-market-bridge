@@ -43,7 +43,7 @@ INSTRUMENT_PROFILES = {
     "XAUUSD": {
         "market": "commodities", "group": "metals",
         "prescan": ["volatility", "active_session", "session_high_low", "structure", "liquidity"],
-        "scan": ["structure_mtf", "session_liquidity", "fibonacci", "elliott", "usd_yields_context", "harmonics"],
+        "scan": ["structure_mtf", "liquidity", "fibonacci", "elliott", "usd_yields_context", "harmonics"],
     },
     "XAGUSD": {
         "market":"commodities","group":"metals",
