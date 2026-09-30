@@ -102,7 +102,7 @@ class ForexMarketAdapter(MarketAdapter):
             "profile":profile,
             "priority":resolve_priorities("forex",symbol,situation),
             "active_sessions":active,
-            "session_overlap":session_overlap("forex"),
+            "session_overlap":session_overlap("forex",latest_ts),
             "frames":frames,
             "execution_context":{
                 "product":"spot_fx",
