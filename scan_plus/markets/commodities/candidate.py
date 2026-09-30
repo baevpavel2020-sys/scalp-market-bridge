@@ -49,7 +49,10 @@ def build_commodity_candidate(*, symbol, group, frames):
     direction,structure_tf=_direction(frames)
     shared_ready,confirmation_tf=_shared_confirmation(frames,structure_tf)
     rules=GROUP_RULES.get(str(group or "").lower(),{})
-    context=_context_available(frames,rules.get("context_bonus",()))
+    context=_context_available(
+        {confirmation_tf: frames.get(confirmation_tf)} if confirmation_tf else {},
+        rules.get("context_bonus",())
+    )
 
     blockers=[]
     if direction=="unknown": blockers.append("structure_direction_unresolved")
