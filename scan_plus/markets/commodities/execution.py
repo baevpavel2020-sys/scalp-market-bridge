@@ -71,7 +71,9 @@ def build_commodity_execution_plan(*,candidate,frames,price,equity,risk_fraction
     risk_cash=eq*rf
     units=risk_cash/risk_per_unit
 
-    target,target_tf,ratio=_fibo_target(frames,direction,preferred_tf)
+    target,target_tf,ratio=_fibo_target(
+        {preferred_tf: frames.get(preferred_tf)}, direction, preferred_tf
+    )
     if target is None or (direction=="bullish" and target<=px) or (direction=="bearish" and target>=px):
         target=px+risk_per_unit*min_rr if direction=="bullish" else px-risk_per_unit*min_rr
         target_source="risk_multiple"
