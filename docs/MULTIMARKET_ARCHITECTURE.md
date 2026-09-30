@@ -384,3 +384,21 @@ Immediate audit fixes:
 - Commodity-specific macro/inventory/session context remains provider-gated; no synthetic evidence is invented.
 
 Commodity cycle status: step 1/4 complete.
+
+
+## Cycle 5 — Commodities — step 2/4 + immediate audit
+
+Implemented:
+- Added provider-gated Commodity Context Engine.
+- Metals accept only explicitly supplied USD/yields/session context.
+- Energy accepts explicitly supplied event/inventory/session context.
+- Softs accept explicitly supplied event/session/volatility context.
+- Context is normalized into available/unknown evidence and has no directional inference.
+- Context is attached per timeframe without mutating shared analytical evidence.
+
+Immediate audit:
+- XAUUSD initially requested `session_liquidity`, but the commodity context layer did not implement that block. This was corrected by keeping liquidity in the shared commodity profile and reserving provider-specific context for `usd_yields_context`.
+- Missing provider context remains UNKNOWN; no macro/inventory/event value is synthesized.
+- Added regression tests for metals, energy and adapter exposure.
+
+Commodity status: 2/4 complete.
