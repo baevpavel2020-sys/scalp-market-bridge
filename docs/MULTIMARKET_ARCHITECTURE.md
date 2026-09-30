@@ -131,3 +131,25 @@ Extraction order:
 ## Data-source notes
 
 Bybit currently exposes xStocks on Spot and TradFi Perpetuals through V5-compatible product categories; CFD/MT5 is a separate account/product. Adapters must therefore model the product/source explicitly instead of assuming all traditional assets share one transport.
+
+
+## Current implementation checkpoint (2026-10-01)
+
+Completed in the current working branch:
+- Crypto x25 shadow recorder/replay/evaluator.
+- Independent-channel exhaustion fusion and healthy-continuation veto.
+- Causal validation and bounded per-symbol event memory.
+- Adaptive abnormal-pump baseline uses prior observations only.
+- Deterministic market/instrument routing and situation-aware priority resolution.
+- Bybit xStocks public data loader with explicit underlying-token mapping.
+- Injectable underlying-equity provider boundary.
+- FX provider boundary plus timezone/DST-aware Asia/London/New York session context.
+- US stock session context and gap calculation.
+- Commodity provider boundary with no fabricated data source.
+- Mixed-symbol routing prevents a symbol from being sent to unrelated market adapters.
+
+Not yet claimed complete:
+- Full live Stocks/Forex/Commodity analytical adapters.
+- Extraction of the common Structure/MTF/Elliott/Fibonacci/Harmonics engine from dynamic_collector.py.
+- Historical underlying-equity feed integration and FX intraday/session high-low provider validation.
+- End-to-end CI execution on the current branch (status checks are not attached to the latest commit).
