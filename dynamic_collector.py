@@ -5573,18 +5573,22 @@ class OnDemandPreScanService:
 
     @classmethod
     def _discover_tickers(cls, symbols, batch_size=None):
-        """Discover tickers with one bounded WS session; never reconnect recursively."""
+        """Discover tickers with one bounded WS session.
+
+        A missing ticker is normal universe hygiene (invalid/delisted/not-linear),
+        not a transport failure. Transport/protocol errors stay separate so a
+        partially stale fixed universe cannot fail the whole PreScan.
+        """
         symbols = list(dict.fromkeys(
             str(s).strip().upper() for s in (symbols or [])
             if SYMBOL_RE.fullmatch(str(s).strip().upper())
         ))
         if not symbols:
-            return {}, ["empty_universe"]
+            return {}, ["empty_universe"], []
 
-        results, errors = cls._ticker_batch(symbols, timeout=4.0)
-        missing = [s for s in symbols if s not in results]
-        errors.extend(f"{s}:no_ticker" for s in missing)
-        return results, errors
+        results, transport_errors = cls._ticker_batch(symbols, timeout=4.0)
+        skipped = [s for s in symbols if s not in results]
+        return results, transport_errors, skipped
 
     @staticmethod
     def _rest_candle(row):
@@ -5707,7 +5711,7 @@ class OnDemandPreScanService:
         symbols = cls._clean_symbols(universe or cls.DEFAULT_UNIVERSE)
         shortlist = max(5, min(int(shortlist), cls.TOP_BY_TURNOVER, len(symbols)))
         top_n = max(1, min(int(top_n), 20))
-        tickers, ws_errors = cls._discover_tickers(symbols)
+        tickers, ws_errors, skipped_symbols = cls._discover_tickers(symbols)
         ranked = sorted(tickers, key=lambda s: fnum(tickers[s].get("turnover24h")) or 0.0, reverse=True)[:shortlist]
         history = {s: {} for s in ranked}; sources = {s: {} for s in ranked}; hist_errors = {}
         jobs = []
@@ -5727,14 +5731,20 @@ class OnDemandPreScanService:
                                        x.get("market", {}).get("turnover24h", 0)), reverse=True)
         actionable = [x for x in candidates if x.get("eligible_for_scan_plus")][:top_n]
         analyzable = [x for x in candidates if not any(str(r).startswith("history_unavailable:") for r in x.get("reasons", []))]
-        overall = "FAIL" if not tickers else ("PASS" if analyzable else "PARTIAL")
+        if not tickers:
+            overall = "FAIL"
+        elif analyzable:
+            overall = "PASS"
+        else:
+            overall = "PARTIAL"
         return {
             "engine_version": cls.VERSION, "mode": "manual_on_demand", "status": overall,
             "universe_size": len(symbols), "ws_ticker_count": len(tickers), "shortlist_size": len(ranked),
             "top_n": top_n, "elapsed_ms": round((time.time() - started) * 1000.0, 2),
             "candidates": candidates[:top_n], "scan_plus_candidates": [x["symbol"] for x in actionable],
-            "diagnostics": {"ws_errors": ws_errors[-20:], "history_errors": hist_errors,
-                            "history_error_count": len(hist_errors)},
+            "diagnostics": {"ws_errors": ws_errors[-20:], "ws_error_count": len(ws_errors),
+                            "skipped_symbols": skipped_symbols, "skipped_symbol_count": len(skipped_symbols),
+                            "history_errors": hist_errors, "history_error_count": len(hist_errors)},
             "guardrails": {"runs_continuously": False, "uses_dynamic_manager": False, "activates_scan_plus": False,
                            "trade_decision": False, "closed_history_only": True, "scan_plus_logic_unchanged": True},
         }
