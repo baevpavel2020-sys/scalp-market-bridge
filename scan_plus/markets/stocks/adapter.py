@@ -1,0 +1,94 @@
+"""Independent tokenized-stock market adapter."""
+from typing import Any, Mapping
+from scan_plus.contracts import MarketAdapter
+from scan_plus.market_profiles import get_profile
+from scan_plus.priority_engine import resolve_priorities
+from scan_plus.core.analytical_engine import AnalyticalEngine, LegacyCryptoBackend
+from scan_plus.core.sessions import active_sessions
+from scan_plus.core.gaps import gap_from_previous
+from scan_plus.core.session_levels import session_high_low
+from scan_plus.markets.stocks.bybit_xstocks import BybitXStocksLoader
+
+
+class StocksMarketAdapter(MarketAdapter):
+    market = "stocks"
+
+    def __init__(self, loader=None, underlying_provider=None, engine=None):
+        self.loader = loader or BybitXStocksLoader()
+        self.underlying_provider = underlying_provider
+        self.engine = engine or AnalyticalEngine(LegacyCryptoBackend())
+
+    def profile(self, symbol=None):
+        return get_profile(self.market, symbol)
+
+    def _underlying(self, symbol):
+        if self.underlying_provider is None:
+            return None
+        return dict(self.underlying_provider.quote(symbol))
+
+    @staticmethod
+    def _gap_context(underlying):
+        if not underlying:
+            return {"ready": False, "reason": "underlying_provider_unavailable"}
+        current_open = underlying.get("session_open", underlying.get("open"))
+        previous_close = underlying.get("previous_close", underlying.get("prev_close"))
+        if current_open is None or previous_close is None:
+            return {"ready": False, "reason": "underlying_gap_fields_unavailable"}
+        gap = gap_from_previous(current_open, previous_close)
+        gap["ready"] = True
+        return gap
+
+    def prescan(self, symbol=None, **kwargs) -> Mapping[str, Any]:
+        if not symbol:
+            return {"market": self.market, "status": "PRESCAN_ONLY",
+                    "profile": self.profile(), "reason": "symbol_required"}
+        symbol = str(symbol).upper()
+        ticker = self.loader.ticker(symbol)
+        underlying = self._underlying(symbol)
+        return {
+            "market": self.market, "symbol": symbol, "status": "OK",
+            "profile": self.profile(symbol),
+            "product": ticker["product"], "token_symbol": ticker["symbol"],
+            "last_price": ticker["last_price"], "volume_24h": ticker["volume_24h"],
+            "underlying": underlying,
+            "gap": self._gap_context(underlying),
+            "underlying_sessions": active_sessions("stocks_us"),
+        }
+
+    def scan(self, symbol: str) -> Mapping[str, Any]:
+        symbol = str(symbol).upper()
+        profile = self.profile(symbol)
+        underlying = self._underlying(symbol)
+        frames = {}
+        for label, interval in (("5m","5"),("15m","15"),("1h","60"),("4h","240")):
+            data = self.loader.klines(symbol, interval=interval, limit=240)
+            rows = data["candles"]
+            frame = {"bars": len(rows),
+                     "analysis": self.engine.analyze_profiled(rows, profile.get("scan") or [])}
+            if label == "15m":
+                frame["session_levels"] = session_high_low(
+                    rows, market="stocks_us", session="regular"
+                )
+            frames[label] = frame
+        ticker = self.loader.ticker(symbol)
+        return {
+            "market": self.market, "symbol": symbol, "status": "OK",
+            "profile": profile, "ticker": ticker, "underlying": underlying,
+            "gap": self._gap_context(underlying),
+            "underlying_sessions": active_sessions("stocks_us"),
+            "priority": resolve_priorities("stocks", symbol, None),
+            "frames": frames,
+            "execution_context": {
+                "product": "xstock_spot", "xstock_24_7": True,
+                "underlying_session_required_for_session_signals": True,
+            },
+        }
+
+    def diagnostics(self, symbol: str) -> Mapping[str, Any]:
+        return {"market": self.market, "symbol": str(symbol).upper(),
+                "loader": type(self.loader).__name__,
+                "underlying_provider": (
+                    type(self.underlying_provider).__name__
+                    if self.underlying_provider else None
+                ),
+                "shared_engine": type(self.engine).__name__}
