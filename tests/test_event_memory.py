@@ -11,6 +11,13 @@ class EventMemoryTests(unittest.TestCase):
         self.assertTrue(out["sequence_complete"])
         self.assertTrue(out["causal_order_confirmed"])
 
+    def test_repeated_confirmation_keeps_first_event_time(self):
+        m=CausalEventMemory(max_age_seconds=100)
+        m.update("BTCUSDT",10,{"abnormal_pump":True})
+        out=m.update("BTCUSDT",20,{"abnormal_pump":True,"exhaustion":True})
+        self.assertEqual(out["anchors"]["abnormal_pump"]["timestamp"],10)
+        self.assertEqual(out["anchors"]["exhaustion"]["timestamp"],20)
+
     def test_out_of_order_sequence_never_confirms(self):
         m=CausalEventMemory(max_age_seconds=100)
         m.update("BTCUSDT",30,{"structure_break":True})
