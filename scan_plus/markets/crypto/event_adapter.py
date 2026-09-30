@@ -11,6 +11,7 @@ from scan_plus.markets.crypto.post_pump import detect_post_pump_pipeline
 from scan_plus.markets.crypto.reversal_trigger import detect_bearish_reversal_trigger
 from scan_plus.markets.crypto.observables import extract_crypto_observables
 from scan_plus.markets.crypto.evidence_fusion import fuse_exhaustion, healthy_continuation_veto
+from scan_plus.markets.crypto.causality import validate_reversal_causality
 
 
 def _num(value):
@@ -104,6 +105,7 @@ def observe_crypto_events(scan: Mapping[str, Any], adaptive_abnormal=None):
     normalized,x25=build_crypto_event_evidence(scan, observables)
     pipeline=detect_post_pump_pipeline(scan, observables, adaptive_abnormal=adaptive_abnormal)
     reversal=detect_bearish_reversal_trigger(scan)
+    causality=validate_reversal_causality(pipeline,reversal)
 
     # Fuse independent evidence channels instead of treating correlated clues as
     # separate votes. One clue remains useful context but cannot ARM x25 by itself.
@@ -118,6 +120,8 @@ def observe_crypto_events(scan: Mapping[str, Any], adaptive_abnormal=None):
     x25["structure_break"] = bool((best_trigger.get("structure_break") or {}).get("confirmed"))
     x25["bearish_displacement"] = bool((best_trigger.get("bearish_displacement") or {}).get("confirmed"))
     x25["failed_retest"] = bool((best_trigger.get("failed_retest") or {}).get("confirmed"))
+    if not causality["eligible_for_trigger"]:
+        x25["failed_retest"] = False
     events=classify_liquidity_leverage(normalized)
     return {
         "mode":"observer",
@@ -126,6 +130,7 @@ def observe_crypto_events(scan: Mapping[str, Any], adaptive_abnormal=None):
         "exhaustion_fusion":exhaustion,
         "healthy_continuation_veto":continuation,
         "reversal_trigger":reversal,
+        "causality":causality,
         "events":[
             {"event_id":e.event_id,"family":e.family,"direction":e.direction,
              "confidence":e.confidence,"evidence":list(e.evidence),"metadata":dict(e.metadata)}
