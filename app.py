@@ -4,7 +4,7 @@ from flask import Flask, jsonify, request
 
 from collector import collector
 from spot_collector import spot_collector
-from dynamic_collector import dynamic_manager, run_bybit_prescan_ws_probe, run_prescan
+from dynamic_collector import (dynamic_manager, run_bybit_prescan_ws_probe, run_prescan, run_scan_auto, run_scan_single, run_scan_batch)
 
 app = Flask(__name__)
 
@@ -94,6 +94,30 @@ def market_dynamic(symbol):
         return jsonify(dynamic_manager.snapshot(symbol))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@app.get("/scan-auto")
+def scan_auto():
+    try:
+        top_n = int(request.args.get("top", "8"))
+        shortlist = int(request.args.get("shortlist", "30"))
+        return jsonify(run_scan_auto(top_n=top_n, shortlist=shortlist))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"status":"FAIL","error":f"{type(exc).__name__}: {exc}"}), 500
+
+
+@app.get("/scan-batch")
+def scan_batch():
+    try:
+        raw = request.args.get("symbols", "")
+        symbols = [s.strip() for s in raw.split(",") if s.strip()]
+        return jsonify(run_scan_batch(symbols))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"status":"FAIL","error":f"{type(exc).__name__}: {exc}"}), 500
 
 
 @app.get("/scan/<symbol>")
