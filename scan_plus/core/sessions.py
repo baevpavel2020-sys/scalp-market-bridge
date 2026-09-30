@@ -27,6 +27,9 @@ def _aware_utc(value=None):
 
 def active_sessions(market,timestamp=None):
     dt=_aware_utc(timestamp)
+    # FX and US equity sessions are closed on weekends.
+    if dt.weekday() >= 5 and market in {"forex","stocks_us"}:
+        return []
     result=[]
     for name,(tz_name,start,end) in SCHEDULES.get(market,{}).items():
         local=dt.astimezone(ZoneInfo(tz_name)).time()
