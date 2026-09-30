@@ -297,3 +297,12 @@ Two architectural risks remain and are intentionally NOT marked as resolved:
 2. `AnalyticalEngine.analyze_profiled()` silently ignores profile keys that are not shared-core blocks (e.g. order_flow, open_interest, session_liquidity, indicators). This does not cross-contaminate markets, but it can make a priority list appear to request evidence that the current engine did not calculate. Future adapter layers must explicitly separate shared-core priorities from market-adapter context priorities instead of silently dropping them.
 
 No code was changed for these two items in this checkpoint because silently patching them would risk changing Crypto behavior. They are recorded as explicit integration gates.
+
+
+## Conflict gates — FIXED
+
+The two previously identified integration gates are now addressed:
+1. Stocks and Forex use the market-neutral `CanonicalPricePatternBackend` contract instead of naming/instantiating the Crypto compatibility backend. The canonical implementation remains the legacy reference internally during staged extraction, preserving calculation parity without exposing Crypto semantics at the market-adapter boundary.
+2. Analytical priorities are explicitly split into `shared` blocks and `market context` blocks. `AnalyticalEngine.analyze_profiled()` now reports requested context blocks instead of silently dropping them. Market adapters remain responsible for implementing their own context evidence.
+
+This prevents a priority profile from claiming that a market-specific block was calculated when only the shared analytical core ran.
