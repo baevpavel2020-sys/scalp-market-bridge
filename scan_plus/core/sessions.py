@@ -1,31 +1,37 @@
-"""Market-session utilities shared by non-crypto adapters.
+"""Timezone-aware session context utilities.
 
-All times are UTC to keep the data layer deterministic. The presentation layer may
-convert them to local exchange time; no market assumption is hidden in analytics.
+Session boundaries are expressed in each market's local timezone, then evaluated
+from an aware UTC timestamp. DST is therefore handled by the standard library.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timezone, time
+from zoneinfo import ZoneInfo
 
-SESSIONS={
-    "forex":{"asia":(0,8),"london":(7,16),"new_york":(12,21)},
-    "stocks_us":{"premarket":(8,14.5),"regular":(14.5,21),"after_hours":(21,24)},
+SCHEDULES={
+    "forex":{
+        "asia":("Asia/Tokyo",time(9),time(18)),
+        "london":("Europe/London",time(8),time(17)),
+        "new_york":("America/New_York",time(8),time(17)),
+    },
+    "stocks_us":{
+        "premarket":("America/New_York",time(4),time(9,30)),
+        "regular":("America/New_York",time(9,30),time(16)),
+        "after_hours":("America/New_York",time(16),time(20)),
+    },
 }
 
-def utc_hour_minute(value=None):
-    if value is None: dt=datetime.now(timezone.utc)
-    elif isinstance(value,datetime):
-        dt=value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-        dt=dt.astimezone(timezone.utc)
-    else:
-        dt=datetime.fromtimestamp(float(value),tz=timezone.utc)
-    return dt.hour+dt.minute/60.0
+def _aware_utc(value=None):
+    if value is None: return datetime.now(timezone.utc)
+    if isinstance(value,datetime):
+        return (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
+    return datetime.fromtimestamp(float(value),tz=timezone.utc)
 
-def active_sessions(market, timestamp=None):
-    h=utc_hour_minute(timestamp)
+def active_sessions(market,timestamp=None):
+    dt=_aware_utc(timestamp)
     result=[]
-    for name,(start,end) in SESSIONS.get(market,{}).items():
-        if start <= h < end: result.append(name)
+    for name,(tz_name,start,end) in SCHEDULES.get(market,{}).items():
+        local=dt.astimezone(ZoneInfo(tz_name)).time()
+        if start <= local < end: result.append(name)
     return result
 
 def session_overlap(market,timestamp=None):
-    active=active_sessions(market,timestamp)
-    return len(active)>=2
+    return len(active_sessions(market,timestamp))>=2
