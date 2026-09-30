@@ -1,0 +1,1 @@
+"""Independent Scan+ market adapters."""\n
