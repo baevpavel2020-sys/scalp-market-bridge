@@ -5500,7 +5500,7 @@ def run_bybit_prescan_ws_probe(symbols=None, timeout=12.0):
 class OnDemandPreScanService:
     """Manual PreScan. No permanent universe collector and no Scan+ activation."""
 
-    VERSION = "prescan_v2_0_multisource"
+    VERSION = "prescan_v2_1_production"
     # Deliberately broad but static v1 universe. Invalid/delisted symbols are
     # isolated by recursive WS batches and cannot poison the whole run.
     DEFAULT_UNIVERSE = (
@@ -5570,9 +5570,19 @@ class OnDemandPreScanService:
                 send_topics(topics[i:i + 10])
 
             deadline = time.time() + timeout
+            first_ticker_at = None
+            last_ticker_at = None
+            quiet_grace = 0.35
             while time.time() < deadline:
                 expected = len(symbols) - len(invalid_symbols)
                 if expected > 0 and len(rows) >= expected:
+                    break
+                # Bybit normally sends the subscribed ticker snapshot as one burst.
+                # Once that burst has gone quiet, do not burn the full discovery timeout
+                # waiting for stale/non-linear symbols that will be reported as skipped.
+                if (first_ticker_at is not None and last_ticker_at is not None
+                        and time.time() - last_ticker_at >= quiet_grace
+                        and len(rows) >= max(1, int(len(symbols) * 0.70))):
                     break
                 try:
                     raw = ws.recv()
@@ -5619,6 +5629,10 @@ class OnDemandPreScanService:
                         current = rows.setdefault(symbol, {})
                         current.update(data)
                         current["_ts"] = msg.get("ts")
+                        stamp = time.time()
+                        if first_ticker_at is None:
+                            first_ticker_at = stamp
+                        last_ticker_at = stamp
         except Exception as exc:
             errors.append(f"{type(exc).__name__}: {exc}")
         finally:
@@ -5831,7 +5845,7 @@ class OnDemandPreScanService:
 
     _provider_rate_lock = threading.Lock()
     _provider_next_at = 0.0
-    PROVIDER_MIN_GAP = 0.065  # ~15 req/s globally; below OKX public candle ceiling.
+    PROVIDER_MIN_GAP = 0.052  # ~19.2 req/s globally; keeps margin below OKX 20 req/s candle ceiling.
 
     @classmethod
     def _provider_throttle(cls):
@@ -5846,7 +5860,7 @@ class OnDemandPreScanService:
     def _http_json(cls, url, timeout=5.0):
         cls._provider_throttle()
         req = urllib.request.Request(url, headers={
-            "User-Agent": "scalp-market-bridge/2.0",
+            "User-Agent": "scalp-market-bridge/2.1",
             "Accept": "application/json",
         })
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -6140,12 +6154,12 @@ class OnDemandPreScanService:
         hist_errors = {}
 
         # Fresh history uses bounded public REST fallback chain; no TradingView.
-        # Six workers plus a global request pacer prevent provider connection storms.
+        # Ten workers overlap network latency; the global pacer still caps aggregate provider request rate.
         executor = None
         future_meta = {}
         try:
             if ranked:
-                executor = ThreadPoolExecutor(max_workers=min(6, len(ranked)))
+                executor = ThreadPoolExecutor(max_workers=min(10, len(ranked)))
                 for s in ranked:
                     future = executor.submit(cls._fetch_history_bundle, s)
                     future_meta[future] = s
