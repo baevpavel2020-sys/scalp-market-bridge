@@ -6593,7 +6593,7 @@ class ScanOrchestrator:
     """
 
     VERSION = "scan_orchestrator_v1"
-    MAX_AUTO_SCAN_PLUS = 8
+    MAX_AUTO_SCAN_PLUS = 6
     MAX_BATCH_SYMBOLS = 8
 
     @staticmethod
@@ -6738,9 +6738,11 @@ class ScanJobManager:
     occurred when several scans were executed inside one HTTP request.
     """
 
-    VERSION = "scan_job_manager_v2"
+    VERSION = "scan_job_manager_v3_warmup"
     MAX_JOBS = 20
     JOB_TTL_SECONDS = 3600
+    AUTO_WARMUP_SECONDS = max(30, min(90, int(os.environ.get("SCAN_AUTO_WARMUP_SECONDS", "40"))))
+    AUTO_WARMUP_POLL_SECONDS = max(1, min(10, int(os.environ.get("SCAN_AUTO_WARMUP_POLL_SECONDS", "2"))))
     _lock = threading.RLock()
     _jobs = {}
     _executor = concurrent.futures.ThreadPoolExecutor(
@@ -6801,7 +6803,7 @@ class ScanJobManager:
             job["updated_at"] = time.time()
 
     @classmethod
-    def _progress(cls, jid, done=None, total=None, current_symbol=None):
+    def _progress(cls, jid, done=None, total=None, current_symbol=None, stage=None, warmup_remaining=None):
         with cls._lock:
             job = cls._jobs.get(jid)
             if not job:
@@ -6812,23 +6814,75 @@ class ScanJobManager:
             if total is not None:
                 p["total"] = int(total)
             p["current_symbol"] = current_symbol
+            if stage is not None:
+                p["stage"] = stage
+            if warmup_remaining is not None:
+                p["warmup_remaining_seconds"] = max(0, int(warmup_remaining))
             job["progress"] = p
             job["updated_at"] = time.time()
+
+    @classmethod
+    def _activate_and_warm_auto(cls, jid, symbols):
+        """Activate all AUTO candidates first, then let their WS flow mature together.
+
+        No full technical analysis is run during warm-up.  This is deliberately
+        transport-only: DynamicMarketManager.activate() starts/reuses the realtime
+        streams, while the final Scan+ pass remains the sole decision pass.
+        """
+        symbols = list(symbols or [])
+        total = len(symbols)
+        activation_errors = {}
+        cls._progress(jid, done=0, total=total, current_symbol=None, stage="ACTIVATING",
+                      warmup_remaining=cls.AUTO_WARMUP_SECONDS)
+
+        activated = []
+        for idx, raw in enumerate(symbols, start=1):
+            symbol = dynamic_manager.normalize_symbol(raw)
+            cls._progress(jid, done=idx-1, total=total, current_symbol=symbol, stage="ACTIVATING",
+                          warmup_remaining=cls.AUTO_WARMUP_SECONDS)
+            try:
+                dynamic_manager.activate(symbol)
+                activated.append(symbol)
+            except Exception as exc:
+                activation_errors[symbol] = f"{type(exc).__name__}:{exc}"
+            cls._progress(jid, done=idx, total=total, current_symbol=None, stage="ACTIVATING",
+                          warmup_remaining=cls.AUTO_WARMUP_SECONDS)
+
+        if not activated:
+            return [], activation_errors, 0.0
+
+        # All collectors are now alive concurrently.  The engine's shortest
+        # quality gate requires 30s flow coverage, so default warm-up is 40s.
+        # Poll only the clock/job state; do NOT call scan()/snapshot() here.
+        warm_started = time.monotonic()
+        deadline = warm_started + cls.AUTO_WARMUP_SECONDS
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            cls._progress(jid, done=0, total=len(activated), current_symbol=None,
+                          stage="WARMING", warmup_remaining=remaining)
+            time.sleep(min(cls.AUTO_WARMUP_POLL_SECONDS, remaining))
+
+        warm_elapsed = time.monotonic() - warm_started
+        cls._progress(jid, done=0, total=len(activated), current_symbol=None,
+                      stage="FINAL_SCAN", warmup_remaining=0)
+        return activated, activation_errors, warm_elapsed
 
     @classmethod
     def _scan_symbols_progressive(cls, jid, symbols):
         results, errors = [], {}
         total = len(symbols)
-        cls._progress(jid, done=0, total=total, current_symbol=None)
+        cls._progress(jid, done=0, total=total, current_symbol=None, stage="FINAL_SCAN")
         for idx, raw in enumerate(symbols, start=1):
             symbol = dynamic_manager.normalize_symbol(raw)
-            cls._progress(jid, done=idx-1, total=total, current_symbol=symbol)
+            cls._progress(jid, done=idx-1, total=total, current_symbol=symbol, stage="FINAL_SCAN")
             try:
                 scan = dynamic_manager.scan(symbol)
                 results.append(ScanOrchestrator._compact_result(scan))
             except Exception as exc:
                 errors[symbol] = f"{type(exc).__name__}:{exc}"
-            cls._progress(jid, done=idx, total=total, current_symbol=None)
+            cls._progress(jid, done=idx, total=total, current_symbol=None, stage="FINAL_SCAN")
         return results, errors
 
     @classmethod
@@ -6867,9 +6921,9 @@ class ScanJobManager:
                 }
 
             elif mode == "auto":
-                top_n = max(1, min(int(payload.get("top_n", 8)), ScanOrchestrator.MAX_AUTO_SCAN_PLUS))
+                top_n = max(1, min(int(payload.get("top_n", 6)), ScanOrchestrator.MAX_AUTO_SCAN_PLUS))
                 shortlist = int(payload.get("shortlist", 30))
-                # PreScan remains synchronous INSIDE the background job, never in HTTP.
+                cls._progress(jid, done=0, total=None, current_symbol=None, stage="PRESCAN")
                 prescan = run_prescan(top_n=top_n, shortlist=shortlist)
                 eligible = []
                 for candidate in prescan.get("candidates") or []:
@@ -6879,10 +6933,13 @@ class ScanJobManager:
                             eligible.append(symbol)
                     if len(eligible) >= top_n:
                         break
-                cls._progress(jid, done=0, total=len(eligible), current_symbol=None)
-                results, errors = cls._scan_symbols_progressive(jid, eligible)
+
+                activated, activation_errors, warm_elapsed = cls._activate_and_warm_auto(jid, eligible)
+                results, scan_errors = cls._scan_symbols_progressive(jid, activated)
+                errors = dict(activation_errors)
+                errors.update(scan_errors)
                 result = {
-                    "orchestrator_version": ScanOrchestrator.VERSION,
+                    "orchestrator_version": "scan_orchestrator_v2_warmup",
                     "mode": "auto",
                     "prescan_used": True,
                     "prescan": {
@@ -6893,6 +6950,9 @@ class ScanJobManager:
                         "diagnostics": prescan.get("diagnostics") or {},
                     },
                     "selected_symbols": eligible,
+                    "activated_symbols": activated,
+                    "warmup_seconds": round(warm_elapsed, 2),
+                    "warmup_target_seconds": cls.AUTO_WARMUP_SECONDS,
                     "scan_plus_count": len(results),
                     "scan_plus_results": results,
                     "errors": errors,
@@ -6923,7 +6983,7 @@ class ScanJobManager:
         return cls.status(jid)
 
     @classmethod
-    def start_auto(cls, top_n=8, shortlist=30):
+    def start_auto(cls, top_n=6, shortlist=30):
         jid = cls._new_job("auto", {"top_n": int(top_n), "shortlist": int(shortlist)})
         cls._executor.submit(cls._run_job, jid)
         return cls.status(jid)
@@ -6951,7 +7011,7 @@ class ScanJobManager:
             }
 
 
-def start_scan_auto_job(top_n=8, shortlist=30):
+def start_scan_auto_job(top_n=6, shortlist=30):
     return ScanJobManager.start_auto(top_n=top_n, shortlist=shortlist)
 
 
