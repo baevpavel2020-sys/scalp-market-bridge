@@ -41,6 +41,7 @@ class AnalyticalEngine:
     def analyze(self, rows, *, requested=None):
         requested=set(requested or ("structure","fibonacci","elliott","harmonics"))
         result={}
+        # Structure is the dependency root for the reusable price-pattern blocks.
         structure=self.backend.structure(rows)
         result["structure"]=structure
         if "fibonacci" in requested:
@@ -50,3 +51,15 @@ class AnalyticalEngine:
         if "harmonics" in requested:
             result["harmonics"]=self.backend.harmonics(structure)
         return result
+
+    def analyze_profiled(self, rows, priorities):
+        """Run only the requested blocks, preserving priority order."""
+        ordered=list(priorities or [])
+        aliases={
+            "structure_mtf":"structure",
+            "fibonacci":"fibonacci",
+            "elliott":"elliott",
+            "harmonics":"harmonics",
+        }
+        requested=[aliases[name] for name in ordered if name in aliases]
+        return self.analyze(rows,requested=requested)
