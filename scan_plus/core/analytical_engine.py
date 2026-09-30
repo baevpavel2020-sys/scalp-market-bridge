@@ -5,6 +5,7 @@ The legacy Crypto implementation remains the reference backend during extraction
 New market adapters can replace the backend without changing orchestration.
 """
 from typing import Any, Mapping, Protocol
+import copy
 
 
 class AnalyticalBackend(Protocol):
@@ -63,3 +64,18 @@ class AnalyticalEngine:
         }
         requested=[aliases[name] for name in ordered if name in aliases]
         return self.analyze(rows,requested=requested)
+
+    @staticmethod
+    def compare(reference, candidate):
+        """Structural differential comparison; returns exact and top-level diffs."""
+        if reference == candidate:
+            return {"equal":True,"differences":[]}
+        differences=[]
+        if isinstance(reference,dict) and isinstance(candidate,dict):
+            keys=sorted(set(reference)|set(candidate))
+            for key in keys:
+                if reference.get(key)!=candidate.get(key):
+                    differences.append(key)
+        else:
+            differences.append("$")
+        return {"equal":False,"differences":differences}
