@@ -5500,7 +5500,7 @@ def run_bybit_prescan_ws_probe(symbols=None, timeout=12.0):
 class OnDemandPreScanService:
     """Manual PreScan. No permanent universe collector and no Scan+ activation."""
 
-    VERSION = "prescan_v2_2_profiled_cache"
+    VERSION = "prescan_v2_3_audited"
     # Deliberately broad but static v1 universe. Invalid/delisted symbols are
     # isolated by recursive WS batches and cannot poison the whole run.
     DEFAULT_UNIVERSE = (
@@ -5521,9 +5521,10 @@ class OnDemandPreScanService:
     DISK_CACHE_TTL = 6 * 3600.0
     PRESCAN_CACHE_DIR = os.environ.get("PRESCAN_CACHE_DIR", "/tmp/scalp-market-bridge/prescan")
     HISTORY_WORKERS = 6
-    HISTORY_GLOBAL_TIMEOUT = 18.0
+    HISTORY_GLOBAL_TIMEOUT = 16.0
     _cache_lock = threading.RLock()
     _history_cache = {}
+    _provider_route_cache = {}
 
     @staticmethod
     def _clean_symbols(symbols):
@@ -5565,7 +5566,7 @@ class OnDemandPreScanService:
 
         try:
             ws = websocket.create_connection(WS_URLS["linear"], timeout=min(4.0, timeout + 1.0))
-            ws.settimeout(0.50)
+            ws.settimeout(0.15)
 
             topics = [f"tickers.{s}" for s in symbols]
             # Small subscription messages isolate stale universe entries while
@@ -5576,7 +5577,7 @@ class OnDemandPreScanService:
             deadline = time.time() + timeout
             first_ticker_at = None
             last_ticker_at = None
-            quiet_grace = 0.35
+            quiet_grace = 0.22
             while time.time() < deadline:
                 expected = len(symbols) - len(invalid_symbols)
                 if expected > 0 and len(rows) >= expected:
@@ -5662,7 +5663,7 @@ class OnDemandPreScanService:
         if not symbols:
             return {}, ["empty_universe"], []
 
-        results, transport_errors = cls._ticker_batch(symbols, timeout=3.0)
+        results, transport_errors = cls._ticker_batch(symbols, timeout=2.4)
         skipped = [s for s in symbols if s not in results]
         return results, transport_errors, skipped
 
@@ -5848,23 +5849,42 @@ class OnDemandPreScanService:
                     pass
 
     _provider_rate_lock = threading.Lock()
-    _provider_next_at = 0.0
-    PROVIDER_MIN_GAP = 0.052  # ~19.2 req/s globally; keeps margin below OKX 20 req/s candle ceiling.
+    _provider_next_at = {}
+    PROVIDER_MIN_GAPS = {
+        "okx": 0.055,      # conservative below OKX candle endpoint ceiling
+        "kucoin": 0.030,   # independent venue; never queued behind OKX
+        "binance": 0.020,  # independent fallback venue
+        "other": 0.055,
+    }
 
     @classmethod
-    def _provider_throttle(cls):
+    def _provider_key(cls, url):
+        host = urllib.parse.urlparse(url).netloc.lower()
+        if "okx.com" in host:
+            return "okx"
+        if "kucoin.com" in host:
+            return "kucoin"
+        if "binance.vision" in host:
+            return "binance"
+        return "other"
+
+    @classmethod
+    def _provider_throttle(cls, url):
+        key = cls._provider_key(url)
+        gap = cls.PROVIDER_MIN_GAPS.get(key, cls.PROVIDER_MIN_GAPS["other"])
         with cls._provider_rate_lock:
             now = time.monotonic()
-            delay = cls._provider_next_at - now
+            next_at = cls._provider_next_at.get(key, 0.0)
+            delay = next_at - now
             if delay > 0:
                 time.sleep(delay)
-            cls._provider_next_at = time.monotonic() + cls.PROVIDER_MIN_GAP
+            cls._provider_next_at[key] = time.monotonic() + gap
 
     @classmethod
-    def _http_json(cls, url, timeout=5.0):
-        cls._provider_throttle()
+    def _http_json(cls, url, timeout=4.0):
+        cls._provider_throttle(url)
         req = urllib.request.Request(url, headers={
-            "User-Agent": "scalp-market-bridge/2.1",
+            "User-Agent": "scalp-market-bridge/2.3",
             "Accept": "application/json",
         })
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -5915,6 +5935,16 @@ class OnDemandPreScanService:
             return [], "stale_history"
         return ordered, None
 
+    @staticmethod
+    def _provider_symbol_missing(error_text):
+        s = str(error_text or "").lower()
+        needles = (
+            "doesn't exist", "does not exist", "not exist", "instrument id does not exist",
+            "symbol_not_found", "symbol not found", "contract not exist", "invalid symbol",
+            "400100", "51001",
+        )
+        return any(x in s for x in needles)
+
     @classmethod
     def _okx_history_bundle(cls, symbol):
         base = cls._provider_base(symbol)
@@ -5942,6 +5972,8 @@ class OnDemandPreScanService:
             except Exception as exc:
                 bundle[tf] = []
                 errors[tf] = f"{type(exc).__name__}:{exc}"
+                if cls._provider_symbol_missing(errors[tf]):
+                    break
         return bundle, errors
 
     @classmethod
@@ -5971,6 +6003,8 @@ class OnDemandPreScanService:
             except Exception as exc:
                 bundle[tf] = []
                 errors[tf] = f"{type(exc).__name__}:{exc}"
+                if cls._provider_symbol_missing(errors[tf]):
+                    break
         return bundle, errors
 
     @classmethod
@@ -6079,11 +6113,14 @@ class OnDemandPreScanService:
             return disk_rows, {tf: "disk_cache:" + disk_provider for tf in ("5","15","60")}, {}
 
         attempts = {}
-        providers = (
+        providers = [
             ("okx_swap_rest", cls._okx_history_bundle),
             ("kucoin_futures_rest", cls._kucoin_history_bundle),
             ("binance_spot_marketdata", cls._binance_spot_history_bundle),
-        )
+        ]
+        preferred = cls._provider_route_cache.get(symbol)
+        if preferred:
+            providers.sort(key=lambda item: 0 if item[0] == preferred else 1)
         for provider_name, fetcher in providers:
             bundle, errors = fetcher(symbol)
             attempts[provider_name] = dict(errors)
@@ -6091,6 +6128,7 @@ class OnDemandPreScanService:
                 with cls._cache_lock:
                     for tf in ("5","15","60"):
                         cls._history_cache[(symbol, tf)] = (now, [dict(x) for x in bundle[tf]])
+                cls._provider_route_cache[symbol] = provider_name
                 cls._save_disk_history(symbol, bundle, provider_name)
                 return bundle, {tf: provider_name for tf in ("5","15","60")}, {}
 
