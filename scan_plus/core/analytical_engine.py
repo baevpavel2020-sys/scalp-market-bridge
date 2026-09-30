@@ -40,6 +40,8 @@ class AnalyticalEngine:
 
     def analyze(self, rows, *, requested=None):
         requested=set(requested or ("structure","fibonacci","elliott","harmonics"))
+        supported={"structure","fibonacci","elliott","harmonics"}
+        requested &= supported
         result={}
         # Structure is the dependency root for the reusable price-pattern blocks.
         structure=self.backend.structure(rows)
