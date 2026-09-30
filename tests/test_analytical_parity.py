@@ -35,6 +35,22 @@ class AnalyticalParityTests(unittest.TestCase):
         wrapped=LegacyCryptoBackend().fibonacci(rows,structure)
         self.assertEqual(direct,wrapped)
 
+    def test_engine_elliott_matches_legacy(self):
+        rows=candles()
+        stream=object.__new__(MarketStream)
+        structure=stream._structure_metrics(rows)
+        direct=stream._elliott_metrics(rows,structure)
+        wrapped=LegacyCryptoBackend().elliott(rows,structure)
+        self.assertEqual(direct,wrapped)
+
+    def test_engine_harmonics_matches_legacy(self):
+        rows=candles()
+        stream=object.__new__(MarketStream)
+        structure=stream._structure_metrics(rows)
+        direct=stream._harmonic_metrics(structure)
+        wrapped=LegacyCryptoBackend().harmonics(structure)
+        self.assertEqual(direct,wrapped)
+
     def test_engine_keeps_selective_block_contract(self):
         out=AnalyticalEngine(LegacyCryptoBackend()).analyze(candles(),requested=["structure"])
         self.assertEqual(set(out),{"structure"})
