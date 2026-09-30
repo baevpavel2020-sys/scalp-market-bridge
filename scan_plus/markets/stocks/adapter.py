@@ -9,6 +9,7 @@ from scan_plus.core.gaps import gap_from_previous
 from scan_plus.core.session_levels import session_high_low
 from scan_plus.markets.stocks.bybit_xstocks import BybitXStocksLoader
 from scan_plus.markets.stocks.session_gap import classify_gap, gap_fill_progress
+from scan_plus.markets.stocks.candidate import build_stock_candidate
 
 
 class StocksMarketAdapter(MarketAdapter):
@@ -89,6 +90,10 @@ class StocksMarketAdapter(MarketAdapter):
             "gap_classification": classify_gap(gap),
             "gap_fill": fill,
             "underlying_sessions": active_sessions("stocks_us"),
+            "candidate": build_stock_candidate(
+                frames=frames, gap=gap, underlying=underlying,
+                ticker=ticker, session=active_sessions("stocks_us"),
+            ),
             "priority": resolve_priorities("stocks", symbol, None),
             "frames": frames,
             "execution_context": {
