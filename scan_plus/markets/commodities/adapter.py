@@ -10,6 +10,7 @@ from scan_plus.market_profiles import get_profile
 from scan_plus.priority_engine import resolve_priorities
 from scan_plus.core.analytical_engine import AnalyticalEngine, CanonicalPricePatternBackend
 from scan_plus.markets.commodities.loader import CommodityLoader
+from scan_plus.markets.commodities.context import build_commodity_context
 
 
 class CommoditiesMarketAdapter(MarketAdapter):
@@ -72,6 +73,10 @@ class CommoditiesMarketAdapter(MarketAdapter):
                 "provider_error":data.get("error"),
                 "analysis":self.engine.analyze_profiled(rows,profile.get("scan") or []),
                 "provider_context":{k:v for k,v in data.items() if k!="candles"},
+                "commodity_context":build_commodity_context(
+                    group=profile.get("group"),
+                    provider_context=data,
+                ),
                 "latest_timestamp_ms":max(
                     [r.get("timestamp_ms") for r in rows if r.get("timestamp_ms") is not None],
                     default=None,
