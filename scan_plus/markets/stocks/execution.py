@@ -26,7 +26,7 @@ def _fibo_targets(frames, direction):
     return None,None
 
 
-def build_stock_execution_plan(*, candidate, frames, price, equity, risk_fraction=0.005,
+def build_stock_execution_plan(*, candidate, frames, price, equity, risk_fraction,
                                fee_buffer=0.001, min_rr=1.5):
     """Return PLAN or WAIT. Position sizing uses cash-risk, not leverage assumptions."""
     if not isinstance(candidate,Mapping) or candidate.get("status")!="CANDIDATE":
