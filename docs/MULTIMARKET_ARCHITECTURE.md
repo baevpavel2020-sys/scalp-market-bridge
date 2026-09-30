@@ -367,3 +367,20 @@ Immediate audit fixes:
 
 Forex cycle status: CLOSED after implementation + audit.
 Production-feed gate remains open: a validated intraday FX provider must be plugged into the provider boundary before real intraday Forex scans are considered production-ready.
+
+
+## Cycle 5 — Commodities — step 1/4 + immediate audit
+
+Implemented:
+- Independent Commodities market adapter and provider boundary.
+- Distinct instrument profiles for metals (XAUUSD/XAGUSD), energy (WTI/BRENT), and softs (COCOA).
+- Shared price-pattern core is reused without importing Forex/Crypto/Stocks assumptions.
+- Provider errors are isolated and surfaced as structured `provider_error`.
+- Commodity scan timestamps are derived from normalized candle data.
+
+Immediate audit fixes:
+- Removed unsupported generic commodity `active_session` and `relative_strength` prescan assumptions because the adapter did not yet provide those evidence blocks.
+- Fixed latest-timestamp extraction to use normalized candles rather than an optional provider metadata field.
+- Commodity-specific macro/inventory/session context remains provider-gated; no synthetic evidence is invented.
+
+Commodity cycle status: step 1/4 complete.
