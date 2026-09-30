@@ -6875,7 +6875,7 @@ class ScanJobManager:
     occurred when several scans were executed inside one HTTP request.
     """
 
-    VERSION = "scan_job_manager_v3_1_adaptive_warmup"
+    VERSION = "scan_job_manager_v3_1_1_adaptive_warmup_fix"
     MAX_JOBS = 20
     JOB_TTL_SECONDS = 3600
     AUTO_WARMUP_SECONDS = max(30, min(90, int(os.environ.get("SCAN_AUTO_WARMUP_SECONDS", "40"))))
@@ -7030,13 +7030,19 @@ class ScanJobManager:
             time.sleep(min(cls.AUTO_WARMUP_POLL_SECONDS, remaining))
 
         warm_elapsed = time.monotonic() - warm_started
-        cls._update_job(
-            jid,
-            warmup_readiness=last_readiness,
-            warmup_ready_count=sum(1 for x in last_readiness.values() if x.get("trade_data_ready")),
-            warmup_total_count=len(activated),
-            warmup_timed_out=bool(last_readiness and not all(x.get("trade_data_ready") for x in last_readiness.values())),
-        )
+        with cls._lock:
+            job = cls._jobs.get(jid)
+            if job is not None:
+                job["warmup_readiness"] = last_readiness
+                job["warmup_ready_count"] = sum(
+                    1 for x in last_readiness.values() if x.get("trade_data_ready")
+                )
+                job["warmup_total_count"] = len(activated)
+                job["warmup_timed_out"] = bool(
+                    last_readiness
+                    and not all(x.get("trade_data_ready") for x in last_readiness.values())
+                )
+                job["updated_at"] = time.time()
         cls._progress(jid, done=0, total=len(activated), current_symbol=None,
                       stage="FINAL_SCAN", warmup_remaining=0)
         return activated, activation_errors, warm_elapsed
