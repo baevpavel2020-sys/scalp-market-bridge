@@ -1,10 +1,10 @@
 import os
 import requests
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 
 from collector import collector
 from spot_collector import spot_collector
-from dynamic_collector import dynamic_manager
+from dynamic_collector import dynamic_manager, run_bybit_prescan_ws_probe
 
 app = Flask(__name__)
 
@@ -16,9 +16,11 @@ BYBIT_URLS = [
     "https://api.bytick.com",
 ]
 
+
 @app.get("/")
 def home():
     return jsonify({"service": "scalp-market-bridge", "status": "online"})
+
 
 @app.get("/test-bybit")
 def test_bybit():
@@ -31,13 +33,41 @@ def test_bybit():
             results[base] = {"error": str(exc)}
     return jsonify(results)
 
+
+@app.get("/provider-test")
+def provider_test():
+    """One-shot Render -> Bybit public linear WebSocket feasibility test."""
+    try:
+        raw_symbols = request.args.get("symbols", "")
+        symbols = [s.strip() for s in raw_symbols.split(",") if s.strip()] or None
+
+        raw_timeout = request.args.get("timeout", "12")
+        try:
+            timeout = float(raw_timeout)
+        except (TypeError, ValueError):
+            return jsonify({"error": "timeout must be a number"}), 400
+
+        result = run_bybit_prescan_ws_probe(symbols=symbols, timeout=timeout)
+        return jsonify(result)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({
+            "status": "FAIL",
+            "error": f"{type(exc).__name__}: {exc}",
+            "source": "bybit_public_linear_websocket",
+        }), 500
+
+
 @app.get("/market/BTCUSDT")
 def market_btcusdt():
     return jsonify(collector.get_snapshot())
 
+
 @app.get("/market/BTCUSDT/spot")
 def market_btcusdt_spot():
     return jsonify(spot_collector.get_snapshot())
+
 
 @app.get("/market/<symbol>")
 def market_dynamic(symbol):
@@ -54,12 +84,14 @@ def scan_dynamic(symbol):
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
+
 @app.get("/diagnostics/<symbol>")
 def diagnostics_dynamic(symbol):
     try:
         return jsonify(dynamic_manager.diagnostics(symbol))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
