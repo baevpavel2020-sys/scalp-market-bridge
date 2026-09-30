@@ -89,3 +89,30 @@ class ForexCandidateAuditTests(unittest.TestCase):
         }}
         out=build_forex_candidate(frames=frames,active_sessions=["london"])
         self.assertEqual(out["status"],"WATCH")
+
+
+class ForexExecutionAndProviderAuditTests(unittest.TestCase):
+    def test_stooq_rejects_unvalidated_intraday(self):
+        from scan_plus.markets.forex.stooq import StooqFXLoader
+        with self.assertRaises(NotImplementedError):
+            StooqFXLoader().candles("EURUSD","5")
+
+    def test_candidate_requires_sweep_on_confirmation_timeframe(self):
+        frames={
+            "15m":{"analysis":{
+                "structure":{"state":"bullish"},
+                "fibonacci":{"ready":True},
+                "elliott":{"ready":True}
+            },"session_liquidity":{
+                "latest_candle_sweeps":{"asia":{"state":"none"}}
+            }},
+            "1h":{"analysis":{
+                "structure":{"state":"unknown"},
+                "fibonacci":{"ready":True},
+                "elliott":{"ready":True}
+            },"session_liquidity":{
+                "latest_candle_sweeps":{"asia":{"state":"low_sweep"}}
+            }}
+        }
+        out=build_forex_candidate(frames=frames,active_sessions=["london"])
+        self.assertEqual(out["status"],"WATCH")
