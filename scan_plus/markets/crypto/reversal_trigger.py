@@ -55,9 +55,15 @@ def detect_bearish_reversal_trigger(scan: Mapping[str, Any]):
             if bearish_rejection:
                 rejection_evidence=["causal_poi_touched","bearish_trigger_aligned"]
 
+        # Unknown timestamps are not proof of ordering. MSS may establish the
+        # structural relationship, but it must not silently override contradictory
+        # timestamps when both are available.
+        timestamps_known=break_start is not None and disp_end is not None
+        timestamp_order=(disp_end <= break_start) if timestamps_known else None
         causal=bool(
             break_confirmed and displacement_confirmed
-            and (break_start is None or disp_end is None or disp_end <= break_start or mss.get("confirmed"))
+            and (timestamp_order is not False)
+            and (timestamp_order is True or mss.get("confirmed"))
         )
         candidates.append({
             "timeframe":tf,
@@ -68,6 +74,8 @@ def detect_bearish_reversal_trigger(scan: Mapping[str, Any]):
             "failed_retest":{"observed":in_poi,"confirmed":bool(in_poi and bearish_rejection),
                              "evidence":rejection_evidence},
             "causal_order_confirmed":causal,
+            "causal_timestamps_known":timestamps_known,
+            "causal_timestamp_order":timestamp_order,
         })
 
     # Prefer the lowest execution timeframe that has the most complete chain.
