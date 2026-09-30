@@ -1,5 +1,6 @@
 import unittest
 from scan_plus.markets.stocks.adapter import StocksMarketAdapter
+from scan_plus.markets.stocks.underlying import UnderlyingProvider
 
 
 class FakeLoader:
@@ -43,6 +44,20 @@ class StocksAdapterTests(unittest.TestCase):
         out=self.adapter.scan("NVDA")
         self.assertEqual(set(out["frames"]),{"5m","15m","1h","4h"})
         self.assertEqual(out["execution_context"]["product"],"xstock_spot")
+
+    def test_underlying_payload_is_normalized(self):
+        provider=UnderlyingProvider(lambda symbol: {
+            "last_price":"180.5","open":"181","prev_close":"175"})
+        out=provider.normalize("NVDA",provider.quote("NVDA"))
+        self.assertTrue(out["ready"])
+        self.assertEqual(out["symbol"],"NVDA")
+        self.assertEqual(out["previous_close"],175.0)
+        self.assertEqual(out["session_open"],181.0)
+
+    def test_invalid_underlying_payload_stays_not_ready(self):
+        provider=UnderlyingProvider(lambda symbol: {"volume":"100"})
+        out=provider.normalize("NVDA",provider.quote("NVDA"))
+        self.assertFalse(out["ready"])
 
     def test_missing_underlying_does_not_fake_gap(self):
         adapter=StocksMarketAdapter(loader=FakeLoader(),engine=FakeEngine())
