@@ -257,3 +257,17 @@ No external underlying feed is hard-coded yet; provider integration remains inje
 - Added safety tests proving no implicit risk budget and no order submission.
 
 Cycle 3 Stocks status: CLOSED.
+
+
+## Cycle 4 — Forex — step 1/4
+
+Implemented the independent Forex adapter:
+- provider remains isolated from analytical logic;
+- candles are normalized to timestamped rows for session analysis;
+- 5m/15m/1h/4h are requested independently;
+- Asia/London/New York session high/low and overlap context are exposed per timeframe;
+- session situation is derived from the newest available candle timestamp, not wall-clock time, making scans deterministic/replayable;
+- shared Structure/Fibonacci/Elliott/Harmonics are reused through the analytical boundary;
+- no Crypto OI/funding/liquidation assumptions enter the Forex adapter.
+
+The current default Stooq loader remains a provider boundary; its actual intraday coverage must be validated before being treated as a production FX feed.
