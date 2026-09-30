@@ -6,6 +6,7 @@ It only resolves user intent and invokes independent market adapters.
 import re
 
 from scan_plus.market_registry import MarketRegistry
+from scan_plus.instrument_resolver import normalize_symbol, resolve_market
 
 ALIASES = {
     "crypto": "crypto", "крипта": "crypto",
@@ -39,10 +40,14 @@ def parse_scan_command(command):
             if market not in markets:
                 markets.append(market)
             continue
-        clean = re.sub(r"[^A-Za-z0-9._-]", "", token).upper()
+        clean = normalize_symbol(token)
         if clean:
             symbols.append(clean)
 
+    if symbols and not markets:
+        resolved=[resolve_market(s) for s in symbols]
+        known=tuple(dict.fromkeys(m for m in resolved if m))
+        return {"markets": known, "symbols": symbols}
     return {"markets": tuple(markets) if markets else (), "symbols": symbols}
 
 
