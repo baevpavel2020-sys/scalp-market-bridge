@@ -91,6 +91,9 @@ class MarketStream:
 
         self.session_id = None
         self.session_started_at = None
+        # Monotonic lifetime of this symbol collector across websocket reconnects.
+        # Used for liquidity sufficiency decisions; session age resets on reconnect.
+        self.collector_started_at = None
 
         self.connect_attempts = 0
         self.successful_connections = 0
@@ -148,6 +151,8 @@ class MarketStream:
                 return
 
             self.stop_event.clear()
+            if self.collector_started_at is None:
+                self.collector_started_at = time.time()
 
             self.thread = threading.Thread(
                 target=self._run_forever,
@@ -2262,7 +2267,7 @@ class MarketStream:
         legacy=self._confluence_engine_v2(technical,ctx,fib,elliott,harmonics,divergences,liquidity,smc)
         confluence={**legacy,"decision_authority":False,"deprecated_vote_model":True,"evidence_graph":evidence}
         ready=bool(technical.get("ready") and ctx.get("ready"))
-        return {"ready":ready,"engine_version":"scan_plus_v3_8_7_2","closed_candles":len(rows),
+        return {"ready":ready,"engine_version":"scan_plus_v3_8_8","closed_candles":len(rows),
                 "excluded_open_candles":max(0,len(raw_rows)-len(rows)),"last_confirmed_start":rows[-1].get("start") if rows else None,
                 "last_confirmed_close":rows[-1].get("close") if rows else None,
                 "pipeline":["technical","structure","fibonacci","elliott","harmonics","divergences","liquidity","smart_money","freshness","evidence_graph"],
@@ -3127,6 +3132,11 @@ class MarketStream:
                 if self.session_started_at
                 else None
             )
+            collector_age = (
+                now - self.collector_started_at
+                if self.collector_started_at
+                else None
+            )
 
             message_age = (
                 now
@@ -3166,6 +3176,7 @@ class MarketStream:
                     if session_age is not None
                     else None
                 ),
+                "collector_age_seconds": (round(collector_age,2) if collector_age is not None else None),
 
                 "last_message_age_seconds": (
                     round(
@@ -4013,16 +4024,49 @@ class DynamicMarketManager:
         # False is authoritative subscription rejection; None means not established yet.
         mode="perp_only" if spot_available is False else "spot_perp"
         windows=base.get("windows",{})
-        if mode=="perp_only":
-            warmed=[w for w,d in windows.items() if d.get("linear_warm") and d.get("perp_flow_usable") and float(d.get("perp_flow_quality",{}).get("quality") or 0.0)>0]
+
+        # A listed Spot market can be technically active yet too illiquid to be a
+        # useful execution/driver source.  Do not leave such symbols in DATA_BLOCK
+        # forever and do not pretend Spot is absent: after a real observation period
+        # degrade explicitly to perp_dominant.  This mode requires usable perp tape,
+        # usable OI on the same horizon, and fresh linear book/ticker.
+        # Collector age survives reconnects; session age does not.
+        spot_age=float(spot.get("collector_age_seconds") or spot.get("session_age_seconds") or 0.0)
+        perp_quality_windows=[w for w,d in windows.items()
+                              if d.get("linear_warm") and d.get("perp_flow_usable")
+                              and float(d.get("perp_flow_quality",{}).get("quality") or 0.0)>0]
+        paired_windows=[w for w,d in windows.items()
+                        if d.get("linear_warm") and d.get("spot_warm")
+                        and d.get("perp_flow_usable") and d.get("spot_flow_usable")]
+        spot15=windows.get("15m",{})
+        spot_sparse=bool(
+            spot_available is True
+            and spot_age >= 600.0
+            and perp_quality_windows
+            and not paired_windows
+            and (int(spot15.get("spot_trade_count") or 0) < 6
+                 or float((spot15.get("spot_flow_quality") or {}).get("coverage_ratio") or 0.0) < 0.50)
+        )
+        if spot_sparse:
+            mode="perp_dominant"
+
+        if mode in ("perp_only","perp_dominant"):
+            warmed=[w for w,d in windows.items()
+                    if d.get("linear_warm") and d.get("perp_flow_usable")
+                    and d.get("oi_usable")
+                    and float(d.get("perp_flow_quality",{}).get("quality") or 0.0)>0]
             base["warmed_flow_windows"]=warmed
             base["flow_ready"]=bool(warmed)
             base["driver_ready"]=bool(warmed)
             pq=max((float(windows[w].get("perp_flow_quality",{}).get("quality") or 0.0) for w in warmed), default=0.0)
-            maturity_cap={0:0.0,1:0.55,2:0.75,3:0.90,4:0.97}.get(len(warmed),0.97)
+            maturity_caps = ({0:0.0,1:0.45,2:0.60,3:0.72,4:0.80}
+                             if mode=="perp_dominant"
+                             else {0:0.0,1:0.55,2:0.75,3:0.90,4:0.97})
+            maturity_cap=maturity_caps.get(len(warmed), max(maturity_caps.values()))
             pq=min(pq,maturity_cap)
-            base["driver"]={"primary":"perp_only" if warmed else "unknown",
-                            "confidence":round(pq,4),"votes":{"perp_only":round(pq,4)}}
+            driver_name=mode if warmed else "unknown"
+            base["driver"]={"primary":driver_name,
+                            "confidence":round(pq,4),"votes":{mode:round(pq,4)}}
             base["driver_ready"]=bool(warmed and pq>=0.20)
             ticker=(linear.get("ticker") or {})
             tu=fnum(ticker.get("updated_at")); tfresh=bool(tu is not None and time.time()-tu<=15.0)
@@ -4031,6 +4075,13 @@ class DynamicMarketManager:
             base["ready"]=bool(linear.get("connected") and (linear.get("orderbook") or {}).get("ready") and tfresh)
             base["trade_data_ready"]=bool(base["ready"] and base.get("price") is not None and base["driver_ready"] and warmed)
             base["flow_divergences"]=[]
+            base["spot_liquidity_degraded"] = bool(mode=="perp_dominant")
+            base["spot_observation_age_seconds"] = round(spot_age,2)
+            base["spot_degradation_reason"] = ("spot_insufficient_liquidity" if mode=="perp_dominant" else None)
+        else:
+            base["spot_liquidity_degraded"] = False
+            base["spot_observation_age_seconds"] = round(spot_age,2)
+            base["spot_degradation_reason"] = None
         base["execution_mode"]=mode
         base["market_capabilities"]={"linear":linear.get("available") is not False,
                                      "spot":spot_available is not False,
@@ -4044,9 +4095,11 @@ class DynamicMarketManager:
             d=windows.get(w,{})
             if not d.get("linear_warm") or not d.get("perp_flow_usable"): continue
             if mode=="spot_perp" and (not d.get("spot_warm") or not d.get("spot_flow_usable")): continue
+            if mode in ("perp_only","perp_dominant") and not d.get("oi_usable"): continue
             pd=d.get("perp_delta_ratio"); sd=d.get("spot_delta_ratio"); oi=d.get("oi_change_pct"); pc=d.get("perp_price_change_pct")
             if pd is None or pc is None: continue
             if mode=="perp_only": regime="perp_only"; break
+            if mode=="perp_dominant": regime="perp_dominant"; break
             if sd is not None and pd*sd<0 and abs(pd-sd)>=0.18: regime="spot_perp_divergence"
             elif pc>0 and pd>0.08 and oi is not None and oi<0: regime="short_covering"
             elif pc<0 and pd<-0.08 and oi is not None and oi<0: regime="long_liquidation"
@@ -4362,7 +4415,7 @@ class DynamicMarketManager:
         return {
             "symbol": symbol,
             "generated_at": time.time(),
-            "engine_version": "scan_plus_v3_8_7_2",
+            "engine_version": "scan_plus_v3_8_8",
             "linear": linear,
             "spot": spot,
             "driver": self._driver(linear, spot),
@@ -4482,6 +4535,9 @@ class DynamicMarketManager:
                 "orderbook_age_seconds":execution.get("orderbook_age_seconds"),
                 "ticker_age_seconds":execution.get("ticker_age_seconds"),
                 "ticker_fresh":execution.get("ticker_fresh"),
+                "spot_liquidity_degraded":execution.get("spot_liquidity_degraded",False),
+                "spot_observation_age_seconds":execution.get("spot_observation_age_seconds"),
+                "spot_degradation_reason":execution.get("spot_degradation_reason"),
                 "windows":execution.get("windows",{}),
             },
             "setup":{
