@@ -11,7 +11,14 @@ class StooqFXLoader:
         self.timeout=float(timeout)
         self.session=session or requests.Session()
 
+    SUPPORTED_INTERVALS={"d","w","m"}
+
     def candles(self,symbol="EURUSD",interval="d"):
+        interval=str(interval).lower()
+        if interval not in self.SUPPORTED_INTERVALS:
+            raise NotImplementedError(
+                f"StooqFXLoader does not provide validated intraday interval: {interval}"
+            )
         pair=str(symbol).lower().replace("/","")
         response=self.session.get(self.base_url,params={"s":pair,"i":interval},timeout=self.timeout)
         response.raise_for_status()
