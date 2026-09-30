@@ -41,8 +41,8 @@ def build_forex_candidate(*, frames, active_sessions=None, overlap=False):
     shared_ready,confirmation_tf=_shared_ready(frames)
     sweeps=_sweeps(frames)
 
-    bullish_sweep=any(state=="low_sweep" for _,_,state in sweeps)
-    bearish_sweep=any(state=="high_sweep" for _,_,state in sweeps)
+    bullish_sweep=any(state=="low_sweep" and tf==confirmation_tf for tf,_,state in sweeps)
+    bearish_sweep=any(state=="high_sweep" and tf==confirmation_tf for tf,_,state in sweeps)
 
     blockers=[]
     if direction=="unknown": blockers.append("structure_direction_unresolved")
