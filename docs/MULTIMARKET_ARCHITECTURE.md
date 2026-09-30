@@ -346,3 +346,24 @@ Immediate audit fixes:
 - Elliott readiness was initially treated as any non-empty mapping; fixed to require explicit `ready=True`.
 - Situation classification initially ignored detected sweeps when resolving priorities; fixed so sweep context reaches the priority engine.
 - Existing prior-session cutoff remains enforced for session ranges, preventing same-session self-sweep contamination.
+
+
+## Cycle 4 — Forex — step 4/4 + immediate audit
+
+Implemented:
+- Added a non-executing FX execution/risk planner.
+- Entry is a limit/retest reference; structural invalidation is the stop source.
+- Fibonacci extension is preferred for target; RR fallback is deterministic.
+- Position sizing requires explicit account equity and risk fraction; no implicit risk budget.
+- No crypto-style leverage/funding/OI/liquidation assumptions are used.
+- Execution layer never submits orders.
+
+Immediate audit fixes:
+- Removed an unused execution import from the scan adapter; execution remains a separate layer.
+- Candidate direction now requires the matching session sweep on the same confirmation timeframe as the confirmed shared analysis, preventing cross-timeframe evidence leakage.
+- The Stooq provider boundary now explicitly rejects unvalidated intraday intervals instead of pretending to provide 5m/15m data.
+- Forex adapter now surfaces provider limitations as structured `provider_error` fields instead of crashing the whole scan.
+- Added regression coverage for provider rejection and confirmation-timeframe isolation.
+
+Forex cycle status: CLOSED after implementation + audit.
+Production-feed gate remains open: a validated intraday FX provider must be plugged into the provider boundary before real intraday Forex scans are considered production-ready.
