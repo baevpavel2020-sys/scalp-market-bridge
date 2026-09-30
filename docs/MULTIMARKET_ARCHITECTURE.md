@@ -221,3 +221,15 @@ Implemented the first independent Stocks adapter layer:
 - Execution context explicitly distinguishes 24/7 xStock trading from underlying regular sessions.
 
 This is intentionally not yet the final Stocks signal engine: underlying provider integration, gap/session evidence fusion, stock-specific candidate scoring, and execution/risk rules remain separate steps.
+
+
+### Cycle 3 — Stocks — step 2/4 complete
+
+- Added normalized underlying-provider payload contract.
+- Underlying context now explicitly exposes readiness and normalized price/open/previous-close fields.
+- Added stock-specific gap classification: gap_up / gap_down / flat / unknown.
+- Added gap-fill progress without treating unavailable data as a signal.
+- Stocks adapter now keeps xStock price, underlying data, and gap evidence separate.
+- Added tests for valid/invalid underlying payloads and gap classification/fill progress.
+
+No external underlying feed is hard-coded yet; provider integration remains injectable.
