@@ -233,3 +233,14 @@ This is intentionally not yet the final Stocks signal engine: underlying provide
 - Added tests for valid/invalid underlying payloads and gap classification/fill progress.
 
 No external underlying feed is hard-coded yet; provider integration remains injectable.
+
+
+### Cycle 3 — Stocks — step 3/4 complete
+
+- Added stock-specific candidate engine.
+- Gap/session/underlying evidence is kept separate from shared Structure/Fibonacci/Elliott/Harmonics.
+- A gap alone cannot create a directional candidate.
+- Missing underlying or unresolved structure keeps the instrument in WATCH.
+- Direction is taken from confirmed structural state, not inferred from gap direction.
+- Stock situation is now passed into the priority engine, so gap scenarios can reorder evidence without disabling lower-priority blocks.
+- Candidate output is explicitly non-execution: no order, entry, stop or target is generated at this stage.
