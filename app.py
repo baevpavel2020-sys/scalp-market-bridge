@@ -62,7 +62,7 @@ def provider_test():
 @app.get("/prescan")
 def prescan_manual():
     try:
-        raw_top = request.args.get("top", "8")
+        raw_top = request.args.get("top", "6")
         raw_shortlist = request.args.get("shortlist", "30")
         try:
             top_n = int(raw_top)
@@ -100,7 +100,7 @@ def market_dynamic(symbol):
 def scan_auto():
     """Compatibility route: now STARTS a background job instead of blocking."""
     try:
-        top_n = int(request.args.get("top", "8"))
+        top_n = int(request.args.get("top", "6"))
         shortlist = int(request.args.get("shortlist", "30"))
         return jsonify(start_scan_auto_job(top_n=top_n, shortlist=shortlist)), 202
     except ValueError as exc:
@@ -112,7 +112,7 @@ def scan_auto():
 @app.get("/scan-auto/start")
 def scan_auto_start():
     try:
-        top_n = int(request.args.get("top", "8"))
+        top_n = int(request.args.get("top", "6"))
         shortlist = int(request.args.get("shortlist", "30"))
         return jsonify(start_scan_auto_job(top_n=top_n, shortlist=shortlist)), 202
     except ValueError as exc:
