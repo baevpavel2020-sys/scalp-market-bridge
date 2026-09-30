@@ -30,6 +30,14 @@ class ManipulationTests(unittest.TestCase):
         })
         self.assertEqual(state["action"],"NO SHORT")
 
+    def test_healthy_continuation_is_a_short_veto(self):
+        state=manipulation_x25_state({
+            "abnormal_pump":True,"exhaustion":True,"leverage_fragility":True,
+            "failed_acceptance":False,"healthy_continuation":True,
+        })
+        self.assertEqual(state["action"],"NO SHORT")
+        self.assertEqual(state["state"],"WATCH")
+
     def test_requires_break_displacement_and_failed_retest(self):
         base={"abnormal_pump":True,"exhaustion":True,"leverage_fragility":True,"failed_acceptance":True}
         self.assertEqual(manipulation_x25_state(base)["state"],"ARMED")
