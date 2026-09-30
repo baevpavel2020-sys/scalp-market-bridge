@@ -13,7 +13,7 @@ import threading
 import time
 import uuid
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 
 import websocket
 
@@ -5500,7 +5500,7 @@ def run_bybit_prescan_ws_probe(symbols=None, timeout=12.0):
 class OnDemandPreScanService:
     """Manual PreScan. No permanent universe collector and no Scan+ activation."""
 
-    VERSION = "prescan_v1_1_on_demand"
+    VERSION = "prescan_v1_6_final"
     # Deliberately broad but static v1 universe. Invalid/delisted symbols are
     # isolated by recursive WS batches and cannot poison the whole run.
     DEFAULT_UNIVERSE = (
@@ -5532,16 +5532,48 @@ class OnDemandPreScanService:
 
     @classmethod
     def _ticker_batch(cls, symbols, timeout=5.0):
+        """Collect ticker snapshots over one WS connection.
+
+        Subscription requests are chunked but share the same socket. If Bybit
+        rejects a request because one topic has no handler (stale/delisted
+        symbol), only that topic is removed and the affected chunk is retried
+        on the same connection. No recursive reconnects are allowed.
+        """
+        symbols = list(dict.fromkeys(str(s).upper() for s in (symbols or [])))
         if not symbols:
             return {}, []
+
         ws = None
         rows, errors = {}, []
+        invalid_symbols = set()
+        request_topics = {}
+        request_seq = 0
+
+        def send_topics(topics):
+            nonlocal request_seq
+            topics = [t for t in topics if t.rsplit(".", 1)[-1].upper() not in invalid_symbols]
+            if not topics:
+                return
+            request_seq += 1
+            req_id = f"prescan-{request_seq}"
+            request_topics[req_id] = list(topics)
+            ws.send(json.dumps({"req_id": req_id, "op": "subscribe", "args": topics}))
+
         try:
-            ws = websocket.create_connection(WS_URLS["linear"], timeout=min(5.0, timeout + 1.0))
+            ws = websocket.create_connection(WS_URLS["linear"], timeout=min(4.0, timeout + 1.0))
             ws.settimeout(0.50)
-            ws.send(json.dumps({"op": "subscribe", "args": [f"tickers.{s}" for s in symbols]}))
+
+            topics = [f"tickers.{s}" for s in symbols]
+            # Small subscription messages isolate stale universe entries while
+            # keeping exactly one TCP/TLS/WebSocket connection.
+            for i in range(0, len(topics), 10):
+                send_topics(topics[i:i + 10])
+
             deadline = time.time() + timeout
-            while time.time() < deadline and len(rows) < len(symbols):
+            while time.time() < deadline:
+                expected = len(symbols) - len(invalid_symbols)
+                if expected > 0 and len(rows) >= expected:
+                    break
                 try:
                     raw = ws.recv()
                 except websocket.WebSocketTimeoutException:
@@ -5552,14 +5584,38 @@ class OnDemandPreScanService:
                     msg = json.loads(raw)
                 except Exception:
                     continue
+
                 if msg.get("op") == "subscribe" and msg.get("success") is False:
-                    errors.append(str(msg.get("ret_msg") or msg.get("retMsg") or "subscription_rejected"))
-                    break
+                    ret_msg = str(msg.get("ret_msg") or msg.get("retMsg") or "subscription_rejected")
+                    # Live Bybit response example:
+                    # "error:handler not found, topic:tickers.1000SHIBUSDT"
+                    match = re.search(r"topic\s*:\s*tickers\.([A-Z0-9]+)", ret_msg, re.IGNORECASE)
+                    if match:
+                        bad_symbol = match.group(1).upper()
+                        invalid_symbols.add(bad_symbol)
+                        req_id = str(msg.get("req_id") or "")
+                        failed_topics = request_topics.get(req_id, [])
+                        if not failed_topics:
+                            bad_topic = f"tickers.{bad_symbol}"
+                            failed_topics = next(
+                                (batch for batch in request_topics.values() if bad_topic in batch),
+                                []
+                            )
+                        retry_topics = [
+                            t for t in failed_topics
+                            if t.rsplit(".", 1)[-1].upper() != bad_symbol
+                        ]
+                        if retry_topics:
+                            send_topics(retry_topics)
+                        continue
+                    errors.append(ret_msg)
+                    continue
+
                 topic = str(msg.get("topic") or "")
                 data = msg.get("data")
                 if topic.startswith("tickers.") and isinstance(data, dict):
                     symbol = topic.rsplit(".", 1)[-1].upper()
-                    if symbol in symbols:
+                    if symbol in symbols and symbol not in invalid_symbols:
                         current = rows.setdefault(symbol, {})
                         current.update(data)
                         current["_ts"] = msg.get("ts")
@@ -5567,8 +5623,10 @@ class OnDemandPreScanService:
             errors.append(f"{type(exc).__name__}: {exc}")
         finally:
             if ws is not None:
-                try: ws.close()
-                except Exception: pass
+                try:
+                    ws.close()
+                except Exception:
+                    pass
         return rows, errors
 
     @classmethod
@@ -5586,7 +5644,7 @@ class OnDemandPreScanService:
         if not symbols:
             return {}, ["empty_universe"], []
 
-        results, transport_errors = cls._ticker_batch(symbols, timeout=4.0)
+        results, transport_errors = cls._ticker_batch(symbols, timeout=3.0)
         skipped = [s for s in symbols if s not in results]
         return results, transport_errors, skipped
 
@@ -5615,7 +5673,7 @@ class OnDemandPreScanService:
                urllib.parse.urlencode({"symbol": symbol, "interval": tf, "limit": cls.HISTORY_LIMIT}))
         req = urllib.request.Request(url, headers={"User-Agent": "scalp-market-bridge/1.0", "Accept": "application/json"})
         try:
-            with urllib.request.urlopen(req, timeout=8) as response:
+            with urllib.request.urlopen(req, timeout=4) as response:
                 payload = json.loads(response.read().decode("utf-8"))
             rows = [c for c in (cls._rest_candle(r) for r in payload) if c is not None]
             rows.sort(key=lambda x: x["start"])
@@ -5705,50 +5763,141 @@ class OnDemandPreScanService:
             "history_sources": sources, "reasons": reasons,
         }
 
+    @staticmethod
+    def _json_safe(value):
+        """Recursively make PreScan output strict-JSON safe."""
+        if isinstance(value, float):
+            return value if math.isfinite(value) else None
+        if isinstance(value, dict):
+            return {str(k): OnDemandPreScanService._json_safe(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [OnDemandPreScanService._json_safe(v) for v in value]
+        return value
+
     @classmethod
     def run(cls, universe=None, top_n=8, shortlist=30):
         started = time.time()
         symbols = cls._clean_symbols(universe or cls.DEFAULT_UNIVERSE)
-        shortlist = max(5, min(int(shortlist), cls.TOP_BY_TURNOVER, len(symbols)))
         top_n = max(1, min(int(top_n), 20))
+        if not symbols:
+            return cls._json_safe({
+                "engine_version": cls.VERSION, "mode": "manual_on_demand", "status": "FAIL",
+                "universe_size": 0, "ws_ticker_count": 0, "shortlist_size": 0,
+                "top_n": top_n, "elapsed_ms": round((time.time() - started) * 1000.0, 2),
+                "candidates": [], "scan_plus_candidates": [],
+                "diagnostics": {"ws_errors": ["empty_universe"], "ws_error_count": 1,
+                                "skipped_symbols": [], "skipped_symbol_count": 0,
+                                "history_errors": {}, "history_error_count": 0,
+                                "analysis_errors": {}, "analysis_error_count": 0},
+                "guardrails": {"runs_continuously": False, "uses_dynamic_manager": False,
+                               "activates_scan_plus": False, "trade_decision": False,
+                               "closed_history_only": True, "scan_plus_logic_unchanged": True},
+            })
+
+        shortlist = max(1, min(int(shortlist), cls.TOP_BY_TURNOVER, len(symbols)))
         tickers, ws_errors, skipped_symbols = cls._discover_tickers(symbols)
-        ranked = sorted(tickers, key=lambda s: fnum(tickers[s].get("turnover24h")) or 0.0, reverse=True)[:shortlist]
-        history = {s: {} for s in ranked}; sources = {s: {} for s in ranked}; hist_errors = {}
-        jobs = []
-        with ThreadPoolExecutor(max_workers=min(12, max(1, len(ranked) * 3))) as pool:
-            for s in ranked:
-                for tf in ("5", "15", "60"):
-                    jobs.append((pool.submit(cls._fetch_history, s, tf), s, tf))
-            for future, s, tf in jobs:
-                try:
-                    rows, source, err = future.result()
-                except Exception as exc:
-                    rows, source, err = [], "history_worker", f"{type(exc).__name__}:{exc}"
-                history[s][tf] = rows; sources[s][tf] = source
-                if err: hist_errors[f"{s}:{tf}"] = err
-        candidates = [cls._analyze_rows(s, tickers[s], history[s], sources[s]) for s in ranked]
-        candidates.sort(key=lambda x: (PreScanEngine.STATUS_ORDER.get(x.get("status"), 0), x.get("priority", 0),
-                                       x.get("market", {}).get("turnover24h", 0)), reverse=True)
+        ranked = sorted(
+            tickers,
+            key=lambda s: fnum(tickers[s].get("turnover24h")) or 0.0,
+            reverse=True
+        )[:shortlist]
+
+        history = {s: {} for s in ranked}
+        sources = {s: {} for s in ranked}
+        hist_errors = {}
+
+        # Keep the whole history stage safely below Gunicorn's common 30 s timeout.
+        # 18 workers x 4 s per HTTP request gives bounded waves; global budget is 14 s.
+        executor = None
+        future_meta = {}
+        try:
+            if ranked:
+                executor = ThreadPoolExecutor(max_workers=min(18, max(1, len(ranked) * 3)))
+                for s in ranked:
+                    for tf in ("5", "15", "60"):
+                        future = executor.submit(cls._fetch_history, s, tf)
+                        future_meta[future] = (s, tf)
+
+                done, pending = wait(list(future_meta), timeout=14.0)
+                for future in done:
+                    s, tf = future_meta[future]
+                    try:
+                        rows, source, err = future.result()
+                    except Exception as exc:
+                        rows, source, err = [], "history_worker", f"{type(exc).__name__}:{exc}"
+                    history[s][tf] = rows
+                    sources[s][tf] = source
+                    if err:
+                        hist_errors[f"{s}:{tf}"] = err
+
+                for future in pending:
+                    s, tf = future_meta[future]
+                    future.cancel()
+                    history[s][tf] = []
+                    sources[s][tf] = "history_timeout"
+                    hist_errors[f"{s}:{tf}"] = "global_history_timeout"
+        finally:
+            if executor is not None:
+                executor.shutdown(wait=False, cancel_futures=True)
+
+        # A single pathological market must never fail the endpoint.
+        candidates = []
+        analysis_errors = {}
+        for s in ranked:
+            try:
+                candidate = cls._analyze_rows(s, tickers[s], history[s], sources[s])
+            except Exception as exc:
+                err = f"{type(exc).__name__}:{exc}"
+                analysis_errors[s] = err
+                candidate = {
+                    "engine_version": cls.VERSION, "symbol": s, "status": "REJECT",
+                    "priority": 0.0, "eligible_for_scan_plus": False,
+                    "reasons": ["analysis_error"], "history_sources": sources[s],
+                }
+            candidates.append(candidate)
+
+        candidates.sort(
+            key=lambda x: (
+                PreScanEngine.STATUS_ORDER.get(x.get("status"), 0),
+                fnum(x.get("priority")) or 0.0,
+                fnum(x.get("market", {}).get("turnover24h")) or 0.0
+            ),
+            reverse=True
+        )
         actionable = [x for x in candidates if x.get("eligible_for_scan_plus")][:top_n]
-        analyzable = [x for x in candidates if not any(str(r).startswith("history_unavailable:") for r in x.get("reasons", []))]
+        analyzable = [
+            x for x in candidates
+            if "analysis_error" not in x.get("reasons", [])
+            and not any(str(r).startswith("history_unavailable:") for r in x.get("reasons", []))
+        ]
+
         if not tickers:
             overall = "FAIL"
         elif analyzable:
             overall = "PASS"
         else:
             overall = "PARTIAL"
-        return {
-            "engine_version": cls.VERSION, "mode": "manual_on_demand", "status": overall,
-            "universe_size": len(symbols), "ws_ticker_count": len(tickers), "shortlist_size": len(ranked),
-            "top_n": top_n, "elapsed_ms": round((time.time() - started) * 1000.0, 2),
-            "candidates": candidates[:top_n], "scan_plus_candidates": [x["symbol"] for x in actionable],
-            "diagnostics": {"ws_errors": ws_errors[-20:], "ws_error_count": len(ws_errors),
-                            "skipped_symbols": skipped_symbols, "skipped_symbol_count": len(skipped_symbols),
-                            "history_errors": hist_errors, "history_error_count": len(hist_errors)},
-            "guardrails": {"runs_continuously": False, "uses_dynamic_manager": False, "activates_scan_plus": False,
-                           "trade_decision": False, "closed_history_only": True, "scan_plus_logic_unchanged": True},
-        }
 
+        result = {
+            "engine_version": cls.VERSION, "mode": "manual_on_demand", "status": overall,
+            "universe_size": len(symbols), "ws_ticker_count": len(tickers),
+            "shortlist_size": len(ranked), "top_n": top_n,
+            "elapsed_ms": round((time.time() - started) * 1000.0, 2),
+            "candidates": candidates[:top_n],
+            "scan_plus_candidates": [x["symbol"] for x in actionable],
+            "diagnostics": {
+                "ws_errors": ws_errors[-20:], "ws_error_count": len(ws_errors),
+                "skipped_symbols": skipped_symbols, "skipped_symbol_count": len(skipped_symbols),
+                "history_errors": hist_errors, "history_error_count": len(hist_errors),
+                "analysis_errors": analysis_errors, "analysis_error_count": len(analysis_errors),
+            },
+            "guardrails": {
+                "runs_continuously": False, "uses_dynamic_manager": False,
+                "activates_scan_plus": False, "trade_decision": False,
+                "closed_history_only": True, "scan_plus_logic_unchanged": True,
+            },
+        }
+        return cls._json_safe(result)
 
 def run_prescan(universe=None, top_n=8, shortlist=30):
     return OnDemandPreScanService.run(universe=universe, top_n=top_n, shortlist=shortlist)
