@@ -11,6 +11,7 @@ from scan_plus.market_profiles import get_profile
 from scan_plus.markets.crypto.event_adapter import observe_crypto_events
 from scan_plus.core.rolling_baseline import RollingMoveBaseline
 from scan_plus.markets.crypto.shadow_recorder import ShadowRecorder
+from scan_plus.markets.crypto.event_memory import CausalEventMemory
 
 
 class CryptoMarketAdapter(MarketAdapter):
@@ -21,6 +22,7 @@ class CryptoMarketAdapter(MarketAdapter):
         self._prescan_runner = prescan_runner or run_prescan
         self._move_baselines = {}
         self._shadow_recorder = ShadowRecorder()
+        self._event_memory = CausalEventMemory()
 
     def profile(self, symbol=None):
         return get_profile(self.market, symbol)
@@ -62,6 +64,29 @@ class CryptoMarketAdapter(MarketAdapter):
                 "ready": baseline.ready(), "sample_count": len(baseline.values),
                 "threshold_abs_pct": baseline.threshold(), "current_abs_move_pct": None,
                 "confirmed": None,
+            }
+
+        timestamp = legacy.get("generated_at")
+        try:
+            timestamp = int(float(timestamp))
+        except (TypeError, ValueError):
+            timestamp = None
+        if timestamp is not None:
+            x25 = event_engine.get("x25_evidence") or {}
+            event_engine["causal_memory"] = self._event_memory.update(
+                key, timestamp, {
+                    "abnormal_pump": bool(x25.get("abnormal_pump")),
+                    "exhaustion": bool(x25.get("exhaustion")),
+                    "failed_acceptance": bool(x25.get("failed_acceptance")),
+                    "structure_break": bool(x25.get("structure_break")),
+                    "bearish_displacement": bool(x25.get("bearish_displacement")),
+                    "failed_retest": bool(x25.get("failed_retest")),
+                })
+        else:
+            event_engine["causal_memory"] = {
+                "sequence_complete": False,
+                "causal_order_confirmed": None,
+                "reason": "generated_at_unavailable",
             }
 
         result["event_engine"] = event_engine
