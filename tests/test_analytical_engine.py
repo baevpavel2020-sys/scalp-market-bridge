@@ -21,6 +21,13 @@ class AnalyticalEngineTests(unittest.TestCase):
             [],["structure_mtf","fibonacci"])
         self.assertEqual(set(out),{"structure","fibonacci"})
 
+    def test_compare_reports_exact_match(self):
+        self.assertEqual(AnalyticalEngine.compare({"a":1},{"a":1}),
+                         {"equal":True,"differences":[]})
+
+    def test_compare_reports_changed_top_level_block(self):
+        self.assertEqual(AnalyticalEngine.compare({"a":1},{"a":2})["differences"],["a"])
+
     def test_legacy_backend_has_all_shared_tools(self):
         backend=LegacyCryptoBackend()
         self.assertTrue(all(callable(getattr(backend,name)) for name in
