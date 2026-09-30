@@ -1,22 +1,30 @@
-"""Session high/low extraction for the latest local trading session only."""
+"""Session range extraction using explicit timestamp cutoffs."""
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from scan_plus.core.sessions import SCHEDULES
+
 
 def _to_utc(ts):
     value=float(ts)
     return datetime.fromtimestamp(value/(1000 if value>1e11 else 1),tz=timezone.utc)
 
-def session_high_low(candles, market="forex", session="london"):
+
+def session_high_low(candles, market="forex", session="london", before_timestamp_ms=None):
     schedule=(SCHEDULES.get(market) or {}).get(session)
     if not schedule:
         return {"ready":False,"reason":"unknown_session"}
     tz_name,start,end=schedule
     prepared=[]
+    cutoff=None
+    if before_timestamp_ms is not None:
+        try: cutoff=_to_utc(before_timestamp_ms)
+        except (TypeError,ValueError,OverflowError,OSError): return {"ready":False,"reason":"invalid_cutoff"}
     for candle in candles or []:
         ts=candle.get("timestamp_ms",candle.get("timestamp"))
         try:
             dt=_to_utc(ts)
+            if cutoff is not None and dt >= cutoff:
+                continue
             local=dt.astimezone(ZoneInfo(tz_name))
             if start <= local.time() < end:
                 prepared.append((local.date(),candle))
