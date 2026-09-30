@@ -8,6 +8,7 @@ from typing import Any, Mapping
 from scan_plus.core.liquidity_leverage import classify_liquidity_leverage
 from scan_plus.markets.crypto.manipulation_x25 import manipulation_x25_state
 from scan_plus.markets.crypto.post_pump import detect_post_pump_pipeline
+from scan_plus.markets.crypto.reversal_trigger import detect_bearish_reversal_trigger
 
 
 def _num(value):
@@ -117,6 +118,7 @@ def build_crypto_event_evidence(scan: Mapping[str, Any]):
 def observe_crypto_events(scan: Mapping[str, Any]):
     normalized,x25=build_crypto_event_evidence(scan)
     pipeline=detect_post_pump_pipeline(scan)
+    reversal=detect_bearish_reversal_trigger(scan)
 
     # Upgrade only with explicitly confirmed detector stages. Execution trigger
     # remains unavailable here, so observer integration still cannot trigger a trade.
@@ -128,11 +130,16 @@ def observe_crypto_events(scan: Mapping[str, Any]):
     )
     x25["leverage_fragility"] = pipeline["leverage_fragility"]["confirmed"]
     x25["failed_acceptance"] = pipeline["failed_acceptance"]["confirmed"]
+    best_trigger=reversal.get("best") or {}
+    x25["structure_break"] = bool((best_trigger.get("structure_break") or {}).get("confirmed"))
+    x25["bearish_displacement"] = bool((best_trigger.get("bearish_displacement") or {}).get("confirmed"))
+    x25["failed_retest"] = bool((best_trigger.get("failed_retest") or {}).get("confirmed"))
     events=classify_liquidity_leverage(normalized)
     return {
         "mode":"observer",
         "affects_trade_decision":False,
         "post_pump_pipeline":pipeline,
+        "reversal_trigger":reversal,
         "events":[
             {"event_id":e.event_id,"family":e.family,"direction":e.direction,
              "confidence":e.confidence,"evidence":list(e.evidence),"metadata":dict(e.metadata)}
