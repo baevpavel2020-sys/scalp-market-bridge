@@ -2227,7 +2227,7 @@ class MarketStream:
         legacy=self._confluence_engine_v2(technical,ctx,fib,elliott,harmonics,divergences,liquidity,smc)
         confluence={**legacy,"decision_authority":False,"deprecated_vote_model":True,"evidence_graph":evidence}
         ready=bool(technical.get("ready") and ctx.get("ready"))
-        return {"ready":ready,"engine_version":"scan_plus_v3_8_3","closed_candles":len(rows),
+        return {"ready":ready,"engine_version":"scan_plus_v3_8_4","closed_candles":len(rows),
                 "excluded_open_candles":max(0,len(raw_rows)-len(rows)),"last_confirmed_start":rows[-1].get("start") if rows else None,
                 "last_confirmed_close":rows[-1].get("close") if rows else None,
                 "pipeline":["technical","structure","fibonacci","elliott","harmonics","divergences","liquidity","smart_money","freshness","evidence_graph"],
@@ -2710,6 +2710,30 @@ class MarketStream:
     # FLOW METRICS
     # ========================================================
 
+    def _flow_window_ready(self, now_ms, duration):
+        """True only when the current rolling window has usable two-sided-time flow data.
+
+        We require at least two valid trades with positive quantity and a non-zero
+        time span inside the requested window. This keeps low-liquidity symbols from
+        being marked warm merely because older trades exist in the retained deque.
+        """
+        cutoff = now_ms - duration
+        count = 0
+        newest_ts = None
+        oldest_ts = None
+        total = 0.0
+        for timestamp_ms, side, price, qty in reversed(self.trades):
+            if timestamp_ms < cutoff:
+                break
+            if side not in ("Buy", "Sell") or price is None or qty is None or qty <= 0:
+                continue
+            count += 1
+            total += qty
+            if newest_ts is None:
+                newest_ts = timestamp_ms
+            oldest_ts = timestamp_ms
+        return bool(count >= 2 and total > 0 and newest_ts is not None and oldest_ts is not None and newest_ts > oldest_ts)
+
     def _flow_metrics(
         self,
         now_ms,
@@ -3156,10 +3180,10 @@ class MarketStream:
                 # A reconnect must not make already collected flow "cold".
                 # Warmth is based on actual trade-history coverage, not websocket session age.
                 "warmup": {
-                    name: bool(
-                        len(self.trades) >= 2
-                        and (self.trades[-1][0] - self.trades[0][0]) >= duration * 0.80
-                    )
+                    # Warm means the CURRENT rolling window itself contains enough
+                    # usable trades to calculate flow. Historical coverage elsewhere
+                    # in self.trades must not make an empty/sparse current window warm.
+                    name: self._flow_window_ready(now_ms, duration)
                     for name, duration in WINDOWS.items()
                 },
 
@@ -3535,6 +3559,10 @@ class DynamicMarketManager:
                 "oi_change_pct":o.get("change_pct"),
                 "linear_warm":linear.get("warmup",{}).get(w,False),
                 "spot_warm":spot.get("warmup",{}).get(w,False),
+                "perp_trade_count":l.get("trade_count",0),
+                "spot_trade_count":s.get("trade_count",0),
+                "perp_flow_usable":bool(l.get("trade_count",0) >= 2 and pd is not None and pp is not None),
+                "spot_flow_usable":bool(s.get("trade_count",0) >= 2 and sd is not None and sp is not None),
                 "driver":driver,
                 "driver_confidence":round(confidence,4),
             }
@@ -4225,7 +4253,7 @@ class DynamicMarketManager:
         return {
             "symbol": symbol,
             "generated_at": time.time(),
-            "engine_version": "scan_plus_v3_8_3",
+            "engine_version": "scan_plus_v3_8_4",
             "linear": linear,
             "spot": spot,
             "driver": self._driver(linear, spot),
