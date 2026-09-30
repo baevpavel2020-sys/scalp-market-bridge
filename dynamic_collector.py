@@ -6724,3 +6724,241 @@ def run_scan_single(symbol):
 def run_scan_batch(symbols):
     return ScanOrchestrator.batch(symbols)
 
+# ============================================================
+# ASYNC SCAN JOB MANAGER V2
+# ============================================================
+
+class ScanJobManager:
+    """Non-blocking wrapper for batch/auto Scan+ orchestration.
+
+    HTTP start endpoints only enqueue work and return immediately.
+    Heavy Scan+ work runs outside the request thread. One job worker is used
+    intentionally: DynamicMarketManager owns a small realtime symbol pool and
+    each Scan+ activation is already heavy. This avoids the Render timeout that
+    occurred when several scans were executed inside one HTTP request.
+    """
+
+    VERSION = "scan_job_manager_v2"
+    MAX_JOBS = 20
+    JOB_TTL_SECONDS = 3600
+    _lock = threading.RLock()
+    _jobs = {}
+    _executor = concurrent.futures.ThreadPoolExecutor(
+        max_workers=max(1, min(2, int(os.environ.get("SCAN_JOB_WORKERS", "1")))),
+        thread_name_prefix="scan-job",
+    )
+
+    @classmethod
+    def _cleanup(cls):
+        now = time.time()
+        with cls._lock:
+            expired = [
+                jid for jid, job in cls._jobs.items()
+                if now - float(job.get("updated_at", job.get("created_at", now))) > cls.JOB_TTL_SECONDS
+            ]
+            for jid in expired:
+                cls._jobs.pop(jid, None)
+
+            if len(cls._jobs) > cls.MAX_JOBS:
+                ordered = sorted(
+                    cls._jobs.items(),
+                    key=lambda kv: float(kv[1].get("updated_at", kv[1].get("created_at", 0))),
+                )
+                for jid, _ in ordered[:len(cls._jobs)-cls.MAX_JOBS]:
+                    cls._jobs.pop(jid, None)
+
+    @classmethod
+    def _new_job(cls, mode, payload):
+        import uuid
+        cls._cleanup()
+        jid = uuid.uuid4().hex[:16]
+        now = time.time()
+        job = {
+            "job_id": jid,
+            "job_manager_version": cls.VERSION,
+            "mode": mode,
+            "state": "QUEUED",
+            "created_at": now,
+            "updated_at": now,
+            "started_at": None,
+            "finished_at": None,
+            "progress": {"done": 0, "total": None, "current_symbol": None},
+            "payload": payload,
+            "result": None,
+            "error": None,
+        }
+        with cls._lock:
+            cls._jobs[jid] = job
+        return jid
+
+    @classmethod
+    def _patch(cls, jid, **changes):
+        with cls._lock:
+            job = cls._jobs.get(jid)
+            if not job:
+                return
+            job.update(changes)
+            job["updated_at"] = time.time()
+
+    @classmethod
+    def _progress(cls, jid, done=None, total=None, current_symbol=None):
+        with cls._lock:
+            job = cls._jobs.get(jid)
+            if not job:
+                return
+            p = dict(job.get("progress") or {})
+            if done is not None:
+                p["done"] = int(done)
+            if total is not None:
+                p["total"] = int(total)
+            p["current_symbol"] = current_symbol
+            job["progress"] = p
+            job["updated_at"] = time.time()
+
+    @classmethod
+    def _scan_symbols_progressive(cls, jid, symbols):
+        results, errors = [], {}
+        total = len(symbols)
+        cls._progress(jid, done=0, total=total, current_symbol=None)
+        for idx, raw in enumerate(symbols, start=1):
+            symbol = dynamic_manager.normalize_symbol(raw)
+            cls._progress(jid, done=idx-1, total=total, current_symbol=symbol)
+            try:
+                scan = dynamic_manager.scan(symbol)
+                results.append(ScanOrchestrator._compact_result(scan))
+            except Exception as exc:
+                errors[symbol] = f"{type(exc).__name__}:{exc}"
+            cls._progress(jid, done=idx, total=total, current_symbol=None)
+        return results, errors
+
+    @classmethod
+    def _run_job(cls, jid):
+        with cls._lock:
+            job = cls._jobs.get(jid)
+            if not job:
+                return
+            mode = job["mode"]
+            payload = dict(job.get("payload") or {})
+        cls._patch(jid, state="RUNNING", started_at=time.time())
+        started = time.time()
+        try:
+            if mode == "batch":
+                raw_symbols = payload.get("symbols") or []
+                cleaned, seen = [], set()
+                for raw in raw_symbols:
+                    symbol = dynamic_manager.normalize_symbol(raw)
+                    if symbol not in seen:
+                        seen.add(symbol)
+                        cleaned.append(symbol)
+                if not cleaned:
+                    raise ValueError("no symbols")
+                if len(cleaned) > ScanOrchestrator.MAX_BATCH_SYMBOLS:
+                    raise ValueError(f"too many symbols; max {ScanOrchestrator.MAX_BATCH_SYMBOLS}")
+                results, errors = cls._scan_symbols_progressive(jid, cleaned)
+                result = {
+                    "orchestrator_version": ScanOrchestrator.VERSION,
+                    "mode": "batch",
+                    "prescan_used": False,
+                    "requested_symbols": cleaned,
+                    "scan_plus_count": len(results),
+                    "scan_plus_results": results,
+                    "errors": errors,
+                    "elapsed_ms": round((time.time()-started)*1000.0, 2),
+                }
+
+            elif mode == "auto":
+                top_n = max(1, min(int(payload.get("top_n", 8)), ScanOrchestrator.MAX_AUTO_SCAN_PLUS))
+                shortlist = int(payload.get("shortlist", 30))
+                # PreScan remains synchronous INSIDE the background job, never in HTTP.
+                prescan = run_prescan(top_n=top_n, shortlist=shortlist)
+                eligible = []
+                for candidate in prescan.get("candidates") or []:
+                    if candidate.get("eligible_for_scan_plus") is True:
+                        symbol = candidate.get("symbol")
+                        if symbol and symbol not in eligible:
+                            eligible.append(symbol)
+                    if len(eligible) >= top_n:
+                        break
+                cls._progress(jid, done=0, total=len(eligible), current_symbol=None)
+                results, errors = cls._scan_symbols_progressive(jid, eligible)
+                result = {
+                    "orchestrator_version": ScanOrchestrator.VERSION,
+                    "mode": "auto",
+                    "prescan_used": True,
+                    "prescan": {
+                        "engine_version": prescan.get("engine_version"),
+                        "status": prescan.get("status"),
+                        "elapsed_ms": prescan.get("elapsed_ms"),
+                        "scan_plus_candidates": prescan.get("scan_plus_candidates") or [],
+                        "diagnostics": prescan.get("diagnostics") or {},
+                    },
+                    "selected_symbols": eligible,
+                    "scan_plus_count": len(results),
+                    "scan_plus_results": results,
+                    "errors": errors,
+                    "elapsed_ms": round((time.time()-started)*1000.0, 2),
+                }
+            else:
+                raise ValueError(f"unsupported job mode: {mode}")
+
+            cls._patch(
+                jid,
+                state="DONE",
+                result=result,
+                error=None,
+                finished_at=time.time(),
+            )
+        except Exception as exc:
+            cls._patch(
+                jid,
+                state="FAILED",
+                error=f"{type(exc).__name__}: {exc}",
+                finished_at=time.time(),
+            )
+
+    @classmethod
+    def start_batch(cls, symbols):
+        jid = cls._new_job("batch", {"symbols": list(symbols or [])})
+        cls._executor.submit(cls._run_job, jid)
+        return cls.status(jid)
+
+    @classmethod
+    def start_auto(cls, top_n=8, shortlist=30):
+        jid = cls._new_job("auto", {"top_n": int(top_n), "shortlist": int(shortlist)})
+        cls._executor.submit(cls._run_job, jid)
+        return cls.status(jid)
+
+    @classmethod
+    def status(cls, jid):
+        cls._cleanup()
+        with cls._lock:
+            job = cls._jobs.get(jid)
+            if not job:
+                return None
+            # Copy nested public fields so Flask serialization cannot race mutations.
+            return {
+                "job_id": job["job_id"],
+                "job_manager_version": job["job_manager_version"],
+                "mode": job["mode"],
+                "state": job["state"],
+                "created_at": job["created_at"],
+                "updated_at": job["updated_at"],
+                "started_at": job["started_at"],
+                "finished_at": job["finished_at"],
+                "progress": dict(job.get("progress") or {}),
+                "result": job.get("result"),
+                "error": job.get("error"),
+            }
+
+
+def start_scan_auto_job(top_n=8, shortlist=30):
+    return ScanJobManager.start_auto(top_n=top_n, shortlist=shortlist)
+
+
+def start_scan_batch_job(symbols):
+    return ScanJobManager.start_batch(symbols)
+
+
+def get_scan_job(job_id):
+    return ScanJobManager.status(job_id)
+
