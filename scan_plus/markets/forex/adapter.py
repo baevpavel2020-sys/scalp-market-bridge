@@ -107,9 +107,16 @@ class ForexMarketAdapter(MarketAdapter):
             ts=frame.get("sessions",{}).get("timestamp_ms")
             if ts is not None: all_ts.append(ts)
         latest_ts=max(all_ts) if all_ts else None
+        sweep_exists=any(
+            ((frame.get("session_liquidity") or {}).get("latest_candle_sweeps") or {}).get(name,{}).get("state")
+            in ("high_sweep","low_sweep")
+            for frame in frames.values()
+            for name in ("asia","london","new_york")
+        )
         situation="continuation"
         active=active_sessions("forex",latest_ts)
-        if len(active)>=2: situation="session_overlap"
+        if sweep_exists: situation="session_sweep"
+        elif len(active)>=2: situation="session_overlap"
         return {
             "market":self.market,"symbol":symbol,"status":"OK",
             "profile":profile,
