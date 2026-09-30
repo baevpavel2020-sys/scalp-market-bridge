@@ -24,8 +24,10 @@ def _direction(frames):
     return "unknown",None
 
 
-def _shared_confirmation(frames):
+def _shared_confirmation(frames, direction_tf):
     for tf in ("15m","1h","4h"):
+        if direction_tf is not None and tf != direction_tf:
+            continue
         analysis=(frames.get(tf) or {}).get("analysis") or {}
         fib=analysis.get("fibonacci") or {}
         ell=analysis.get("elliott") or {}
@@ -45,7 +47,7 @@ def _context_available(frames, keys):
 
 def build_commodity_candidate(*, symbol, group, frames):
     direction,structure_tf=_direction(frames)
-    shared_ready,confirmation_tf=_shared_confirmation(frames)
+    shared_ready,confirmation_tf=_shared_confirmation(frames,structure_tf)
     rules=GROUP_RULES.get(str(group or "").lower(),{})
     context=_context_available(frames,rules.get("context_bonus",()))
 
