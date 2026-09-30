@@ -45,6 +45,8 @@ class StocksAdapterTests(unittest.TestCase):
         out=self.adapter.scan("NVDA")
         self.assertEqual(set(out["frames"]),{"5m","15m","1h","4h"})
         self.assertEqual(out["execution_context"]["product"],"xstock_spot")
+        self.assertIn("candidate",out)
+        self.assertEqual(out["priority"]["situation"],"gap")
 
     def test_underlying_payload_is_normalized(self):
         provider=UnderlyingProvider(lambda symbol: {
