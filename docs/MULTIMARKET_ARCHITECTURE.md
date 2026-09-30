@@ -185,3 +185,10 @@ default backend. No blind rewrite of the monolithic collector.
 - Harmonics parity test added.
 - Analytical differential comparator added for legacy-vs-candidate outputs.
 - Removed unused imports from the analytical boundary.
+
+
+### Cycle 2 — step 3/4 complete
+- Differential parity now covers three deterministic market shapes.
+- Structure, Fibonacci, Elliott and Harmonics are compared against the canonical legacy backend.
+- Added Core API boundary tests: unknown blocks cannot execute, profiles are mutation-safe, and cross-market symbols are rejected.
+- Analytical block requests are explicitly whitelisted.
