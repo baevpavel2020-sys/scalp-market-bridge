@@ -20,6 +20,12 @@ class CommandRoutingTests(unittest.TestCase):
         self.assertEqual(parse_scan_command("Скан EURUSD")["markets"], ("forex",))
         self.assertEqual(parse_scan_command("Скан NVDA")["markets"], ("stocks",))
 
+    def test_mixed_symbols_do_not_cross_scan_markets(self):
+        parsed=parse_scan_command("Скан NVDA EURUSD")
+        from scan_plus.multimarket import MultiMarketOrchestrator
+        self.assertEqual(MultiMarketOrchestrator.build_requests(parsed),
+                         [("stocks","NVDA"),("forex","EURUSD")])
+
     def test_explicit_symbols_survive_routing(self):
         parsed = parse_scan_command("Скан крипта ENAUSDT HYPEUSDT")
         self.assertEqual(parsed["markets"], ("crypto",))
