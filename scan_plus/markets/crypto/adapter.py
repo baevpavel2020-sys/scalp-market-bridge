@@ -32,17 +32,22 @@ class CryptoMarketAdapter(MarketAdapter):
         # Compatibility invariant: legacy result remains authoritative.
         legacy = self._manager.scan(symbol)
         result = dict(legacy)
-        event_engine = observe_crypto_events(legacy)
 
-        # Learn each symbol independently from quality-ready rolling windows.
+        # Evaluate adaptive abnormality BEFORE the event decision, using prior
+        # observations only. This keeps the current move out of its own baseline.
         key = str(legacy.get("symbol") or symbol).upper()
         baseline = self._move_baselines.setdefault(key, RollingMoveBaseline())
         windows = ((legacy.get("execution") or {}).get("windows") or {})
         sample = windows.get("5m") or windows.get("15m") or {}
         move = sample.get("perp_price_change_pct")
+        adaptive = None
+        threshold = baseline.threshold()
         if sample.get("perp_flow_usable") and move is not None:
             adaptive = baseline.is_abnormal(move)
-            threshold = baseline.threshold()
+
+        event_engine = observe_crypto_events(legacy, adaptive_abnormal=adaptive)
+
+        if sample.get("perp_flow_usable") and move is not None:
             event_engine["adaptive_abnormal_pump"] = {
                 "ready": baseline.ready(),
                 "sample_count": len(baseline.values),
