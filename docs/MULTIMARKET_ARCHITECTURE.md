@@ -178,3 +178,10 @@ default backend. No blind rewrite of the monolithic collector.
 - Added parity tests comparing the wrapper directly with legacy Structure/Fibonacci outputs.
 - Added profiled analysis so market/situation priorities can select reusable blocks without changing their semantics.
 - No live default switch away from the legacy Crypto calculations has been made yet.
+
+
+### Cycle 2 — step 2/4 complete
+- Elliott parity test added.
+- Harmonics parity test added.
+- Analytical differential comparator added for legacy-vs-candidate outputs.
+- Removed unused imports from the analytical boundary.
