@@ -286,3 +286,14 @@ Audit pass found and fixed several concrete issues:
 Important feed limitation remains: the default Stooq adapter is only a provider boundary. Its requested intraday intervals are not yet accepted as a production-grade FX feed without an explicit coverage/quality validation. No production claim is made.
 
 Audit status: previous Architecture/Core/Stocks work has now received a cross-cycle audit pass; concrete findings above were fixed before continuing Forex.
+
+
+## Cross-market isolation audit — conflict check
+
+Result: no direct shared-state mutation was found between Stocks and Forex; each adapter owns its loader/context and instantiates its own analytical engine boundary. Session utilities are provider-neutral and now timestamp-driven.
+
+Two architectural risks remain and are intentionally NOT marked as resolved:
+1. Stocks and Forex currently instantiate `AnalyticalEngine(LegacyCryptoBackend())`. This is an implementation dependency on the legacy Crypto class, not a proven market assumption leak, but it violates the desired long-term boundary. It must be replaced/extracted into a truly market-neutral analytical backend before the final integration audit.
+2. `AnalyticalEngine.analyze_profiled()` silently ignores profile keys that are not shared-core blocks (e.g. order_flow, open_interest, session_liquidity, indicators). This does not cross-contaminate markets, but it can make a priority list appear to request evidence that the current engine did not calculate. Future adapter layers must explicitly separate shared-core priorities from market-adapter context priorities instead of silently dropping them.
+
+No code was changed for these two items in this checkpoint because silently patching them would risk changing Crypto behavior. They are recorded as explicit integration gates.
