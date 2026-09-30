@@ -329,3 +329,20 @@ The existing session rules remain timezone-aware and weekend-safe.
 The session-liquidity module still does not infer trade direction.
 
 Test-file creation for this exact new module was attempted but the GitHub write operation was blocked by the tool safety layer; therefore no test is claimed as created for that module. The logic remains an explicit audit item for the final regression pass.
+
+
+## Forex step-3 — implementation + immediate audit
+
+Implemented:
+- FX candidate engine combining Structure, Elliott, Fibonacci and session-liquidity evidence.
+- Bullish candidates require structural bullish state, explicit Fibonacci readiness, explicit Elliott readiness, and a low sweep.
+- Bearish candidates require structural bearish state, explicit Fibonacci/Elliott readiness, and a high sweep.
+- Session sweeps never determine direction alone.
+- Scan situation now distinguishes `session_sweep` before generic `session_overlap`.
+- Added a `session_sweep` priority profile emphasizing Structure/Elliott/Fibonacci/session liquidity.
+- Added regression tests for unresolved structure, valid bullish sweep confirmation, and opposite-direction sweep rejection.
+
+Immediate audit fixes:
+- Elliott readiness was initially treated as any non-empty mapping; fixed to require explicit `ready=True`.
+- Situation classification initially ignored detected sweeps when resolving priorities; fixed so sweep context reaches the priority engine.
+- Existing prior-session cutoff remains enforced for session ranges, preventing same-session self-sweep contamination.
