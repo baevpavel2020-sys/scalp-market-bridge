@@ -5500,7 +5500,7 @@ def run_bybit_prescan_ws_probe(symbols=None, timeout=12.0):
 class OnDemandPreScanService:
     """Manual PreScan. No permanent universe collector and no Scan+ activation."""
 
-    VERSION = "prescan_v1_8_audited_final"
+    VERSION = "prescan_v2_0_multisource"
     # Deliberately broad but static v1 universe. Invalid/delisted symbols are
     # isolated by recursive WS batches and cannot poison the whole run.
     DEFAULT_UNIVERSE = (
@@ -5734,7 +5734,7 @@ class OnDemandPreScanService:
             send("resolve_symbol", [cs, "prescan_sym", descriptor])
             for tf, tv_tf in intervals.items():
                 sid = series_ids[tf]
-                send("create_series", [cs, sid, f"ser_{tf}", "prescan_sym", tv_tf, cls.HISTORY_LIMIT])
+                send("create_series", [cs, sid, f"ser_{tf}", "prescan_sym", tv_tf, cls.HISTORY_LIMIT + 5])
 
             completed = set()
             deadline = total_deadline
@@ -5829,8 +5829,167 @@ class OnDemandPreScanService:
                 except Exception:
                     pass
 
+    _provider_rate_lock = threading.Lock()
+    _provider_next_at = 0.0
+    PROVIDER_MIN_GAP = 0.065  # ~15 req/s globally; below OKX public candle ceiling.
+
+    @classmethod
+    def _provider_throttle(cls):
+        with cls._provider_rate_lock:
+            now = time.monotonic()
+            delay = cls._provider_next_at - now
+            if delay > 0:
+                time.sleep(delay)
+            cls._provider_next_at = time.monotonic() + cls.PROVIDER_MIN_GAP
+
+    @classmethod
+    def _http_json(cls, url, timeout=5.0):
+        cls._provider_throttle()
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "scalp-market-bridge/2.0",
+            "Accept": "application/json",
+        })
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            if getattr(resp, "status", 200) != 200:
+                raise RuntimeError(f"http_{getattr(resp, 'status', 'unknown')}")
+            return json.loads(resp.read().decode("utf-8"))
+
+    @staticmethod
+    def _provider_base(symbol):
+        base = str(symbol).upper()
+        if base.endswith("USDT"):
+            base = base[:-4]
+        # Bybit uses multiplier contracts for several meme coins while other
+        # venues expose the underlying token symbol. Price scale is irrelevant
+        # to the structural ratios used by PreScan.
+        if base.startswith("1000") and len(base) > 4:
+            base = base[4:]
+        return base
+
+    @classmethod
+    def _validate_provider_rows(cls, rows, tf):
+        interval_ms = {"5": 300_000, "15": 900_000, "60": 3_600_000}[tf]
+        now_ms = int(time.time() * 1000)
+        clean = {}
+        for c in rows or []:
+            try:
+                start = int(c["start"])
+                vals = [float(c[k]) for k in ("open", "high", "low", "close", "volume")]
+            except (KeyError, TypeError, ValueError, OverflowError):
+                continue
+            if not all(math.isfinite(x) for x in vals):
+                continue
+            if vals[2] > vals[1] or start <= 0:
+                continue
+            end = int(c.get("end") or (start + interval_ms - 1))
+            if end >= now_ms:
+                continue
+            item = dict(c)
+            item.update({"start": start, "end": end, "confirm": True})
+            clean[start] = item
+        ordered = [clean[k] for k in sorted(clean)][-cls.HISTORY_LIMIT:]
+        if len(ordered) < PreScanEngine.MIN_CANDLES[tf]:
+            return [], "insufficient_history"
+        # Current history must actually be current. A provider returning an old
+        # market/listing is rejected rather than silently poisoning discovery.
+        max_age = max(interval_ms * 3, 20 * 60_000)
+        if now_ms - ordered[-1]["end"] > max_age:
+            return [], "stale_history"
+        return ordered, None
+
+    @classmethod
+    def _okx_history_bundle(cls, symbol):
+        base = cls._provider_base(symbol)
+        inst = f"{base}-USDT-SWAP"
+        bars = {"5": "5m", "15": "15m", "60": "1H"}
+        bundle, errors = {}, {}
+        for tf, bar in bars.items():
+            try:
+                q = urllib.parse.urlencode({"instId": inst, "bar": bar, "limit": cls.HISTORY_LIMIT + 2})
+                payload = cls._http_json("https://www.okx.com/api/v5/market/candles?" + q)
+                if str(payload.get("code")) != "0":
+                    raise RuntimeError("okx:" + str(payload.get("msg") or payload.get("code")))
+                parsed = []
+                for row in payload.get("data") or []:
+                    if not isinstance(row, list) or len(row) < 9 or str(row[8]) != "1":
+                        continue
+                    start = int(row[0])
+                    parsed.append({"start": start, "end": start + {"5":300_000,"15":900_000,"60":3_600_000}[tf]-1,
+                                   "open": float(row[1]), "high": float(row[2]), "low": float(row[3]), "close": float(row[4]),
+                                   "volume": float(row[5]), "turnover": float(row[7] or 0), "confirm": True,
+                                   "source": "okx_swap_rest"})
+                rows, err = cls._validate_provider_rows(parsed, tf)
+                bundle[tf] = rows
+                if err: errors[tf] = err
+            except Exception as exc:
+                bundle[tf] = []
+                errors[tf] = f"{type(exc).__name__}:{exc}"
+        return bundle, errors
+
+    @classmethod
+    def _kucoin_history_bundle(cls, symbol):
+        base = cls._provider_base(symbol)
+        kc_base = "XBT" if base == "BTC" else base
+        contract = f"{kc_base}USDTM"
+        bundle, errors = {}, {}
+        for tf, granularity in {"5":5, "15":15, "60":60}.items():
+            try:
+                q = urllib.parse.urlencode({"symbol": contract, "granularity": granularity})
+                payload = cls._http_json("https://api-futures.kucoin.com/api/v1/kline/query?" + q)
+                if str(payload.get("code")) != "200000":
+                    raise RuntimeError("kucoin:" + str(payload.get("msg") or payload.get("code")))
+                parsed = []
+                for row in payload.get("data") or []:
+                    if not isinstance(row, list) or len(row) < 7:
+                        continue
+                    ts = int(row[0]); start = ts * 1000 if ts < 10**12 else ts
+                    parsed.append({"start": start, "end": start + {"5":300_000,"15":900_000,"60":3_600_000}[tf]-1,
+                                   "open": float(row[1]), "high": float(row[2]), "low": float(row[3]), "close": float(row[4]),
+                                   "volume": float(row[5]), "turnover": float(row[6] or 0), "confirm": True,
+                                   "source": "kucoin_futures_rest"})
+                rows, err = cls._validate_provider_rows(parsed, tf)
+                bundle[tf] = rows
+                if err: errors[tf] = err
+            except Exception as exc:
+                bundle[tf] = []
+                errors[tf] = f"{type(exc).__name__}:{exc}"
+        return bundle, errors
+
+    @classmethod
+    def _binance_spot_history_bundle(cls, symbol):
+        base = cls._provider_base(symbol)
+        bsymbol = f"{base}USDT"
+        bundle, errors = {}, {}
+        for tf, interval in {"5":"5m", "15":"15m", "60":"1h"}.items():
+            try:
+                q = urllib.parse.urlencode({"symbol": bsymbol, "interval": interval, "limit": cls.HISTORY_LIMIT + 2})
+                payload = cls._http_json("https://data-api.binance.vision/api/v3/klines?" + q)
+                if not isinstance(payload, list):
+                    raise RuntimeError("binance_spot_bad_response")
+                parsed = []
+                for row in payload:
+                    if not isinstance(row, list) or len(row) < 8:
+                        continue
+                    parsed.append({"start": int(row[0]), "end": int(row[6]), "open": float(row[1]), "high": float(row[2]),
+                                   "low": float(row[3]), "close": float(row[4]), "volume": float(row[5]),
+                                   "turnover": float(row[7] or 0), "confirm": True, "source": "binance_spot_marketdata"})
+                rows, err = cls._validate_provider_rows(parsed, tf)
+                bundle[tf] = rows
+                if err: errors[tf] = err
+            except Exception as exc:
+                bundle[tf] = []
+                errors[tf] = f"{type(exc).__name__}:{exc}"
+        return bundle, errors
+
     @classmethod
     def _fetch_history_bundle(cls, symbol):
+        """Fetch a compact fresh 3-TF history without TradingView.
+
+        Provider order deliberately prefers derivative markets (OKX, KuCoin)
+        before Binance spot.  PreScan only discovers candidates; the heavy
+        Scan+ decision remains Bybit-native.  A provider must supply all three
+        fresh TFs or the next provider is tried, preventing mixed-TF geometry.
+        """
         now = time.time()
         cached_rows = {}
         complete_cache = True
@@ -5844,13 +6003,28 @@ class OnDemandPreScanService:
         if complete_cache:
             return cached_rows, {tf: "memory_cache" for tf in ("5","15","60")}, {}
 
-        bundle, errors = cls._tv_history_bundle(symbol)
-        sources = {tf: "tradingview_ws_bybit" for tf in ("5","15","60")}
-        with cls._cache_lock:
-            for tf, rows in bundle.items():
-                if rows and tf not in errors:
-                    cls._history_cache[(symbol, tf)] = (now, [dict(x) for x in rows])
-        return bundle, sources, errors
+        attempts = {}
+        providers = (
+            ("okx_swap_rest", cls._okx_history_bundle),
+            ("kucoin_futures_rest", cls._kucoin_history_bundle),
+            ("binance_spot_marketdata", cls._binance_spot_history_bundle),
+        )
+        for provider_name, fetcher in providers:
+            bundle, errors = fetcher(symbol)
+            attempts[provider_name] = dict(errors)
+            if all(len(bundle.get(tf) or []) >= PreScanEngine.MIN_CANDLES[tf] and tf not in errors for tf in ("5","15","60")):
+                with cls._cache_lock:
+                    for tf in ("5","15","60"):
+                        cls._history_cache[(symbol, tf)] = (now, [dict(x) for x in bundle[tf]])
+                return bundle, {tf: provider_name for tf in ("5","15","60")}, {}
+
+        # Fail closed. We do not resurrect the unofficial TradingView transport
+        # and we do not mix timeframes from different venues for one symbol.
+        compact = {name: errs for name, errs in attempts.items() if errs}
+        return {tf: [] for tf in ("5","15","60")}, {tf: "unavailable" for tf in ("5","15","60")}, {
+            tf: "all_history_providers_failed:" + json.dumps(compact, separators=(",",":"))[:1200]
+            for tf in ("5","15","60")
+        }
 
 
     @staticmethod
@@ -5950,7 +6124,7 @@ class OnDemandPreScanService:
                                 "analysis_errors": {}, "analysis_error_count": 0},
                 "guardrails": {"runs_continuously": False, "uses_dynamic_manager": False,
                                "activates_scan_plus": False, "trade_decision": False,
-                               "closed_history_only": True, "exchange_rest_used": False, "scan_plus_logic_unchanged": True},
+                               "closed_history_only": True, "exchange_rest_used": True, "scan_plus_logic_unchanged": True},
             })
 
         shortlist = max(1, min(int(shortlist), cls.TOP_BY_TURNOVER, len(symbols)))
@@ -5965,18 +6139,18 @@ class OnDemandPreScanService:
         sources = {s: {} for s in ranked}
         hist_errors = {}
 
-        # One short-lived history WS per symbol; each socket requests all 3 TFs.
-        # Bounded pool avoids connection storms and keeps endpoint latency controlled.
+        # Fresh history uses bounded public REST fallback chain; no TradingView.
+        # Six workers plus a global request pacer prevent provider connection storms.
         executor = None
         future_meta = {}
         try:
             if ranked:
-                executor = ThreadPoolExecutor(max_workers=min(10, len(ranked)))
+                executor = ThreadPoolExecutor(max_workers=min(6, len(ranked)))
                 for s in ranked:
                     future = executor.submit(cls._fetch_history_bundle, s)
                     future_meta[future] = s
 
-                done, pending = wait(list(future_meta), timeout=18.0)
+                done, pending = wait(list(future_meta), timeout=24.0)
                 for future in done:
                     s = future_meta[future]
                     try:
@@ -5986,7 +6160,7 @@ class OnDemandPreScanService:
                         bundle_errors = {tf: f"{type(exc).__name__}:{exc}" for tf in ("5","15","60")}
                     for tf in ("5","15","60"):
                         history[s][tf] = list(bundle.get(tf) or [])
-                        sources[s][tf] = bundle_sources.get(tf, "tradingview_ws_bybit")
+                        sources[s][tf] = bundle_sources.get(tf, "unavailable")
                         err = bundle_errors.get(tf)
                         if err:
                             hist_errors[f"{s}:{tf}"] = err
@@ -6056,7 +6230,7 @@ class OnDemandPreScanService:
             "guardrails": {
                 "runs_continuously": False, "uses_dynamic_manager": False,
                 "activates_scan_plus": False, "trade_decision": False,
-                "closed_history_only": True, "exchange_rest_used": False, "scan_plus_logic_unchanged": True,
+                "closed_history_only": True, "exchange_rest_used": True, "scan_plus_logic_unchanged": True,
             },
         }
         return cls._json_safe(result)
