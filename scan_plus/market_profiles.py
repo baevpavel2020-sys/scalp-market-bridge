@@ -45,10 +45,26 @@ INSTRUMENT_PROFILES = {
         "prescan": ["volatility", "active_session", "session_high_low", "structure", "liquidity"],
         "scan": ["structure_mtf", "session_liquidity", "fibonacci", "elliott", "usd_yields_context", "harmonics"],
     },
-    "XAGUSD": {"market": "commodities", "group": "metals"},
-    "WTI": {"market": "commodities", "group": "energy"},
-    "BRENT": {"market": "commodities", "group": "energy"},
-    "COCOA": {"market": "commodities", "group": "softs"},
+    "XAGUSD": {
+        "market":"commodities","group":"metals",
+        "prescan":["volatility","structure","liquidity","usd_context"],
+        "scan":["structure_mtf","fibonacci","liquidity","elliott","usd_context","harmonics"],
+    },
+    "WTI": {
+        "market":"commodities","group":"energy",
+        "prescan":["volatility","structure","liquidity","session"],
+        "scan":["structure_mtf","volume","liquidity","fibonacci","event_context","elliott"],
+    },
+    "BRENT": {
+        "market":"commodities","group":"energy",
+        "prescan":["volatility","structure","liquidity","session"],
+        "scan":["structure_mtf","volume","liquidity","fibonacci","event_context","elliott"],
+    },
+    "COCOA": {
+        "market":"commodities","group":"softs",
+        "prescan":["volatility","structure","liquidity","session"],
+        "scan":["structure_mtf","fibonacci","volume","liquidity","elliott","event_context"],
+    },
 }
 
 
