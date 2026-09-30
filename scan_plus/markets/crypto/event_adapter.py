@@ -7,6 +7,7 @@ from typing import Any, Mapping
 
 from scan_plus.core.liquidity_leverage import classify_liquidity_leverage
 from scan_plus.markets.crypto.manipulation_x25 import manipulation_x25_state
+from scan_plus.markets.crypto.post_pump import detect_post_pump_pipeline
 
 
 def _num(value):
@@ -115,10 +116,23 @@ def build_crypto_event_evidence(scan: Mapping[str, Any]):
 
 def observe_crypto_events(scan: Mapping[str, Any]):
     normalized,x25=build_crypto_event_evidence(scan)
+    pipeline=detect_post_pump_pipeline(scan)
+
+    # Upgrade only with explicitly confirmed detector stages. Execution trigger
+    # remains unavailable here, so observer integration still cannot trigger a trade.
+    x25["abnormal_pump"] = pipeline["abnormal_pump"]["confirmed"]
+    x25["exhaustion"] = bool(
+        pipeline["aggression_inefficiency"]["confirmed"]
+        or pipeline["absorption"]["confirmed"]
+        or pipeline["spot_perp_divergence"]["confirmed"]
+    )
+    x25["leverage_fragility"] = pipeline["leverage_fragility"]["confirmed"]
+    x25["failed_acceptance"] = pipeline["failed_acceptance"]["confirmed"]
     events=classify_liquidity_leverage(normalized)
     return {
         "mode":"observer",
         "affects_trade_decision":False,
+        "post_pump_pipeline":pipeline,
         "events":[
             {"event_id":e.event_id,"family":e.family,"direction":e.direction,
              "confidence":e.confidence,"evidence":list(e.evidence),"metadata":dict(e.metadata)}
