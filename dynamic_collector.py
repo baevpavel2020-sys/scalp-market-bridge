@@ -5537,8 +5537,8 @@ class OnDemandPreScanService:
         ws = None
         rows, errors = {}, []
         try:
-            ws = websocket.create_connection(WS_URLS["linear"], timeout=min(8.0, timeout + 2.0))
-            ws.settimeout(0.75)
+            ws = websocket.create_connection(WS_URLS["linear"], timeout=min(5.0, timeout + 1.0))
+            ws.settimeout(0.50)
             ws.send(json.dumps({"op": "subscribe", "args": [f"tickers.{s}" for s in symbols]}))
             deadline = time.time() + timeout
             while time.time() < deadline and len(rows) < len(symbols):
@@ -5572,25 +5572,18 @@ class OnDemandPreScanService:
         return rows, errors
 
     @classmethod
-    def _discover_tickers(cls, symbols, batch_size=15):
-        """Invalid symbols cannot reject the full universe: failed batches split."""
-        results, errors = {}, []
+    def _discover_tickers(cls, symbols, batch_size=None):
+        """Discover tickers with one bounded WS session; never reconnect recursively."""
+        symbols = list(dict.fromkeys(
+            str(s).strip().upper() for s in (symbols or [])
+            if SYMBOL_RE.fullmatch(str(s).strip().upper())
+        ))
+        if not symbols:
+            return {}, ["empty_universe"]
 
-        def collect(batch):
-            rows, errs = cls._ticker_batch(batch)
-            results.update(rows)
-            missing = [s for s in batch if s not in rows]
-            if missing and len(batch) > 1 and (errs or len(rows) == 0):
-                mid = len(batch) // 2
-                collect(batch[:mid]); collect(batch[mid:])
-            elif missing:
-                for s in missing:
-                    errors.append(f"{s}:no_ticker")
-            for e in errs:
-                errors.append(e)
-
-        for i in range(0, len(symbols), batch_size):
-            collect(symbols[i:i + batch_size])
+        results, errors = cls._ticker_batch(symbols, timeout=4.0)
+        missing = [s for s in symbols if s not in results]
+        errors.extend(f"{s}:no_ticker" for s in missing)
         return results, errors
 
     @staticmethod
