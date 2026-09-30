@@ -1,5 +1,6 @@
 import unittest
 from scan_plus.markets.forex.adapter import ForexMarketAdapter
+from scan_plus.markets.forex.candidate import build_forex_candidate
 
 
 def rows():
@@ -42,3 +43,49 @@ class ForexAdapterTests(unittest.TestCase):
 
 if __name__=="__main__":
     unittest.main()
+
+
+class ForexCandidateAuditTests(unittest.TestCase):
+    def test_sweep_without_structure_confirmation_never_creates_candidate(self):
+        frames={"15m":{
+            "analysis":{
+                "structure":{"state":"unknown"},
+                "fibonacci":{"ready":True},
+                "elliott":{"ready":True}
+            },
+            "session_liquidity":{
+                "latest_candle_sweeps":{"asia":{"state":"low_sweep"}}
+            }
+        }}
+        out=build_forex_candidate(frames=frames,active_sessions=["london"])
+        self.assertEqual(out["status"],"WATCH")
+        self.assertEqual(out["direction"],"unknown")
+
+    def test_bullish_candidate_requires_low_sweep_and_shared_confirmation(self):
+        frames={"15m":{
+            "analysis":{
+                "structure":{"state":"bullish"},
+                "fibonacci":{"ready":True},
+                "elliott":{"ready":True}
+            },
+            "session_liquidity":{
+                "latest_candle_sweeps":{"asia":{"state":"low_sweep"}}
+            }
+        }}
+        out=build_forex_candidate(frames=frames,active_sessions=["london"])
+        self.assertEqual(out["status"],"CANDIDATE")
+        self.assertEqual(out["direction"],"bullish")
+
+    def test_high_sweep_does_not_create_bullish_candidate(self):
+        frames={"15m":{
+            "analysis":{
+                "structure":{"state":"bullish"},
+                "fibonacci":{"ready":True},
+                "elliott":{"ready":True}
+            },
+            "session_liquidity":{
+                "latest_candle_sweeps":{"asia":{"state":"high_sweep"}}
+            }
+        }}
+        out=build_forex_candidate(frames=frames,active_sessions=["london"])
+        self.assertEqual(out["status"],"WATCH")
