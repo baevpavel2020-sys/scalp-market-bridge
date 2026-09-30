@@ -244,3 +244,16 @@ No external underlying feed is hard-coded yet; provider integration remains inje
 - Direction is taken from confirmed structural state, not inferred from gap direction.
 - Stock situation is now passed into the priority engine, so gap scenarios can reorder evidence without disabling lower-priority blocks.
 - Candidate output is explicitly non-execution: no order, entry, stop or target is generated at this stage.
+
+
+### Cycle 3 — Stocks — step 4/4 complete
+
+- Added non-executing stock execution/risk planner.
+- Entry is represented as a limit reference/retest policy; no order submission occurs in the analytical layer.
+- Invalidation comes from structural swing levels; target prefers Fibonacci extension and can fall back to a configured RR multiple.
+- Position sizing is cash-risk based and requires an explicit account risk fraction; no hidden risk budget is assumed.
+- Invalid stop side, unresolved candidate, missing structural invalidation, invalid account data, and sub-minimum RR all produce WAIT.
+- xStocks 24/7 execution is kept separate from underlying regular-session context.
+- Added safety tests proving no implicit risk budget and no order submission.
+
+Cycle 3 Stocks status: CLOSED.
