@@ -64,18 +64,26 @@ class ForexMarketAdapter(MarketAdapter):
         context["timestamp_ms"]=ts
         return context
 
+    def _load(self,symbol,interval):
+        try:
+            return self.loader.candles(symbol,interval=interval)
+        except (NotImplementedError,LookupError) as exc:
+            return {"source":type(self.loader).__name__,"product":"fx",
+                    "symbol":symbol,"interval":interval,"candles":[],"error":str(exc)}
+
     def prescan(self, symbol=None, **kwargs) -> Mapping[str, Any]:
         if not symbol:
             return {"market":self.market,"status":"PRESCAN_ONLY",
                     "profile":self.profile(),"reason":"symbol_required"}
         symbol=str(symbol).upper().replace("/","")
-        data=self.loader.candles(symbol,interval=kwargs.get("interval","60"))
+        data=self._load(symbol,kwargs.get("interval","60"))
         rows=self._normalize_rows(data.get("candles"))
         return {
             "market":self.market,"symbol":symbol,"status":"OK",
             "profile":self.profile(symbol),
             "source":data.get("source"),"interval":data.get("interval"),
             "bars":len(rows),"session":self._session_context(rows),
+            "provider_error":data.get("error"),
         }
 
     def scan(self, symbol: str) -> Mapping[str, Any]:
@@ -83,11 +91,12 @@ class ForexMarketAdapter(MarketAdapter):
         profile=self.profile(symbol)
         frames={}
         for label,interval in (("5m","5"),("15m","15"),("1h","60"),("4h","240")):
-            data=self.loader.candles(symbol,interval=interval)
+            data=self._load(symbol,interval)
             rows=self._normalize_rows(data.get("candles"))
             sessions=self._session_context(rows)
             frames[label]={
                 "bars":len(rows),
+                "provider_error":data.get("error"),
                 "analysis":self.engine.analyze_profiled(rows,profile.get("scan") or []),
                 "sessions":sessions,
                 "session_liquidity":{
