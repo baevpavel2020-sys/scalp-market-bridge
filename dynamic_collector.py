@@ -1770,39 +1770,469 @@ class MarketStream:
             "fib_clusters":[c["price"] for c in clusters[:5]],
         }
 
+    # ========================================================
+    # SCAN+ V3.8 ANALYTICAL DEPTH
+    # Facts flow forward. Later blocks may interpret, never rewrite.
+    # ========================================================
+
+    @staticmethod
+    def _age_bars_v38(rows, start):
+        if start is None: return None
+        for i,r in enumerate(rows):
+            if r.get("start")==start: return max(0,len(rows)-1-i)
+        return None
+
+    @staticmethod
+    def _fresh_v38(age, ttl):
+        # Unknown age is never actionable freshness. This prevents orphaned/stale
+        # events from silently surviving a cache refresh or pivot rebuild.
+        return age is not None and age <= ttl
+
+    @staticmethod
+    def _tf_from_rows_v382(rows):
+        if len(rows) < 2:
+            return "unknown"
+        diffs=[]
+        for a,b in zip(rows[-12:-1], rows[-11:]):
+            try:
+                d=int(b.get("start"))-int(a.get("start"))
+                if d>0: diffs.append(d)
+            except (TypeError,ValueError):
+                pass
+        if not diffs: return "unknown"
+        diffs.sort(); d=diffs[len(diffs)//2]
+        minute=60_000
+        if d <= 2*minute: return "1"
+        if d <= 7*minute: return "5"
+        if d <= 20*minute: return "15"
+        if d <= 90*minute: return "60"
+        if d <= 360*minute: return "240"
+        return "D"
+
+    @classmethod
+    def _ttl_bars_v382(cls, rows, event_type="structure"):
+        tf=cls._tf_from_rows_v382(rows)
+        # Bar-based TTLs deliberately expand with structural timeframe.
+        maps={
+            "structure":{"1":8,"5":10,"15":12,"60":16,"240":20,"D":24,"unknown":12},
+            "divergence":{"1":8,"5":10,"15":12,"60":14,"240":16,"D":18,"unknown":12},
+            "liquidity":{"1":8,"5":10,"15":12,"60":14,"240":16,"D":18,"unknown":12},
+        }
+        return maps.get(event_type,maps["structure"]).get(tf,12)
+
+    def _technical_depth_v38(self, rows, base):
+        if not rows: return {**base,"depth_ready":False}
+        closes=[float(r["close"]) for r in rows]; atr=base.get("atr14")
+        price=closes[-1]; atr_pct=(atr/price*100) if atr and price else None
+        def slope(vals,n=5):
+            if len(vals)<n: return None
+            a,b=vals[-n],vals[-1]
+            return (b-a)/(n-1)
+        e20=self._ema_series(closes,20); e50=self._ema_series(closes,50); e200=self._ema_series(closes,200)
+        bodies=[abs(float(r["close"])-float(r["open"])) for r in rows[-30:]]
+        ranges=[float(r["high"])-float(r["low"]) for r in rows[-30:]]
+        body_ratio=sum(bodies)/sum(ranges) if sum(ranges)>0 else None
+        recent=(sum(ranges[-5:])/5) if len(ranges)>=5 else None
+        prior=(sum(ranges[-20:-5])/15) if len(ranges)>=20 else None
+        expansion=(recent/prior) if recent and prior else None
+        sep=None
+        if e20 and e50 and e20[-1] is not None and e50[-1] is not None and atr:
+            sep=abs(e20[-1]-e50[-1])/atr
+        vol_state="unknown"
+        if atr_pct is not None:
+            vol_state="compressed" if expansion is not None and expansion<0.7 else "expanded" if expansion is not None and expansion>1.5 else "normal"
+        trend_strength="unknown"
+        if sep is not None: trend_strength="strong" if sep>=1 else "moderate" if sep>=0.4 else "weak"
+        momentum="neutral"; rsi=base.get("rsi14"); macd=base.get("macd") or {}
+        if rsi is not None and macd.get("histogram") is not None:
+            if rsi>=55 and macd["histogram"]>0: momentum="bullish"
+            elif rsi<=45 and macd["histogram"]<0: momentum="bearish"
+        return {**base,"depth_ready":True,"atr_pct":atr_pct,"volatility_state":vol_state,
+                "range_expansion":None if expansion is None else round(expansion,4),"body_efficiency":None if body_ratio is None else round(body_ratio,4),
+                "ema20_slope":slope([x for x in e20 if x is not None]),"ema50_slope":slope([x for x in e50 if x is not None]),
+                "ema_separation_atr":None if sep is None else round(sep,4),"trend_strength":trend_strength,"momentum_state":momentum}
+
+    def _event_lifecycle_v381(self, rows, event, ttl_bars, invalidated=False, invalidation_reason=None):
+        """Shared bar-based lifecycle. Never fabricates freshness when the event cannot be located."""
+        if not isinstance(event, dict) or not event:
+            return {"created_at":None,"confirmed_at":None,"age_bars":None,"ttl_bars":ttl_bars,
+                    "freshness":"missing","fresh":False,"expired":False,"invalidated":False,"invalidation_reason":None}
+        created=event.get("start") or event.get("created_at") or event.get("at") or event.get("timestamp")
+        confirmed=event.get("confirmed_at") or created
+        age=self._age_bars_v38(rows, created)
+        expired=(age is not None and age>ttl_bars)
+        fresh=(age is not None and not expired and not invalidated)
+        return {"created_at":created,"confirmed_at":confirmed,"age_bars":age,"ttl_bars":ttl_bars,
+                "freshness":"invalidated" if invalidated else "expired" if expired else "fresh" if fresh else "unknown",
+                "fresh":fresh,"expired":expired,"invalidated":bool(invalidated),"invalidation_reason":invalidation_reason}
+
+    def _structure_depth_v38(self, rows, ctx):
+        base=ctx["base"]; degree=base.get("working_degree","intermediate")
+        pts=ctx.get("degrees",{}).get(degree,{}).get("points",[]); close=float(rows[-1]["close"]) if rows else None
+        highs=[p for p in pts if p["kind"]=="high"]; lows=[p for p in pts if p["kind"]=="low"]
+        ev=base.get("last_event") or {}
+        # Protected level is tied to the swing that precedes the confirmed structural break,
+        # not merely to the last same-side pivot in the current trend.
+        protected_low=protected_high=None
+        if ev.get("confirmed_by_close") and ev.get("start") is not None:
+            prior=[p for p in pts if p.get("start",0)<ev.get("start",0)]
+            if ev.get("direction")=="bullish":
+                cand=[p for p in prior if p.get("kind")=="low"]
+                protected_low=cand[-1] if cand else None
+            elif ev.get("direction")=="bearish":
+                cand=[p for p in prior if p.get("kind")=="high"]
+                protected_high=cand[-1] if cand else None
+        if protected_low is None and base.get("state")=="uptrend" and lows: protected_low=lows[-1]
+        if protected_high is None and base.get("state")=="downtrend" and highs: protected_high=highs[-1]
+        if highs and lows:
+            recent=pts[-8:]; lo=min(float(p["price"]) for p in recent); hi=max(float(p["price"]) for p in recent)
+            structural_range={"low":lo,"high":hi,"equilibrium":(lo+hi)/2,"position":None if close is None or hi==lo else round((close-lo)/(hi-lo),4)}
+        else: structural_range=None
+        nested={}
+        for d in ("minor","intermediate","major"):
+            ps=ctx.get("degrees",{}).get(d,{}).get("points",[]); hs=[p for p in ps if p["kind"]=="high"]; ls=[p for p in ps if p["kind"]=="low"]
+            st="range_or_transition"
+            if len(hs)>=2 and len(ls)>=2:
+                if hs[-1]["price"]>hs[-2]["price"] and ls[-1]["price"]>ls[-2]["price"]: st="uptrend"
+                elif hs[-1]["price"]<hs[-2]["price"] and ls[-1]["price"]<ls[-2]["price"]: st="downtrend"
+            nested[d]={"state":st,"last_high":hs[-1] if hs else None,"last_low":ls[-1] if ls else None}
+        life=self._event_lifecycle_v381(rows,ev,self._ttl_bars_v382(rows,"structure"))
+        transition=bool(ev.get("type")=="CHOCH" and ev.get("confirmed_by_close") and life.get("fresh"))
+        return {**base,"protected_high":protected_high,"protected_low":protected_low,"structural_range":structural_range,
+                "nested":nested,"transition":transition,"event_lifecycle":life}
+
+    def _fib_depth_v38(self, rows, ctx, base):
+        levels=[]; atr=self._atr(rows); price=float(rows[-1]["close"]) if rows else None
+        for degree,d in ctx.get("degrees",{}).items():
+            ps=d.get("points",[])
+            for a,b in list(zip(ps[:-1],ps[1:]))[-4:]:
+                x,y=float(a["price"]),float(b["price"]); move=y-x
+                if abs(move)<1e-12: continue
+                for typ,ratios in (("retracement",(0.382,0.5,0.618,0.705,0.786,0.886)),("extension",(1.272,1.414,1.618,2.0,2.618))):
+                    for r in ratios:
+                        v=y-move*r if typ=="retracement" else x+move*r
+                        levels.append({"price":v,"ratio":r,"type":typ,"degree":degree,"anchor_from":a["start"],"anchor_to":b["start"]})
+        tol=(atr*0.2) if atr else (price*0.001 if price else 0)
+        clusters=[]
+        for l in sorted(levels,key=lambda z:z["price"]):
+            if clusters and abs(l["price"]-clusters[-1]["price"])<=tol:
+                c=clusters[-1]; c["members"].append(l); c["price"]=sum(x["price"] for x in c["members"])/len(c["members"])
+            else: clusters.append({"price":l["price"],"members":[l]})
+        out=[]
+        for c in clusters:
+            degrees={m["degree"] for m in c["members"]}
+            if len(c["members"])>=2:
+                out.append({"price":round(c["price"],10),"count":len(c["members"]),"degrees":sorted(degrees),"multi_degree":len(degrees)>1,
+                            "distance_atr":None if not atr or price is None else round(abs(c["price"]-price)/atr,3),"members":c["members"][:8]})
+        out.sort(key=lambda c:(not c["multi_degree"],-c["count"],c["distance_atr"] if c["distance_atr"] is not None else 999))
+        return {**base,"depth_clusters":out[:10],"level_count":len(levels)}
+
+    def _elliott_depth_v38(self, rows, ctx, fib, base):
+        # Preserve hard-rule candidates; enrich them, never move structure pivots.
+        cands=[]
+        for c in ([base.get("primary")] + list(base.get("alternatives",[]))):
+            if not c: continue
+            q=dict(c); pts=q.get("points",[]); prices=[float(p["price"]) for p in pts]
+            q["degree"]=q.get("degree") or ctx["base"].get("working_degree")
+            q["proportionality"]={"price_span":round(max(prices)-min(prices),10) if prices else None,
+                                  "time_span_bars":None}
+            if len(pts)>=2:
+                idx={r["start"]:i for i,r in enumerate(rows)}; a=idx.get(pts[0].get("start")); b=idx.get(pts[-1].get("start"))
+                q["proportionality"]["time_span_bars"]=(b-a) if a is not None and b is not None else None
+            q["status"]="valid_candidate"; cands.append(q)
+        # Ambiguity is explicit; Elliott remains interpretive evidence only.
+        return {**base,"candidates":cands,"wave_degree":ctx["base"].get("working_degree"),
+                "role":"interpretation_only","structure_authority":False}
+
+    def _harmonic_depth_v38(self, rows, base):
+        atr=self._atr(rows); confirmed=[]; developing=[]
+        for bucket,out in ((base.get("confirmed",[]),confirmed),(base.get("developing",[]),developing)):
+            for p in bucket:
+                q=dict(p); pts=q.get("points",[]); d=float(pts[-1]["price"]) if pts else None
+                ratios=q.get("ratios",{}); checks=q.get("checks",{})
+                quality=(sum(1 for v in checks.values() if v)/max(1,len(checks))) if checks else (1.0 if q.get("name")=="AB=CD" else 0.5)
+                width=(atr*0.35) if atr else (abs(d)*0.003 if d else 0)
+                q["prz"]={"low":None if d is None else d-width,"high":None if d is None else d+width,"center":d,"width_atr":0.7 if atr else None}
+                q["quality"]=round(quality,3); q["completion"]="completed" if out is confirmed else "developing"
+                q["invalidation"]=(q["prz"]["low"] if q.get("direction")=="bullish" else q["prz"]["high"]) if d is not None else None
+                out.append(q)
+        return {**base,"confirmed":confirmed,"developing":developing,"role":"PRZ_context_not_reversal_command"}
+
+    def _divergence_depth_v38(self, rows, base):
+        groups={}
+        for e in base.get("events",[]):
+            key=(e.get("type"), (e.get("from") or {}).get("start"), (e.get("to") or {}).get("start"))
+            g=groups.setdefault(key,{"type":e.get("type"),"from":e.get("from"),"to":e.get("to"),"indicators":[],"evidence":[]})
+            g["indicators"].append(e.get("indicator")); g["evidence"].append(e)
+        events=[]
+        for g in groups.values():
+            age=self._age_bars_v38(rows,(g.get("to") or {}).get("start")); n=len(set(g["indicators"]))
+            g["indicators"]=sorted(set(g["indicators"])); g["strength"]="strong" if n>=3 else "moderate" if n==2 else "single"
+            ttl=self._ttl_bars_v382(rows,"divergence")
+            g["age_bars"]=age; g["ttl_bars"]=ttl; g["fresh"]=self._fresh_v38(age,ttl); g["expired"]=(age is not None and age>ttl); g["freshness"]="fresh" if g["fresh"] else "expired" if g["expired"] else "unknown"
+            events.append(g)
+        consensus={}
+        for e in events:
+            if e["fresh"]: consensus[e["type"]]=consensus.get(e["type"],0)+1
+        return {**base,"events_raw":base.get("events",[]),"events":events,"consensus":consensus,"deduplicated":True}
+
+    def _liquidity_depth_v38(self, rows, ctx, base):
+        atr=self._atr(rows); close=float(rows[-1]["close"]) if rows else None; pools=[]
+        for degree,d in ctx.get("degrees",{}).items():
+            for p in d.get("points",[])[-10:]:
+                side="buy_side" if p["kind"]=="high" else "sell_side"; price=float(p["price"])
+                later=[r for r in rows if r.get("start",0)>p.get("start",0)]
+                accepted=any(float(r["close"])>price for r in later) if side=="buy_side" else any(float(r["close"])<price for r in later)
+                taken=any(float(r["high"])>price for r in later) if side=="buy_side" else any(float(r["low"])<price for r in later)
+                age=self._age_bars_v38(rows,p.get("start"))
+                pools.append({"side":side,"price":price,"degree":degree,"source":"structural_swing","start":p.get("start"),"age_bars":age,
+                              "taken":taken,"state":"accepted_through" if accepted else "swept_or_touched" if taken else "untouched",
+                              "distance_atr":None if not atr or close is None else round(abs(price-close)/atr,3)})
+        for key,side in (("equal_highs","buy_side"),("equal_lows","sell_side")):
+            z=base.get(key)
+            if z: pools.append({"side":side,"price":float(z["price"]),"degree":"internal","source":key,"start":z.get("second_start"),
+                                "age_bars":self._age_bars_v38(rows,z.get("second_start")),"taken":False,"state":"pool"})
+        unt=[p for p in pools if p.get("state") in ("untouched","pool")]
+        above=sorted([p for p in unt if close is not None and p["price"]>close],key=lambda p:p["price"])
+        below=sorted([p for p in unt if close is not None and p["price"]<close],key=lambda p:p["price"],reverse=True)
+        # Persistent liquidity event: search recent CLOSED bars, then keep it until TTL/invalidation.
+        events=[]; ttl=self._ttl_bars_v382(rows,"liquidity")
+        if atr and rows:
+            idx0=max(0,len(rows)-1-ttl)
+            for i in range(idx0,len(rows)):
+                cur=rows[i]; ts=cur.get("start")
+                for p in pools:
+                    if p.get("start",0)>=ts: continue
+                    level=float(p["price"])
+                    if p["side"]=="buy_side" and float(cur["high"])>level and float(cur["close"])<=level:
+                        events.append({"type":"liquidity_grab","direction":"bearish","side":"buy_side","level":level,"penetration_atr":round((float(cur["high"])-level)/atr,3),"start":ts,"source_pool":p.get("source")})
+                    elif p["side"]=="sell_side" and float(cur["low"])<level and float(cur["close"])>=level:
+                        events.append({"type":"liquidity_grab","direction":"bullish","side":"sell_side","level":level,"penetration_atr":round((level-float(cur["low"]))/atr,3),"start":ts,"source_pool":p.get("source")})
+        # Deduplicate same bar/side/level and prefer the most recent event.
+        uniq={}
+        for e in events: uniq[(e["start"],e["side"],round(e["level"],10))]=e
+        events=sorted(uniq.values(),key=lambda e:e.get("start",0))
+        event=events[-1] if events else (base.get("sweep") if isinstance(base.get("sweep"),dict) else None)
+        life=self._event_lifecycle_v381(rows,event,ttl) if event else None
+        if event and life: event={**event,"lifecycle":life}
+        return {**base,"pools":pools[-40:],"external_above":above[:6],"external_below":below[:6],
+                "nearest_buy_side":above[0] if above else None,"nearest_sell_side":below[0] if below else None,
+                "events":events[-8:],"event":event}
+
+    def _smc_depth_v38(self, rows, ctx, liquidity, base):
+        atr=self._atr(rows); structure=ctx["base"]; close=float(rows[-1]["close"]) if rows else None
+        pivots=ctx.get("degrees",{}).get("minor",{}).get("points",[])
+        liqev=liquidity.get("event") if isinstance(liquidity.get("event"),dict) else None
+        liq_start=(liqev or {}).get("start"); liq_dir=(liqev or {}).get("direction")
+        # Multi-bar displacement detector (1..4 bars), AFTER the liquidity event when one exists.
+        displacements=[]
+        if atr and len(rows)>=2:
+            start_i=0
+            if liq_start is not None:
+                for i,r in enumerate(rows):
+                    if r.get("start")==liq_start: start_i=i+1; break
+            for end_i in range(max(start_i,len(rows)-16),len(rows)):
+                for n in range(1,5):
+                    a=end_i-n+1
+                    if a<start_i or a<0: continue
+                    win=rows[a:end_i+1]; op=float(win[0]["open"]); cl=float(win[-1]["close"])
+                    hi=max(float(r["high"]) for r in win); lo=min(float(r["low"]) for r in win); rng=max(1e-12,hi-lo)
+                    body=abs(cl-op); direction="bullish" if cl>op else "bearish" if cl<op else None
+                    efficiency=body/rng; body_atr=body/atr
+                    if direction and body_atr>=0.9 and efficiency>=0.55:
+                        displacements.append({"direction":direction,"start":win[0].get("start"),"end":win[-1].get("start"),"bars":n,
+                                              "body_atr":round(body_atr,3),"efficiency":round(efficiency,3)})
+        displacement=None
+        aligned=[d for d in displacements if liq_dir is None or d["direction"]==liq_dir]
+        if aligned: displacement=max(aligned,key=lambda d:(d["end"],d["body_atr"]*d["efficiency"]))
+        # MSS is independent of CHOCH: displacement must close through a relevant INTERNAL pivot after the sweep.
+        mss_event=None
+        if displacement:
+            dstart=displacement["start"]; dend=displacement["end"]; direction=displacement["direction"]
+            prior=[p for p in pivots if p.get("start",0)<dstart]
+            candidates=[p for p in prior if p.get("kind")==('high' if direction=='bullish' else 'low')]
+            internal=candidates[-1] if candidates else None
+            if internal:
+                endrow=next((r for r in rows if r.get("start")==dend),None)
+                crossed=bool(endrow and ((float(endrow["close"])>float(internal["price"])) if direction=='bullish' else (float(endrow["close"])<float(internal["price"]))))
+                if crossed:
+                    mss_event={"type":"MSS","direction":direction,"start":dend,"broken_level":float(internal["price"]),"broken_pivot_start":internal.get("start"),"confirmed_by_close":True}
+        # FVG lifecycle + CE. Creation must be after MSS to belong to this causal scenario.
+        fvgs=[]
+        for z in base.get("fvg",[]):
+            q=dict(z); lo=min(float(q["from"]),float(q["to"])); hi=max(float(q["from"]),float(q["to"])); q["ce"]=(lo+hi)/2
+            age=self._age_bars_v38(rows,q.get("start")); invalid=bool(q.get("fully_filled")); life=self._event_lifecycle_v381(rows,q,30,invalid,"fully_filled" if invalid else None)
+            q.update({"age_bars":age,"fresh":life["fresh"],"expired":life["expired"] or invalid,"lifecycle":life,"size_atr":None if not atr else round((hi-lo)/atr,3)})
+            fvgs.append(q)
+        active_fvg=[z for z in fvgs if not z.get("expired")]
+        # Causal BPR: opposite FVGs must be sequential and close enough in the same delivery sequence.
+        bprs=[]
+        ordered=sorted(active_fvg,key=lambda z:z.get("start",0))
+        for i,a in enumerate(ordered):
+            for b in ordered[i+1:]:
+                if a.get("type")==b.get("type"): continue
+                age_gap=abs((self._age_bars_v38(rows,a.get("start")) or 0)-(self._age_bars_v38(rows,b.get("start")) or 0))
+                if age_gap>12: continue
+                lo=max(min(float(a["from"]),float(a["to"])),min(float(b["from"]),float(b["to"]))); hi=min(max(float(a["from"]),float(a["to"])),max(float(b["from"]),float(b["to"])))
+                if lo<hi: bprs.append({"low":lo,"high":hi,"equilibrium":(lo+hi)/2,"sources":[a.get("start"),b.get("start")],"causal":True})
+        # OB quality is causal: the OB must PRECEDE and be close to the displacement that produced MSS.
+        obs=[]
+        for ob in base.get("order_blocks",[]):
+            q=dict(ob); later=[r for r in rows if r.get("start",0)>q.get("start",0)]; lo=float(q["low"]); hi=float(q["high"])
+            q["mitigated"]=any(float(r["low"])<=hi and float(r["high"])>=lo for r in later)
+            q["invalidated"]=any((float(r["close"])<lo if q.get("direction")=="bullish" else float(r["close"])>hi) for r in later)
+            causal=bool(displacement and mss_event and q.get("direction")==displacement.get("direction") and q.get("start",0)<displacement.get("start",0))
+            origin_touch=False
+            if causal:
+                oi=next((i for i,r in enumerate(rows) if r.get("start")==q.get("start")),None); di=next((i for i,r in enumerate(rows) if r.get("start")==displacement.get("start")),None)
+                causal=bool(oi is not None and di is not None and 0<di-oi<=8)
+                if causal:
+                    first=rows[di]
+                    # A causal OB must be the actual origin/retest zone of the impulse,
+                    # not merely an older same-direction candle located nearby in time.
+                    if q.get("direction")=="bullish":
+                        origin_touch=float(first["low"]) <= hi
+                    else:
+                        origin_touch=float(first["high"]) >= lo
+                    if atr:
+                        mid=(lo+hi)/2.0; origin_price=float(first["open"])
+                        origin_touch=origin_touch and abs(origin_price-mid) <= max(atr*1.25, hi-lo)
+                    causal=bool(origin_touch)
+            q["origin_interaction"]=origin_touch; q["caused_displacement"]=causal
+            q["lifecycle"]=self._event_lifecycle_v381(rows,q,self._ttl_bars_v382(rows,"order_block"),q["invalidated"],"zone_invalidated" if q["invalidated"] else None)
+            q["fresh"]=bool(q["lifecycle"].get("fresh") and not q["invalidated"])
+            q["expired"]=bool(q["lifecycle"].get("expired"))
+            q["quality"]="high" if causal and q["fresh"] else "basic"
+            obs.append(q)
+        # Protected level is inherited from Structure authority. Inducement must sit between it and the liquidity event.
+        protected=structure.get("protected_low") if liq_dir=="bullish" else structure.get("protected_high") if liq_dir=="bearish" else None
+        inducement=None
+        if protected and liq_start is not None:
+            want="low" if liq_dir=="bullish" else "high"
+            cand=[p for p in pivots if p.get("kind")==want and p.get("start",0)>protected.get("start",0) and p.get("start",0)<liq_start]
+            inducement=cand[-1] if cand else None
+        # Strict temporal chain.
+        chain={"liquidity":liqev,"displacement":displacement,"mss":mss_event}
+        ordered_chain=bool(liqev and displacement and mss_event and liq_start < displacement.get("start",0) <= displacement.get("end",0) <= mss_event.get("start",0))
+        scenario_dir=mss_event.get("direction") if mss_event else liq_dir
+        scenario_fvg=[z for z in active_fvg if ordered_chain and z.get("type")==scenario_dir and z.get("start",0)>=mss_event.get("start",0)]
+        pois=[]
+        for z in scenario_fvg: pois.append({"type":"fvg","direction":z.get("type"),"low":min(z["from"],z["to"]),"high":max(z["from"],z["to"]),"start":z.get("start"),"fresh":True,"rank":3})
+        for z in obs:
+            if z.get("fresh") and z.get("caused_displacement") and z.get("direction")==scenario_dir: pois.append({"type":"order_block","direction":z.get("direction"),"low":z["low"],"high":z["high"],"start":z.get("start"),"fresh":True,"rank":4})
+        causal_bprs=[]
+        for z in bprs:
+            sources=sorted(z.get("sources") or [])
+            same_sequence=bool(ordered_chain and len(sources)==2 and sources[0]>=displacement.get("start",0) and sources[1]>=mss_event.get("start",0))
+            z["same_delivery_sequence"]=same_sequence
+            z["sequence_anchor"]={"liquidity":liq_start,"displacement":displacement.get("start") if displacement else None,"mss":mss_event.get("start") if mss_event else None}
+            if same_sequence:
+                causal_bprs.append(z)
+                pois.append({"type":"bpr","direction":scenario_dir,"low":z["low"],"high":z["high"],"start":max(sources),"fresh":True,"rank":3})
+        pois.sort(key=lambda p:(-p["rank"],abs(((p["low"]+p["high"])/2)-close) if close else 0))
+        stage="LIQUIDITY_FORMING"
+        if liqev: stage="LIQUIDITY_TAKEN"
+        if liqev and displacement: stage="DISPLACEMENT"
+        if ordered_chain: stage="MSS_CONFIRMED"
+        if ordered_chain and pois: stage="POI_CREATED"
+        in_poi=bool(pois and close is not None and pois[0]["low"]<=close<=pois[0]["high"])
+        if stage=="POI_CREATED": stage="IN_POI" if in_poi else "WAIT_RETRACE"
+        target=liquidity.get("nearest_buy_side") if scenario_dir=="bullish" else liquidity.get("nearest_sell_side") if scenario_dir=="bearish" else None
+        invalidation=protected or ((liqev and {"price":liqev.get("level"),"start":liqev.get("start"),"source":"sweep_extreme"}) if liqev else None)
+        missing=None
+        if not liqev: missing="liquidity_event"
+        elif not displacement: missing="displacement_after_liquidity"
+        elif not mss_event: missing="mss_after_displacement"
+        elif not pois: missing="causal_poi_after_mss"
+        return {**base,"fvg":fvgs,"bpr":causal_bprs[-6:],"bpr_detected":bprs[-12:],"order_blocks":obs,"protected_level":protected,"inducement":inducement,
+                "liquidity_event":liqev,"displacement":displacement,"mss":{"confirmed":bool(mss_event),"event":mss_event},"poi":pois[:6],
+                "causal_chain":{**chain,"ordered":ordered_chain},
+                "scenario":{"direction":scenario_dir,"stage":stage,"ready_for_retrace":stage in ("WAIT_RETRACE","IN_POI"),
+                            "invalidation_thesis":invalidation,"target_liquidity":target,"missing_confirmation":missing},
+                "role":"scenario_builder_not_trade_authority"}
+
+    def _evidence_graph_v38(self, technical, structure, fib, elliott, harmonics, divergences, liquidity, smc):
+        facts=[]; confirms=[]; warnings=[]; contradictions=[]; hard=[]
+        st=structure.get("state")
+        struct_dir="bullish" if st=="uptrend" else "bearish" if st=="downtrend" else None
+        if st in ("uptrend","downtrend"):
+            facts.append({"source":"structure","type":"trend","value":st,"authority":"hard_fact"})
+        ev=structure.get("last_event")
+        if ev: facts.append({"source":"structure","type":"event","value":ev,"authority":"hard_fact"})
+        le=liquidity.get("event")
+        if le: facts.append({"source":"liquidity","type":"event","value":le,"authority":"hard_fact"})
+
+        sc=smc.get("scenario") or {}; smc_dir=sc.get("direction")
+        if sc.get("stage") not in (None,"LIQUIDITY_FORMING"):
+            confirms.append({"source":"smart_money","type":"causal_scenario","value":sc,"derived_from":["structure","liquidity"]})
+        if struct_dir and smc_dir and struct_dir!=smc_dir:
+            contradictions.append({"between":["structure","smart_money"],"structure_direction":struct_dir,"smc_direction":smc_dir,
+                                   "resolution":"structure_keeps_direction_authority_smc_is_counter_scenario"})
+
+        ep=elliott.get("primary")
+        if ep:
+            edir=ep.get("direction")
+            (warnings if elliott.get("ambiguous") else confirms).append({"source":"elliott","type":"wave_interpretation","value":{"type":ep.get("type"),"direction":edir},"derived_from":["structure","fibonacci"]})
+            if struct_dir and edir and edir!=struct_dir:
+                contradictions.append({"between":["structure","elliott"],"structure_direction":struct_dir,"elliott_direction":edir,
+                                       "resolution":"elliott_cannot_override_structure"})
+
+        confirmed_h=harmonics.get("confirmed") or []
+        if confirmed_h:
+            h=confirmed_h[0]; confirms.append({"source":"harmonics","type":"prz","value":h,"derived_from":["structure","fibonacci"]})
+            hdir=h.get("direction")
+            if struct_dir and hdir and hdir!=struct_dir:
+                contradictions.append({"between":["structure","harmonics"],"structure_direction":struct_dir,"harmonic_direction":hdir,
+                                       "resolution":"harmonic_is_prz_context_not_direction_authority"})
+
+        for d in divergences.get("events",[]):
+            if d.get("fresh"):
+                warnings.append({"source":"divergence","type":d.get("type"),"value":{"indicators":d.get("indicators"),"strength":d.get("strength")},"derived_from":["technical","structure"]})
+
+        life=structure.get("event_lifecycle") or {}
+        if life.get("invalidated"):
+            hard.append({"source":"structure","type":"event_invalidated","reason":life.get("invalidation_reason")})
+        causal=smc.get("causal_chain") or {}
+        if sc.get("stage") not in (None,"LIQUIDITY_FORMING","LIQUIDITY_TAKEN") and not causal.get("ordered"):
+            hard.append({"source":"smart_money","type":"causal_order_invalid","reason":"scenario_events_not_temporally_ordered"})
+
+        return {"facts":facts,"confirmations":confirms,"warnings":warnings,"contradictions":contradictions,"hard_invalidations":hard,
+                "authority_order":["hard_structural_fact","scenario_interpretation","pattern_evidence","indicator_evidence"],
+                "conflict_policy":"later_blocks_interpret_but_never_rewrite_upstream_facts","vote_counting":False}
+
+
     def _analysis_bundle(self, candles):
         raw_rows=list(candles)
         rows=[r for r in raw_rows if r.get("confirm", True)]
-        technical=self._technical_metrics(rows)
+        technical0=self._technical_metrics(rows)
+        technical=self._technical_depth_v38(rows,technical0)
         ctx=self._structure_context_v2(rows)
-        liquidity=self._liquidity_metrics(rows)
-        fib=self._fib_engine_v2(rows,ctx)
-        elliott=self._elliott_engine_v2(rows,ctx,fib)
-        harmonics=self._harmonic_engine_v2(ctx)
-        divergences=self._divergence_engine_v2(rows,ctx)
-        smc=self._smart_money_engine_v2(rows,ctx,liquidity)
-        regime=self._regime_levels_v2(rows,technical,ctx["base"],fib)
-        confluence=self._confluence_engine_v2(technical,ctx,fib,elliott,harmonics,divergences,liquidity,smc)
+        structure=self._structure_depth_v38(rows,ctx)
+        ctx["base"]=structure
+        fib0=self._fib_engine_v2(rows,ctx)
+        fib=self._fib_depth_v38(rows,ctx,fib0)
+        ell0=self._elliott_engine_v2(rows,ctx,fib)
+        elliott=self._elliott_depth_v38(rows,ctx,fib,ell0)
+        harm0=self._harmonic_engine_v2(ctx)
+        harmonics=self._harmonic_depth_v38(rows,harm0)
+        div0=self._divergence_engine_v2(rows,ctx)
+        divergences=self._divergence_depth_v38(rows,div0)
+        liquidity0=self._liquidity_metrics(rows)
+        liquidity=self._liquidity_depth_v38(rows,ctx,liquidity0)
+        smc0=self._smart_money_engine_v2(rows,ctx,liquidity)
+        smc=self._smc_depth_v38(rows,ctx,liquidity,smc0)
+        regime=self._regime_levels_v2(rows,technical,structure,fib)
+        evidence=self._evidence_graph_v38(technical,structure,fib,elliott,harmonics,divergences,liquidity,smc)
+        # Legacy confluence remains diagnostic only. It is NOT a decision authority in V3.8.
+        legacy=self._confluence_engine_v2(technical,ctx,fib,elliott,harmonics,divergences,liquidity,smc)
+        confluence={**legacy,"decision_authority":False,"deprecated_vote_model":True,"evidence_graph":evidence}
         ready=bool(technical.get("ready") and ctx.get("ready"))
-        return {
-            "ready":ready,
-            "engine_version":"scan_plus_v3_7_1",
-            "closed_candles":len(rows),
-            "excluded_open_candles":max(0,len(raw_rows)-len(rows)),
-            "last_confirmed_start":rows[-1].get("start") if rows else None,
-            "last_confirmed_close":rows[-1].get("close") if rows else None,
-            "pipeline":["technical","structure","fibonacci","elliott","harmonics","divergences","liquidity","smart_money","regime_levels","confluence"],
-            "technical":technical,
-            "structure":ctx["base"],
-            "fibonacci":fib,
-            "elliott":elliott,
-            "harmonics":harmonics,
-            "divergences":divergences,
-            "liquidity":liquidity,
-            "smart_money":smc,
-            "regime_levels":regime,
-            "confluence":confluence,
-        }
+        return {"ready":ready,"engine_version":"scan_plus_v3_8_3","closed_candles":len(rows),
+                "excluded_open_candles":max(0,len(raw_rows)-len(rows)),"last_confirmed_start":rows[-1].get("start") if rows else None,
+                "last_confirmed_close":rows[-1].get("close") if rows else None,
+                "pipeline":["technical","structure","fibonacci","elliott","harmonics","divergences","liquidity","smart_money","freshness","evidence_graph"],
+                "technical":technical,"structure":structure,"fibonacci":fib,"elliott":elliott,"harmonics":harmonics,"divergences":divergences,
+                "liquidity":liquidity,"smart_money":smc,"regime_levels":regime,"evidence_graph":evidence,"confluence":confluence}
 
 
     def _liquidity_metrics(self, candles):
@@ -3426,51 +3856,38 @@ class DynamicMarketManager:
 
     @staticmethod
     def _direction_from_frame_v37(a):
-        """Direction without allowing live price-discovery to rewrite confirmed TF structure."""
-        c=a.get("confluence",{}) or {}
-        state=(a.get("structure",{}) or {}).get("state","unknown")
-        bull=float(c.get("bullish",0) or 0); bear=float(c.get("bearish",0) or 0)
-        raw=c.get("direction","neutral")
-        if state=="uptrend" and bull>=bear: return "bullish"
-        if state=="downtrend" and bear>=bull: return "bearish"
-        if raw in ("bullish","bearish") and abs(bull-bear)>=2: return raw
+        """V3.8 structural direction. Pattern/indicator votes cannot rewrite structure."""
+        structure=a.get("structure",{}) or {}; state=structure.get("state","unknown"); ev=structure.get("last_event") or {}
+        # Fresh confirmed CHOCH means transition until subsequent structure confirms a new trend.
+        life=structure.get("event_lifecycle") or {}
+        if ev.get("type")=="CHOCH" and ev.get("confirmed_by_close") and life.get("fresh",True): return "neutral"
+        if state=="uptrend": return "bullish"
+        if state=="downtrend": return "bearish"
+        # A confirmed BOS in transition can provide provisional direction, never a full trend rewrite.
+        if ev.get("type")=="BOS" and ev.get("confirmed_by_close") and ev.get("direction") in ("bullish","bearish"): return ev.get("direction")
         return "neutral"
 
     @staticmethod
     def _signal_freshness_v37(a, tf):
-        # TTL is bar-based; expired items remain diagnostic only.
         ttl={"1":8,"5":10,"15":12,"60":14,"240":16,"D":20}.get(tf,10)
-        last_start=a.get("last_confirmed_start")
-        event=(a.get("structure",{}) or {}).get("last_event") or {}
-        event_start=event.get("start") or event.get("at") or event.get("timestamp")
-        # Most structure events do not expose a timestamp in older schema. In that
-        # case we do not invent age; freshness is unknown rather than expired.
-        return {"ttl_bars":ttl,"last_confirmed_start":last_start,
-                "structure_event_start":event_start,"structure_event_expired":False if event else None}
+        structure=a.get("structure",{}) or {}; life=structure.get("event_lifecycle") or {}
+        smc=a.get("smart_money",{}) or {}; liq=smc.get("liquidity_event") or {}
+        liq_life=liq.get("lifecycle") or {}
+        return {"ttl_bars":ttl,"last_confirmed_start":a.get("last_confirmed_start"),
+                "structure_event_start":life.get("created_at"),"structure_event_age_bars":life.get("age_bars"),
+                "structure_event_expired":life.get("expired"),"structure_event_freshness":life.get("freshness","unknown"),
+                "liquidity_event_start":liq_life.get("created_at"),"liquidity_event_age_bars":liq_life.get("age_bars"),
+                "liquidity_event_expired":liq_life.get("expired"),"liquidity_event_freshness":liq_life.get("freshness","unknown")}
 
     @staticmethod
     def _smc_scenario_v37(a, direction):
-        smc=a.get("smart_money",{}) or {}
-        liq=a.get("liquidity",{}) or {}
-        structure=a.get("structure",{}) or {}
-        ev=structure.get("last_event") or {}
-        sweep=liq.get("sweep")
-        fvgs=[x for x in smc.get("fvg",[]) if not x.get("fully_filled")]
-        obs=smc.get("order_blocks",[]) or []
-        displacement=bool(ev.get("confirmed_by_close") and ev.get("type") in ("BOS","CHoCH"))
-        mss=bool(ev.get("confirmed_by_close") and ev.get("type")=="CHoCH")
-        dir_ok=(ev.get("direction")==direction) if ev else False
-        stage="idle"
-        if sweep: stage="liquidity_sweep"
-        if displacement and dir_ok: stage="displacement"
-        if mss and dir_ok: stage="mss"
-        if (mss or displacement) and dir_ok and fvgs: stage="poi_created"
-        return {
-            "direction":direction if direction in ("bullish","bearish") else None,
-            "stage":stage,"sweep":sweep,"displacement":displacement and dir_ok,
-            "mss":mss and dir_ok,"active_fvg_count":len(fvgs),"order_block_count":len(obs),
-            "ready_for_retrace":bool(dir_ok and (mss or displacement) and (fvgs or obs)),
-        }
+        smc=a.get("smart_money",{}) or {}; sc=dict(smc.get("scenario") or {})
+        sc.setdefault("direction",direction if direction in ("bullish","bearish") else None)
+        sc["direction_aligned"]=sc.get("direction") in (None,direction) if direction in ("bullish","bearish") else False
+        sc["active_fvg_count"]=sum(1 for z in smc.get("fvg",[]) if not z.get("expired"))
+        sc["order_block_count"]=sum(1 for z in smc.get("order_blocks",[]) if z.get("fresh",True))
+        sc["bpr_count"]=len(smc.get("bpr",[])); sc["poi_count"]=len(smc.get("poi",[]))
+        return sc
 
     @staticmethod
     def _execution_engine_v37(linear, spot):
@@ -3604,13 +4021,18 @@ class DynamicMarketManager:
             # Order block boundary is a thesis level only when it is on the invalidation side.
             for ob in m.get("order_blocks",[]) or []:
                 if ob.get("direction")!=direction: continue
+                if not ob.get("fresh") or ob.get("expired") or ob.get("invalidated") or not ob.get("caused_displacement"): continue
                 x=ob.get("low") if direction=="bullish" else ob.get("high")
                 if x and ((direction=="bullish" and x<price) or (direction=="bearish" and x>price)):
                     add_unique(invalid,x,tf,"order_block",rank-0.15,{"start":ob.get("start")})
-            sw=q.get("sweep") or {}
+            sw=q.get("event") if isinstance(q.get("event"),dict) else (q.get("sweep") if isinstance(q.get("sweep"),dict) else {})
             sx=sw.get("price") or sw.get("level")
             if sx and ((direction=="bullish" and sx<price) or (direction=="bearish" and sx>price)):
-                add_unique(invalid,sx,tf,"liquidity_sweep_extreme",rank-0.25,{"sweep":sw})
+                add_unique(invalid,sx,tf,"liquidity_sweep_extreme",rank-0.35,{"sweep":sw})
+            # Deep SMC thesis has precedence over generic swing levels, but only on the correct side.
+            sc=m.get("scenario") or {}; thesis=sc.get("invalidation_thesis") or {}; tx=thesis.get("price")
+            if tx and ((direction=="bullish" and tx<price) or (direction=="bearish" and tx>price)):
+                add_unique(invalid,tx,tf,"smc_thesis",rank-0.5,{"thesis":thesis})
 
         # Rank by scenario scale first, then nearest valid level inside that scale.
         invalid.sort(key=lambda x:(x[3],abs(x[0]-price)))
@@ -3637,15 +4059,16 @@ class DynamicMarketManager:
             for x in levels:
                 if (direction=="bullish" and x>price) or (direction=="bearish" and x<price):
                     add_unique(targets,x,tf,"previous_swing",rank,{"thesis":"structure"})
-            # External/equal liquidity is a preferred target when it lies ahead of price.
-            eq=q.get("equal_highs") if direction=="bullish" else q.get("equal_lows")
-            if eq:
-                x=eq.get("price")
+            # Actionable liquidity targets come only from the lifecycle-aware liquidity map.
+            # Legacy equal_high/equal_low diagnostics are never used directly because they may already be swept.
+            objective=q.get("nearest_buy_side") if direction=="bullish" else q.get("nearest_sell_side")
+            if isinstance(objective,dict):
+                x=objective.get("price")
                 if x and ((direction=="bullish" and x>price) or (direction=="bearish" and x<price)):
-                    add_unique(targets,x,tf,"external_liquidity",rank-0.25,{"liquidity":eq})
+                    add_unique(targets,x,tf,"liquidity_objective",rank-0.4,{"liquidity":objective})
             # Unfilled FVG can be a magnet/target; use nearest boundary beyond price.
             for f in m.get("fvg",[]) or []:
-                if f.get("fully_filled"): continue
+                if f.get("fully_filled") or f.get("expired"): continue
                 vals=[v for v in (f.get("from"),f.get("to")) if isinstance(v,(int,float))]
                 ahead=[v for v in vals if (direction=="bullish" and v>price) or (direction=="bearish" and v<price)]
                 if ahead:
@@ -3684,18 +4107,30 @@ class DynamicMarketManager:
 
         dislocated=[tf for tf in ("15","5","1") if (mtf.get("live_context") or {}).get(tf,{}).get("stale_or_dislocated")]
         extreme_extension=len(dislocated)>=2
+        missed_entry=bool(atr and ((direction=="bullish" and price-(reg("5").get("supports") or [price])[0] > 3*atr) if (reg("5").get("supports") or []) else False))
+        if direction=="bearish" and atr and (reg("5").get("resistances") or []):
+            missed_entry=bool((reg("5").get("resistances") or [price])[0]-price > 3*atr)
 
         # Setup/trigger are timing gates, not direction votes.
         setup_state=mtf.get("setup_state"); trigger_state=mtf.get("trigger_state")
         smc5=DynamicMarketManager._smc_scenario_v37(analysis.get("5",{}),direction)
         smc1=DynamicMarketManager._smc_scenario_v37(analysis.get("1",{}),direction)
-        trigger_ok=(trigger_state=="aligned" and (smc1.get("mss") or smc1.get("displacement") or setup_state=="aligned"))
+        smc1_stage=smc1.get("stage")
+        trigger_ok=bool(trigger_state=="aligned" and (smc1_stage in ("MSS_CONFIRMED","POI_CREATED","WAIT_RETRACE","IN_POI") or smc1.get("mss",{}).get("confirmed") or smc1.get("displacement")))
 
         flow_divs=execution.get("flow_divergences",[]) or []
         flow_opposed=any((direction=="bullish" and e.get("type")=="price_up_perp_led_spot_not_confirming") or (direction=="bearish" and e.get("type")=="price_down_perp_led_spot_not_confirming") for e in flow_divs)
         book=execution.get("book_pressure","neutral"); execution_ok=book in ("neutral",direction)
 
         data_reasons=[]; market_reasons=[]; exec_reasons=[]
+        # V3.8.3 invariant: no path to SETUP may bypass an upstream hard invalidation.
+        hard_invalidations=[]
+        for tf in ("60","15","5","1"):
+            eg=(analysis.get(tf,{}) or {}).get("evidence_graph") or {}
+            for item in eg.get("hard_invalidations",[]) or []:
+                hard_invalidations.append({"timeframe":tf,**item})
+        if hard_invalidations:
+            market_reasons.append("upstream_hard_invalidation")
         if not mtf.get("ready"): data_reasons.append("mtf_not_ready")
         if not execution.get("ready"): data_reasons.append("transport_not_ready")
         if not execution.get("trade_data_ready"): data_reasons.append("trade_data_not_ready")
@@ -3715,8 +4150,12 @@ class DynamicMarketManager:
 
         if data_reasons:
             state="DATA_BLOCK"; block_class="DATA_BLOCK"; retry=True
+        elif hard_invalidations:
+            state="INVALID"; block_class="MARKET_BLOCK"; retry=False
         elif direction=="neutral":
             state="WAIT_DIRECTION"; block_class="MARKET_BLOCK"; retry=True
+        elif missed_entry:
+            state="MISSED_ENTRY"; block_class="EXECUTION_BLOCK"; retry=True
         elif extreme_extension or setup_state=="pullback":
             state="WAIT_PULLBACK"; block_class="EXECUTION_BLOCK"; retry=True
         elif setup_state!="aligned":
@@ -3744,10 +4183,10 @@ class DynamicMarketManager:
             "risk_reward":None if rr is None else round(rr,3),"risk_distance":risk,"reward_distance":reward,
             "trade_scale":{"stop_pct":None if stop_pct is None else round(stop_pct,4),"target_pct":None if target_pct is None else round(target_pct,4),"stop_atr":None if stop_atr is None else round(stop_atr,3),"valid":scale_ok,"reason":scale_reason,"execution_atr":atr,"invalidation_timeframe":inv_tf},
             "scenario_coherence":{"direction":direction,"setup_timeframe":"5","trigger_timeframe":"1","invalidation_timeframe":inv_tf,"t1_timeframe":None if not target1 else target1[1],"rr_uses_t1":True,"stop_moved_for_rr":False},
-            "smc_scenario":{"5m":smc5,"1m":smc1},"block_class":block_class,"block_reasons":reasons,"retryable":retry,
+            "smc_scenario":{"5m":smc5,"1m":smc1},"hard_invalidations":hard_invalidations,"block_class":block_class,"block_reasons":reasons,"retryable":retry,
             "setup_state":setup_state,"trigger_state":trigger_state,"trade_style":mtf.get("trade_style"),
             "execution_regime":execution.get("execution_regime"),"dislocated_execution_timeframes":dislocated,
-            "required":{"direction_confirmed":direction!="neutral","transport_ready":bool(execution.get("ready")),"trade_data_ready":bool(execution.get("trade_data_ready")),"price_order_valid":order_ok,"rr_min_1_5":rr is not None and rr>=1.5,"trade_scale_valid":scale_ok,"setup_aligned":setup_state=="aligned","trigger_confirmed":trigger_ok,"flow_not_opposed":not flow_opposed,"execution_not_opposed":execution_ok}
+            "required":{"direction_confirmed":direction!="neutral","transport_ready":bool(execution.get("ready")),"trade_data_ready":bool(execution.get("trade_data_ready")),"price_order_valid":order_ok,"rr_min_1_5":rr is not None and rr>=1.5,"trade_scale_valid":scale_ok,"setup_aligned":setup_state=="aligned","trigger_confirmed":trigger_ok,"flow_not_opposed":not flow_opposed,"execution_not_opposed":execution_ok,"no_upstream_hard_invalidation":not bool(hard_invalidations)}
         }
 
     def snapshot(
@@ -3786,7 +4225,7 @@ class DynamicMarketManager:
         return {
             "symbol": symbol,
             "generated_at": time.time(),
-            "engine_version": "scan_plus_v3_7_1",
+            "engine_version": "scan_plus_v3_8_3",
             "linear": linear,
             "spot": spot,
             "driver": self._driver(linear, spot),
@@ -3850,10 +4289,11 @@ class DynamicMarketManager:
                     "equal_lows":liq.get("equal_lows"),
                 },
                 "smc":{
-                    "dealing_range":smc.get("dealing_range"),
-                    "fvg":smc.get("fvg",[])[:4],
-                    "order_blocks":smc.get("order_blocks",[])[:3],
+                    "dealing_range":smc.get("dealing_range"),"scenario":smc.get("scenario"),"protected_level":smc.get("protected_level"),"inducement":smc.get("inducement"),
+                    "displacement":smc.get("displacement"),"mss":smc.get("mss"),"poi":smc.get("poi",[])[:4],"bpr":smc.get("bpr",[])[:3],
+                    "fvg":smc.get("fvg",[])[:4],"order_blocks":smc.get("order_blocks",[])[:3],
                 },
+                "evidence_graph":a.get("evidence_graph",{}),
                 "confluence":a.get("confluence",{}),
                 "signal_freshness":self._signal_freshness_v37(a,tf),
             }
