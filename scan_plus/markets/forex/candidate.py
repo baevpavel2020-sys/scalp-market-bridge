@@ -20,7 +20,7 @@ def _shared_ready(frames):
         analysis=(frames.get(tf) or {}).get("analysis") or {}
         fib=analysis.get("fibonacci") or {}
         ell=analysis.get("elliott") or {}
-        if fib.get("ready") is True and ell:
+        if fib.get("ready") is True and ell.get("ready") is True:
             return True,tf
     return False,None
 
