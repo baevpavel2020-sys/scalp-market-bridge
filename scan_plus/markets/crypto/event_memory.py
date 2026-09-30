@@ -33,7 +33,10 @@ class CausalEventMemory:
 
         bucket=self._bucket(symbol)
         for stage in STAGES:
-            if confirmations.get(stage):
+            # Preserve the first confirmation inside the causal window. Replacing
+            # it on every snapshot would move Pump/Exhaustion timestamps forward
+            # and could destroy a genuinely valid event sequence.
+            if confirmations.get(stage) and stage not in bucket:
                 bucket[stage]=EventAnchor(now,"confirmed")
 
         cutoff=now-self.max_age_seconds
