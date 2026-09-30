@@ -68,6 +68,10 @@ class StocksMarketAdapter(MarketAdapter):
             data = self.loader.klines(symbol, interval=interval, limit=240)
             rows = data["candles"]
             frame = {"bars": len(rows),
+                     "latest_timestamp_ms": max(
+                         [r.get("timestamp_ms") for r in rows if r.get("timestamp_ms") is not None],
+                         default=None,
+                     ),
                      "analysis": self.engine.analyze_profiled(rows, profile.get("scan") or [])}
             if label == "15m":
                 frame["session_levels"] = session_high_low(
@@ -76,19 +80,12 @@ class StocksMarketAdapter(MarketAdapter):
             frames[label] = frame
         ticker = self.loader.ticker(symbol)
         gap = self._gap_context(underlying)
-        all_ts=[]
-        for frame in frames.values():
-            levels=frame.get("session_levels") or {}
-            if levels.get("ready") and levels.get("local_date"):
-                # Session levels are already bound to their latest local session.
-                pass
-        candle_ts=[]
-        for label, interval in (("5m","5"),("15m","15"),("1h","60"),("4h","240")):
-            # Reuse the latest bar timestamp from the loaded frame when available.
-            # The adapter intentionally avoids wall-clock session decisions.
-            pass
-        # xStock session context is derived from the latest 15m candle when present.
-        latest_session = active_sessions("stocks_us")
+        latest_ts=max(
+            [frame.get("latest_timestamp_ms") for frame in frames.values()
+             if frame.get("latest_timestamp_ms") is not None],
+            default=None,
+        )
+        latest_session=active_sessions("stocks_us",latest_ts)
         fill = None
         if underlying and gap.get("ready"):
             fill = gap_fill_progress(
@@ -102,10 +99,10 @@ class StocksMarketAdapter(MarketAdapter):
             "gap": gap,
             "gap_classification": classify_gap(gap),
             "gap_fill": fill,
-            "underlying_sessions": active_sessions("stocks_us"),
+            "underlying_sessions": latest_session,
             "candidate": build_stock_candidate(
                 frames=frames, gap=gap, underlying=underlying,
-                ticker=ticker, session=active_sessions("stocks_us"),
+                ticker=ticker, session=latest_session,
             ),
             "priority": resolve_priorities(
                 "stocks", symbol,
