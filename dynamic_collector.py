@@ -2273,7 +2273,7 @@ class MarketStream:
         legacy=self._confluence_engine_v2(technical,ctx,fib,elliott,harmonics,divergences,liquidity,smc)
         confluence={**legacy,"decision_authority":False,"deprecated_vote_model":True,"evidence_graph":evidence}
         ready=bool(technical.get("ready") and ctx.get("ready"))
-        return {"ready":ready,"engine_version":"scan_plus_v3_8_8","closed_candles":len(rows),
+        return {"ready":ready,"engine_version":"scan_plus_v3_9_limit_plan","closed_candles":len(rows),
                 "excluded_open_candles":max(0,len(raw_rows)-len(rows)),"last_confirmed_start":rows[-1].get("start") if rows else None,
                 "last_confirmed_close":rows[-1].get("close") if rows else None,
                 "pipeline":["technical","structure","fibonacci","elliott","harmonics","divergences","liquidity","smart_money","freshness","evidence_graph"],
@@ -4362,6 +4362,122 @@ class DynamicMarketManager:
         else:
             state="SETUP"; block_class=None; retry=False
 
+        # ---------- V3.9 conditional LIMIT_PLAN ----------
+        # A limit plan is NOT a market-entry signal and does not bypass trigger/flow gates.
+        # It is offered only for a structurally valid WAIT_TRIGGER with confirmed direction.
+        # The entry must sit on the retracement side of current price, remain before the
+        # structural stop, be supported by an actual 1m/5m/15m level, and still deliver
+        # >= 1.5R to the existing T1 without moving the thesis stop or target.
+        limit_plan={"eligible":False,"state":"NO_LIMIT_PLAN","reason":None}
+        if state=="WAIT_TRIGGER":
+            lp_required=bool(
+                direction in ("bullish","bearish")
+                and (mtf.get("direction") or {}).get("state")=="confirmed"
+                and execution.get("trade_data_ready")
+                and setup_state=="aligned"
+                and stop is not None and t1 is not None
+                and order_ok and scale_ok
+                and not hard_invalidations
+            )
+            if lp_required:
+                min_rr=1.5
+                # Exact entry boundary required to preserve min_rr with the SAME stop/T1.
+                if direction=="bullish":
+                    rr_boundary=(t1 + min_rr*stop)/(1.0+min_rr)
+                    retrace_ok=lambda x: stop < x < price
+                    rr_ok=lambda x: (t1-x)/(x-stop) if x>stop else None
+                    side="BUY_LIMIT"
+                else:
+                    rr_boundary=(t1 + min_rr*stop)/(1.0+min_rr)
+                    retrace_ok=lambda x: price < x < stop
+                    rr_ok=lambda x: (x-t1)/(stop-x) if x<stop else None
+                    side="SELL_LIMIT"
+
+                candidates=[]
+                def lp_add(value, tf, source, weight):
+                    try: x=float(value)
+                    except (TypeError,ValueError): return
+                    if not math.isfinite(x) or not retrace_ok(x): return
+                    r=rr_ok(x)
+                    if r is None or r < min_rr: return
+                    # Do not park the order effectively on top of the stop.
+                    risk_abs=abs(x-stop)
+                    floor=max((atr or 0)*0.20, spread_abs*3)
+                    if floor and risk_abs < floor: return
+                    candidates.append({"price":x,"timeframe":tf,"source":source,
+                                       "rr":r,"weight":weight,
+                                       "distance_pct":abs(x-price)/price*100})
+
+                # Structure first.
+                for tf,weight in (("1",0.0),("5",0.1),("15",0.25)):
+                    r=reg(tf)
+                    levels=r.get("supports",[]) if direction=="bullish" else r.get("resistances",[])
+                    for x in levels: lp_add(x,tf,"structural_retest",weight)
+
+                    # Fibonacci clusters are independent confluence levels.
+                    fib=(analysis.get(tf,{}) or {}).get("fibonacci",{}) or {}
+                    for c in fib.get("clusters",[]) or []:
+                        if isinstance(c,dict):
+                            lp_add(c.get("price"),tf,"fib_cluster",weight+0.05)
+
+                    # Fresh same-direction order block boundary/POI.
+                    m=smc(tf)
+                    for ob in m.get("order_blocks",[]) or []:
+                        if ob.get("direction")!=direction: continue
+                        if not ob.get("fresh") or ob.get("expired") or ob.get("invalidated"): continue
+                        vals=[ob.get("low"),ob.get("high")]
+                        for x in vals: lp_add(x,tf,"order_block",weight-0.05)
+
+                # Prefer nearest fillable valid retracement; source weight breaks ties.
+                candidates.sort(key=lambda c:(c["distance_pct"],c["weight"],-c["rr"]))
+                chosen=candidates[0] if candidates else None
+                if chosen:
+                    entry=chosen["price"]
+                    zone_half=max(spread_abs*2, (atr or 0)*0.10)
+                    if direction=="bullish":
+                        zlo=max(stop+1e-12,entry-zone_half); zhi=min(price-1e-12,entry+zone_half)
+                    else:
+                        zlo=max(price+1e-12,entry-zone_half); zhi=min(stop-1e-12,entry+zone_half)
+                    final_rr=rr_ok(entry)
+                    limit_plan={
+                        "eligible":True,
+                        "state":"LIMIT_PLAN",
+                        "side":side,
+                        "entry":round(entry,10),
+                        "entry_zone":[round(zlo,10),round(zhi,10)],
+                        "stop":round(stop,10),
+                        "targets":{
+                            "t1":round(t1,10),
+                            "t2":None if t2 is None else round(t2,10),
+                            "t1_source":None if not target1 else f"{target1[2]}_{target1[1]}",
+                            "t2_source":None if not target2 else f"{target2[2]}_{target2[1]}",
+                        },
+                        "risk_reward":round(final_rr,3),
+                        "minimum_rr":min_rr,
+                        "rr_boundary":round(rr_boundary,10),
+                        "entry_basis":{
+                            "source":chosen["source"],"timeframe":chosen["timeframe"],
+                            "distance_from_market_pct":round(chosen["distance_pct"],4)
+                        },
+                        "execution_warning":"conditional_limit_not_market_signal",
+                        "requires_before_fill":["trigger_confirmation","flow_not_opposed","book_not_opposed"],
+                        "cancel_if":[
+                            "direction_not_confirmed",
+                            "structural_invalidation",
+                            "upstream_hard_invalidation",
+                            "trade_data_not_ready",
+                            "target_or_scale_invalid",
+                        ],
+                        "place_now":bool(not flow_opposed and execution_ok),
+                    }
+                else:
+                    limit_plan={"eligible":False,"state":"NO_LIMIT_PLAN",
+                                "reason":"no_structural_retracement_level_preserves_min_rr",
+                                "rr_boundary":round(rr_boundary,10)}
+            else:
+                limit_plan={"eligible":False,"state":"NO_LIMIT_PLAN",
+                            "reason":"wait_trigger_but_limit_prerequisites_failed"}
+
         reasons=data_reasons+market_reasons+exec_reasons
         return {
             "ready":True,"status":state,"trade_state":state,"direction":direction if direction!="neutral" else None,
@@ -4378,6 +4494,7 @@ class DynamicMarketManager:
             "scenario_coherence":{"direction":direction,"setup_timeframe":"5","trigger_timeframe":"1","invalidation_timeframe":inv_tf,"t1_timeframe":None if not target1 else target1[1],"rr_uses_t1":True,"stop_moved_for_rr":False},
             "smc_scenario":{"5m":smc5,"1m":smc1},"hard_invalidations":hard_invalidations,"block_class":block_class,"block_reasons":reasons,"retryable":retry,
             "setup_state":setup_state,"trigger_state":trigger_state,
+            "limit_plan":limit_plan,
             "trigger_direction_aligned":bool(trigger_state=="aligned"),
             "trigger_confirmed":trigger_ok,
             "trade_style":mtf.get("trade_style"),
@@ -4425,7 +4542,7 @@ class DynamicMarketManager:
         return {
             "symbol": symbol,
             "generated_at": time.time(),
-            "engine_version": "scan_plus_v3_8_8",
+            "engine_version": "scan_plus_v3_9_limit_plan",
             "linear": linear,
             "spot": spot,
             "driver": self._driver(linear, spot),
@@ -6620,6 +6737,7 @@ class ScanOrchestrator:
                 "stop": setup.get("stop"),
                 "targets": setup.get("targets"),
                 "risk_reward": setup.get("risk_reward"),
+                "limit_plan": setup.get("limit_plan") or {"eligible":False,"state":"NO_LIMIT_PLAN"},
                 "failed_requirements": setup.get("failed_requirements") or [],
             },
         }
