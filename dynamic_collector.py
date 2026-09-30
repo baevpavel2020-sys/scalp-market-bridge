@@ -2262,7 +2262,7 @@ class MarketStream:
         legacy=self._confluence_engine_v2(technical,ctx,fib,elliott,harmonics,divergences,liquidity,smc)
         confluence={**legacy,"decision_authority":False,"deprecated_vote_model":True,"evidence_graph":evidence}
         ready=bool(technical.get("ready") and ctx.get("ready"))
-        return {"ready":ready,"engine_version":"scan_plus_v3_8_7","closed_candles":len(rows),
+        return {"ready":ready,"engine_version":"scan_plus_v3_8_7_2","closed_candles":len(rows),
                 "excluded_open_candles":max(0,len(raw_rows)-len(rows)),"last_confirmed_start":rows[-1].get("start") if rows else None,
                 "last_confirmed_close":rows[-1].get("close") if rows else None,
                 "pipeline":["technical","structure","fibonacci","elliott","harmonics","divergences","liquidity","smart_money","freshness","evidence_graph"],
@@ -3378,6 +3378,57 @@ class DynamicMarketManager:
             return symbol
 
     # ========================================================
+    # INITIAL REALTIME RESOLUTION
+    # ========================================================
+
+    @staticmethod
+    def _initial_stream_state(stream):
+        """Cheap transport/capability probe used only during cold start.
+
+        Do not call snapshot() here: it runs the full analysis pipeline.  We only
+        need enough state to know whether the websocket has resolved.
+        """
+        with stream.lock:
+            ticker_updated = fnum(stream.ticker.get("updated_at"))
+            ticker_age = (time.time() - ticker_updated) if ticker_updated is not None else None
+            last_price = fnum(stream.ticker.get("lastPrice"))
+            return {
+                "connected": bool(stream.connected),
+                "capability_state": stream.capability_state,
+                "available": stream.available,
+                "ticker_fresh": bool(last_price is not None and ticker_age is not None and ticker_age <= 15.0),
+                "status": stream.status,
+            }
+
+    def _wait_initial_realtime_resolution(self, pair, timeout=8.0):
+        """Bounded cold-start barrier for /scan and /snapshot.
+
+        Linear must produce a fresh realtime ticker (the source of current price)
+        or reach an explicit terminal/transient capability result. Spot only has
+        to resolve its subscription capability; it must not delay a valid linear
+        price while waiting for its first trade on an illiquid pair.
+        """
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        # Only an explicit unsupported result is terminal.  A transient reject is
+        # deliberately *not* treated as resolved: the stream reconnect loop may
+        # recover inside this same bounded cold-start window.
+        linear_terminal = {"unsupported"}
+        spot_resolved = {"subscribed", "active", "unsupported"}
+
+        while True:
+            linear = self._initial_stream_state(pair["linear"])
+            spot = self._initial_stream_state(pair["spot"])
+
+            linear_resolved = linear["ticker_fresh"] or linear["capability_state"] in linear_terminal
+            spot_done = spot["capability_state"] in spot_resolved
+
+            if linear_resolved and spot_done:
+                return {"resolved": True, "linear": linear, "spot": spot}
+            if time.monotonic() >= deadline:
+                return {"resolved": False, "linear": linear, "spot": spot}
+            time.sleep(0.05)
+
+    # ========================================================
     # SNAPSHOT
     # ========================================================
 
@@ -4290,6 +4341,10 @@ class DynamicMarketManager:
                 symbol
             ]
 
+        # Cold-start race guard: activate() starts websocket threads asynchronously.
+        # Wait outside the manager lock so stream threads can resolve normally.
+        self._wait_initial_realtime_resolution(pair)
+
         linear = (
             pair["linear"]
             .snapshot()
@@ -4307,7 +4362,7 @@ class DynamicMarketManager:
         return {
             "symbol": symbol,
             "generated_at": time.time(),
-            "engine_version": "scan_plus_v3_8_7",
+            "engine_version": "scan_plus_v3_8_7_2",
             "linear": linear,
             "spot": spot,
             "driver": self._driver(linear, spot),
@@ -4464,6 +4519,9 @@ class DynamicMarketManager:
         with self.lock:
             self.last_access[symbol] = time.time()
             pair = self.streams[symbol]
+        # Diagnostics must observe the same cold-start barrier as /scan; otherwise
+        # the two endpoints can contradict each other for a newly activated symbol.
+        self._wait_initial_realtime_resolution(pair)
         linear = pair["linear"].diagnostics()
         spot = pair["spot"].diagnostics()
         return {
