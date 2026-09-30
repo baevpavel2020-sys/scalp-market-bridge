@@ -1,0 +1,186 @@
+{
+  "created_at": 1790793770.5576842,
+  "error": null,
+  "finished_at": 1790793813.609815,
+  "job_id": "db284c665250455f",
+  "job_manager_version": "scan_job_manager_v3_1_1_adaptive_warmup_fix",
+  "mode": "auto",
+  "progress": {
+    "current_symbol": null,
+    "done": 1,
+    "stage": "FINAL_SCAN",
+    "total": 1,
+    "warmup_remaining_seconds": 0
+  },
+  "result": {
+    "activated_symbols": [
+      "AVAXUSDT"
+    ],
+    "elapsed_ms": 43051.82,
+    "errors": {},
+    "mode": "auto",
+    "orchestrator_version": "scan_orchestrator_v2_1_adaptive_warmup",
+    "prescan": {
+      "diagnostics": {
+        "analysis_error_count": 0,
+        "analysis_errors": {},
+        "history_error_count": 0,
+        "history_errors": {},
+        "skipped_symbol_count": 8,
+        "skipped_symbols": [
+          "1000SHIBUSDT",
+          "TONUSDT",
+          "FETUSDT",
+          "MKRUSDT",
+          "EOSUSDT",
+          "MATICUSDT",
+          "BONKUSDT",
+          "FLOKIUSDT"
+        ],
+        "ws_error_count": 0,
+        "ws_errors": []
+      },
+      "elapsed_ms": 550.78,
+      "engine_version": "prescan_v3_2_final",
+      "scan_plus_candidates": [
+        "AVAXUSDT"
+      ],
+      "status": "PASS"
+    },
+    "prescan_used": true,
+    "scan_plus_count": 1,
+    "scan_plus_results": [
+      {
+        "block_class": "MARKET_BLOCK",
+        "block_reasons": [
+          "direction_provisional",
+          "rr_below_1_5",
+          "stop_too_many_atr",
+          "setup_pullback_active",
+          "trigger_not_confirmed"
+        ],
+        "context": {
+          "direction": "bullish",
+          "frames": {
+            "240": {
+              "direction": "bullish",
+              "live_mode": "inside_structure",
+              "price_gap_atr": 0.0,
+              "raw_confluence": "bullish",
+              "ready": true,
+              "structure": "range_or_transition",
+              "transition": false
+            },
+            "D": {
+              "direction": "bullish",
+              "live_mode": "inside_structure",
+              "price_gap_atr": 0.0,
+              "raw_confluence": "bullish",
+              "ready": true,
+              "structure": "uptrend",
+              "transition": false
+            }
+          }
+        },
+        "direction": {
+          "direction": "bullish",
+          "frames": {
+            "15": {
+              "direction": "neutral",
+              "live_mode": "inside_structure",
+              "price_gap_atr": 0.0,
+              "raw_confluence": "bearish",
+              "ready": true,
+              "structure": "range_or_transition",
+              "transition": false
+            },
+            "60": {
+              "direction": "bullish",
+              "live_mode": "inside_structure",
+              "price_gap_atr": 0.0,
+              "raw_confluence": "bearish",
+              "ready": true,
+              "structure": "uptrend",
+              "transition": false
+            }
+          },
+          "score": 0.55,
+          "state": "provisional"
+        },
+        "engine_version": "scan_plus_v3_9_limit_plan",
+        "price": 10.947,
+        "retryable": true,
+        "setup": {
+          "entry": null,
+          "entry_zone": null,
+          "failed_requirements": [
+            "direction_confirmed",
+            "rr_min_1_5",
+            "trade_scale_valid",
+            "setup_aligned",
+            "trigger_confirmed"
+          ],
+          "limit_plan": {
+            "eligible": false,
+            "reason": null,
+            "state": "NO_LIMIT_PLAN"
+          },
+          "risk_reward": 0.763,
+          "side": null,
+          "stop": null,
+          "targets": {
+            "rr_basis": "t1",
+            "rule": "nearest_valid_scenario_target_same_intraday_scale_first",
+            "t1": 11.432,
+            "t1_source": "liquidity_objective_1",
+            "t1_timeframe": "1",
+            "t2": 12.007,
+            "t2_source": "previous_swing_15",
+            "t2_timeframe": "15"
+          }
+        },
+        "setup_state": "pullback",
+        "status": {
+          "driver_ready": true,
+          "execution_ready": true,
+          "flow_ready": true,
+          "historical_ready": true,
+          "linear_connected": true,
+          "spot_connected": true,
+          "trade_data_ready": true
+        },
+        "symbol": "AVAXUSDT",
+        "trade_state": "WAIT_DIRECTION",
+        "trade_style": "with_context",
+        "trigger_state": "opposed"
+      }
+    ],
+    "selected_symbols": [
+      "AVAXUSDT"
+    ],
+    "warmup_max_seconds": 120,
+    "warmup_readiness": {
+      "AVAXUSDT": {
+        "driver_ready": true,
+        "execution_mode": "spot_perp",
+        "flow_ready": true,
+        "ready": true,
+        "symbol": "AVAXUSDT",
+        "trade_data_ready": true,
+        "warmed_flow_windows": [
+          "1m",
+          "5m"
+        ]
+      }
+    },
+    "warmup_ready_count": 1,
+    "warmup_seconds": 41.4,
+    "warmup_target_seconds": 40,
+    "warmup_timed_out": false,
+    "warmup_total_count": 1
+  },
+  "started_at": 1790793770.557978,
+  "state": "DONE",
+  "updated_at": 1790793813.6098168,
+  "bridge_version": "v2"
+}
