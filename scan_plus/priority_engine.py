@@ -9,6 +9,7 @@ from scan_plus.market_profiles import get_profile
 SITUATION_OVERRIDES={
     "reversal":{"boost":["structure_mtf","liquidity","elliott","fibonacci"],"deemphasize":["continuation"]},
     "continuation":{"boost":["structure_mtf","volume","order_flow","session_liquidity"],"deemphasize":["harmonics"]},
+    "session_sweep":{"boost":["structure_mtf","elliott","fibonacci","session_liquidity"],"deemphasize":[]},
     "gap":{"boost":["gaps","underlying_volume","fibonacci","structure_mtf"],"deemphasize":[]},
     "manipulation":{"boost":["order_flow","open_interest","liquidations","structure_mtf","liquidity"],"deemphasize":[]},
 }
