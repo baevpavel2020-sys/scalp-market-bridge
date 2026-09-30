@@ -10,6 +10,7 @@ from scan_plus.core.session_levels import session_high_low
 from scan_plus.markets.stocks.bybit_xstocks import BybitXStocksLoader
 from scan_plus.markets.stocks.session_gap import classify_gap, gap_fill_progress
 from scan_plus.markets.stocks.candidate import build_stock_candidate
+from scan_plus.markets.stocks.execution import build_stock_execution_plan
 
 
 class StocksMarketAdapter(MarketAdapter):
@@ -102,6 +103,7 @@ class StocksMarketAdapter(MarketAdapter):
             "execution_context": {
                 "product": "xstock_spot", "xstock_24_7": True,
                 "underlying_session_required_for_session_signals": True,
+                "order_submission": "disabled_by_analysis_layer",
             },
         }
 
