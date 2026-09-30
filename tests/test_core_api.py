@@ -4,6 +4,17 @@ from scan_plus.priority_engine import resolve_priorities
 
 
 class CoreApiTests(unittest.TestCase):
+    def test_priority_boundary_separates_shared_and_market_context(self):
+        shared, context=AnalyticalEngine.split_priorities(
+            ["structure_mtf","elliott","session_liquidity","gaps","fibonacci"])
+        self.assertEqual(shared,["structure","elliott","fibonacci"])
+        self.assertEqual(context,["session_liquidity","gaps"])
+
+    def test_profiled_analysis_reports_context_requests(self):
+        out=AnalyticalEngine(LegacyCryptoBackend()).analyze_profiled(
+            [],["structure_mtf","session_liquidity"])
+        self.assertEqual(out["_context_blocks_requested"],["session_liquidity"])
+
     def test_unknown_priority_block_is_ignored_not_executed(self):
         engine=AnalyticalEngine(LegacyCryptoBackend())
         out=engine.analyze_profiled([],["structure_mtf","not_a_real_block"])
