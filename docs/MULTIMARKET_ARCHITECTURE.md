@@ -271,3 +271,18 @@ Implemented the independent Forex adapter:
 - no Crypto OI/funding/liquidation assumptions enter the Forex adapter.
 
 The current default Stooq loader remains a provider boundary; its actual intraday coverage must be validated before being treated as a production FX feed.
+
+
+## Cross-cycle audit checkpoint — after Stocks / Forex step 1
+
+Audit pass found and fixed several concrete issues:
+- Session High/Low previously aggregated every matching session across the whole candle history. It now uses only the latest local session, preventing stale historical extremes from contaminating current-session evidence.
+- Weekend timestamps previously could report FX/US equity sessions as active. Weekend sessions are now suppressed.
+- Stock candidate Fibonacci readiness previously treated any non-empty Fibonacci mapping as ready; it now requires the explicit legacy `ready=True` flag.
+- Stock scan session context previously used wall-clock time. It now derives session context from the newest available candle timestamp, making replay/backtest behavior deterministic.
+- Stock execution tests had two calls missing the now-required explicit risk budget; corrected.
+- Removed an unused execution import from the Stocks adapter.
+
+Important feed limitation remains: the default Stooq adapter is only a provider boundary. Its requested intraday intervals are not yet accepted as a production-grade FX feed without an explicit coverage/quality validation. No production claim is made.
+
+Audit status: previous Architecture/Core/Stocks work has now received a cross-cycle audit pass; concrete findings above were fixed before continuing Forex.
