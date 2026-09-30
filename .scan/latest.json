@@ -1,8 +1,8 @@
 {
-  "created_at": 1790793770.5576842,
+  "created_at": 1790794788.959422,
   "error": null,
-  "finished_at": 1790793813.609815,
-  "job_id": "db284c665250455f",
+  "finished_at": 1790794866.2454238,
+  "job_id": "8172ec2c4f7d4332",
   "job_manager_version": "scan_job_manager_v3_1_1_adaptive_warmup_fix",
   "mode": "auto",
   "progress": {
@@ -16,7 +16,7 @@
     "activated_symbols": [
       "AVAXUSDT"
     ],
-    "elapsed_ms": 43051.82,
+    "elapsed_ms": 77285.62,
     "errors": {},
     "mode": "auto",
     "orchestrator_version": "scan_orchestrator_v2_1_adaptive_warmup",
@@ -40,7 +40,7 @@
         "ws_error_count": 0,
         "ws_errors": []
       },
-      "elapsed_ms": 550.78,
+      "elapsed_ms": 12186.85,
       "engine_version": "prescan_v3_2_final",
       "scan_plus_candidates": [
         "AVAXUSDT"
@@ -56,7 +56,7 @@
           "direction_provisional",
           "rr_below_1_5",
           "stop_too_many_atr",
-          "setup_pullback_active",
+          "setup_not_aligned",
           "trigger_not_confirmed"
         ],
         "context": {
@@ -108,7 +108,7 @@
           "state": "provisional"
         },
         "engine_version": "scan_plus_v3_9_limit_plan",
-        "price": 10.947,
+        "price": 10.938,
         "retryable": true,
         "setup": {
           "entry": null,
@@ -125,7 +125,7 @@
             "reason": null,
             "state": "NO_LIMIT_PLAN"
           },
-          "risk_reward": 0.763,
+          "risk_reward": 0.799,
           "side": null,
           "stop": null,
           "targets": {
@@ -139,7 +139,7 @@
             "t2_timeframe": "15"
           }
         },
-        "setup_state": "pullback",
+        "setup_state": "forming",
         "status": {
           "driver_ready": true,
           "execution_ready": true,
@@ -168,19 +168,18 @@
         "symbol": "AVAXUSDT",
         "trade_data_ready": true,
         "warmed_flow_windows": [
-          "1m",
-          "5m"
+          "1m"
         ]
       }
     },
     "warmup_ready_count": 1,
-    "warmup_seconds": 41.4,
+    "warmup_seconds": 47.19,
     "warmup_target_seconds": 40,
     "warmup_timed_out": false,
     "warmup_total_count": 1
   },
-  "started_at": 1790793770.557978,
+  "started_at": 1790794788.959781,
   "state": "DONE",
-  "updated_at": 1790793813.6098168,
+  "updated_at": 1790794866.245428,
   "bridge_version": "v2"
 }
