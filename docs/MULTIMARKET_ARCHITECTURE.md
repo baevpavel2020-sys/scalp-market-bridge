@@ -169,3 +169,12 @@ can invalidate a setup.
 Next extraction rule: move one calculation family at a time behind this boundary,
 compare legacy and extracted outputs on the same snapshots, and only then switch the
 default backend. No blind rewrite of the monolithic collector.
+
+
+## Cycle 2 checkpoint — analytical parity
+
+- Added `AnalyticalEngine` as a reusable execution boundary for Structure, Fibonacci, Elliott and Harmonics.
+- Crypto remains on the legacy implementation through `LegacyCryptoBackend`.
+- Added parity tests comparing the wrapper directly with legacy Structure/Fibonacci outputs.
+- Added profiled analysis so market/situation priorities can select reusable blocks without changing their semantics.
+- No live default switch away from the legacy Crypto calculations has been made yet.
