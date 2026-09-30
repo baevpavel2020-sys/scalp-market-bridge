@@ -15,6 +15,15 @@ class MarketContextTests(unittest.TestCase):
         ts=datetime(2026,1,5,16,0,tzinfo=timezone.utc).timestamp()
         self.assertIn("regular",active_sessions("stocks_us",ts))
 
+    def test_session_high_low_uses_local_session(self):
+        from scan_plus.core.session_levels import session_high_low
+        # 08:00 London = 08:00 UTC in January.
+        candles=[{"timestamp_ms":int(datetime(2026,1,5,8,0,tzinfo=timezone.utc).timestamp()*1000),
+                  "high":101,"low":99}]
+        out=session_high_low(candles,"forex","london")
+        self.assertTrue(out["ready"])
+        self.assertEqual(out["high"],101)
+
     def test_gap_is_explicit(self):
         out=gap_from_previous(105,100)
         self.assertEqual(out["direction"],"up")
