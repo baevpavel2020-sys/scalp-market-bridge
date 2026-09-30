@@ -998,6 +998,8 @@ class MarketStream:
                 "start": a["start"], "price": start_price,
                 "kind": a["kind"], "label": a.get("label"),
             },
+
+
             "to": {
                 "start": b["start"], "price": end_price,
                 "kind": b["kind"], "label": b.get("label"),
@@ -1997,6 +1999,8 @@ class MarketStream:
                 q["invalidation"]=(q["prz"]["low"] if q.get("direction")=="bullish" else q["prz"]["high"]) if d is not None else None
                 out.append(q)
         return {**base,"confirmed":confirmed,"developing":developing,"role":"PRZ_context_not_reversal_command"}
+
+
 
     def _divergence_depth_v38(self, rows, base):
         groups={}
@@ -2998,6 +3002,8 @@ class MarketStream:
 
         best_ask = min(
             self.asks
+
+
         )
 
         mid = (
@@ -3998,6 +4004,8 @@ class DynamicMarketManager:
     def _signal_freshness_v37(a, tf):
         ttl={"1":8,"5":10,"15":12,"60":14,"240":16,"D":20}.get(tf,10)
         structure=a.get("structure",{}) or {}; life=structure.get("event_lifecycle") or {}
+
+
         smc=a.get("smart_money",{}) or {}; liq=smc.get("liquidity_event") or {}
         liq_life=liq.get("lifecycle") or {}
         return {"ttl_bars":ttl,"last_confirmed_start":a.get("last_confirmed_start"),
@@ -4983,6 +4991,290 @@ class DynamicMarketManager:
         ].stop()
 
 
+
+# ============================================================
+# PRESCAN V1 -- LIGHTWEIGHT MARKET DISCOVERY ONLY
+# ============================================================
+
+class PreScanEngine:
+    """Lightweight candidate discovery layer for Scan+.
+
+    PreScan deliberately does NOT call _analysis_bundle() and does not produce a
+    trade decision.  It reuses the canonical Structure/ATR primitives from
+    MarketStream, then ranks only whether a symbol deserves a full Scan+ run.
+    """
+
+    VERSION = "prescan_v1"
+    TF_REQUIRED = ("5", "15", "60")
+    MIN_CANDLES = {"5": 80, "15": 80, "60": 80}
+    STATUS_ORDER = {"REJECT": 0, "COLD": 1, "WARMING": 2, "HOT": 3}
+
+    @staticmethod
+    def _closed_rows(stream, interval):
+        """Return closed candles only; never let the live candle drive discovery."""
+        with stream.lock:
+            rows = [dict(c) for c in stream.candles.get(interval, ())]
+        return [c for c in rows if c.get("confirm") is True]
+
+    @staticmethod
+    def _direction(structure):
+        state = structure.get("state")
+        if state == "uptrend":
+            return "bullish"
+        if state == "downtrend":
+            return "bearish"
+        return "neutral"
+
+    @staticmethod
+    def _median(values):
+        vals = sorted(float(v) for v in values if v is not None and math.isfinite(float(v)))
+        if not vals:
+            return None
+        n = len(vals)
+        mid = n // 2
+        return vals[mid] if n % 2 else (vals[mid - 1] + vals[mid]) / 2.0
+
+    @classmethod
+    def _activity(cls, rows):
+        """Closed-candle RVOL + range expansion/compression; measurement, not signal."""
+        if len(rows) < 31:
+            return {"ready": False}
+        recent = rows[-1]
+        baseline = rows[-31:-1]
+        volumes = [fnum(c.get("volume")) or 0.0 for c in baseline]
+        ranges = [max(0.0, float(c["high"]) - float(c["low"])) for c in baseline]
+        base_vol = cls._median(volumes)
+        base_range = cls._median(ranges)
+        cur_vol = fnum(recent.get("volume")) or 0.0
+        cur_range = max(0.0, float(recent["high"]) - float(recent["low"]))
+        rvol = cur_vol / base_vol if base_vol and base_vol > 0 else None
+        range_ratio = cur_range / base_range if base_range and base_range > 0 else None
+
+        short_ranges = [max(0.0, float(c["high"]) - float(c["low"])) for c in rows[-6:-1]]
+        long_ranges = [max(0.0, float(c["high"]) - float(c["low"])) for c in rows[-31:-6]]
+        short_med = cls._median(short_ranges)
+        long_med = cls._median(long_ranges)
+        compression_ratio = short_med / long_med if short_med is not None and long_med and long_med > 0 else None
+
+        if rvol is not None and range_ratio is not None and rvol >= 1.5 and range_ratio >= 1.2:
+            lifecycle = "awakening"
+        elif compression_ratio is not None and compression_ratio <= 0.70:
+            lifecycle = "compression"
+        elif range_ratio is not None and range_ratio >= 2.0:
+            lifecycle = "extended_activity"
+        else:
+            lifecycle = "normal"
+        return {
+            "ready": True,
+            "rvol": None if rvol is None else round(rvol, 4),
+            "range_ratio": None if range_ratio is None else round(range_ratio, 4),
+            "compression_ratio": None if compression_ratio is None else round(compression_ratio, 4),
+            "lifecycle": lifecycle,
+        }
+
+    @staticmethod
+    def _location(rows, structure, direction):
+        """5m location only. No OB/FVG/SMC/entry/target inference lives here."""
+        if not rows:
+            return {"ready": False}
+        price = fnum(rows[-1].get("close"))
+        atr = MarketStream._atr(rows)
+        hi = structure.get("last_swing_high") or {}
+        lo = structure.get("last_swing_low") or {}
+        hi_p, lo_p = fnum(hi.get("price")), fnum(lo.get("price"))
+        if price is None or atr is None or atr <= 0:
+            return {"ready": False, "price": price, "atr": atr}
+        dist_hi = abs(hi_p - price) / atr if hi_p is not None else None
+        dist_lo = abs(price - lo_p) / atr if lo_p is not None else None
+        nearest = min(v for v in (dist_hi, dist_lo) if v is not None) if any(v is not None for v in (dist_hi, dist_lo)) else None
+        phase = structure.get("phase", "unknown")
+        # Extension is intentionally conservative and symmetric. It only says
+        # whether price is far from the nearest confirmed structural reference.
+        extended = bool(nearest is not None and nearest > 3.0)
+        favorable_phase = phase in ("correction", "transition")
+        if direction == "neutral":
+            favorable_phase = False
+        return {
+            "ready": True,
+            "price": price,
+            "atr": round(float(atr), 10),
+            "phase": phase,
+            "distance_to_swing_high_atr": None if dist_hi is None else round(dist_hi, 4),
+            "distance_to_swing_low_atr": None if dist_lo is None else round(dist_lo, 4),
+            "nearest_structure_atr": None if nearest is None else round(nearest, 4),
+            "extended": extended,
+            "favorable_phase": favorable_phase,
+        }
+
+    @staticmethod
+    def _perp_participation(stream):
+        """Small participation check from already-collected linear trades/OI only."""
+        now_ms = int(time.time() * 1000)
+        cutoff = now_ms - 15 * 60_000
+        with stream.lock:
+            # Native MarketStream storage is tuple-based:
+            # trades=(timestamp_ms, side, price, qty), OI=(timestamp_ms, value).
+            trades = [tuple(t) for t in stream.trades]
+            oi = [tuple(o) for o in stream.oi_samples]
+        valid = []
+        for t in trades:
+            if len(t) < 4:
+                continue
+            try:
+                ts = int(t[0])
+            except (TypeError, ValueError):
+                continue
+            price, qty = fnum(t[2]), fnum(t[3])
+            if ts >= cutoff and price is not None and qty is not None and price > 0 and qty > 0:
+                valid.append((ts, price, qty))
+        turnover = sum(p * q for _, p, q in valid)
+        coverage = (max(x[0] for x in valid) - min(x[0] for x in valid)) if len(valid) >= 2 else 0
+        oi_change_pct = None
+        clean_oi = []
+        for x in oi:
+            if len(x) < 2:
+                continue
+            try:
+                ts = int(x[0])
+            except (TypeError, ValueError):
+                continue
+            value = fnum(x[1])
+            if ts >= cutoff and value is not None and value > 0:
+                clean_oi.append((ts, value))
+        clean_oi.sort(key=lambda item: item[0])
+        if len(clean_oi) >= 2 and clean_oi[0][1] > 0:
+            oi_change_pct = (clean_oi[-1][1] / clean_oi[0][1] - 1.0) * 100.0
+        return {
+            "ready": len(valid) >= 6 and coverage >= 7.5 * 60_000,
+            "trade_count_15m": len(valid),
+            "coverage_ms_15m": coverage,
+            "turnover_15m": round(turnover, 4),
+            "oi_change_pct_15m": None if oi_change_pct is None else round(oi_change_pct, 4),
+        }
+
+    @classmethod
+    def analyze_stream(cls, stream):
+        """Rank one *existing linear stream* without running the heavy Scan+ bundle."""
+        if stream.market != "linear":
+            raise ValueError("PreScan requires a linear MarketStream")
+        frames = {}
+        for tf in cls.TF_REQUIRED:
+            rows = cls._closed_rows(stream, tf)
+            enough = len(rows) >= cls.MIN_CANDLES[tf]
+            structure = stream._structure_metrics(rows) if enough else {"ready": False, "state": "insufficient_data", "phase": "unknown"}
+            frames[tf] = {"rows": rows, "structure": structure, "direction": cls._direction(structure)}
+
+        missing = [tf for tf in cls.TF_REQUIRED if not frames[tf]["structure"].get("ready")]
+        if missing:
+            return {
+                "engine_version": cls.VERSION,
+                "symbol": stream.symbol,
+                "status": "REJECT",
+                "eligible_for_scan_plus": False,
+                "priority": 0.0,
+                "reasons": ["insufficient_closed_structure:" + ",".join(missing)],
+            }
+
+        d60, d15 = frames["60"]["direction"], frames["15"]["direction"]
+        aligned = d60 == d15 and d60 in ("bullish", "bearish")
+        direction = d60 if aligned else "neutral"
+        loc = cls._location(frames["5"]["rows"], frames["5"]["structure"], direction)
+        activity5 = cls._activity(frames["5"]["rows"])
+        activity15 = cls._activity(frames["15"]["rows"])
+        perp = cls._perp_participation(stream)
+
+        reasons = []
+        if not aligned:
+            reasons.append("1h_15m_not_aligned")
+        if loc.get("extended"):
+            reasons.append("price_extended_from_structure")
+
+        # Ranking is intentionally NOT a trade probability. It only orders which
+        # candidates should consume the expensive full Scan+ next.
+        priority = 0.0
+        if aligned:
+            priority += 45.0
+        if loc.get("favorable_phase"):
+            priority += 15.0
+        if not loc.get("extended"):
+            priority += 10.0
+        if activity5.get("lifecycle") in ("awakening", "compression"):
+            priority += 12.0
+        if activity15.get("lifecycle") in ("awakening", "compression"):
+            priority += 8.0
+        if perp.get("ready"):
+            priority += 10.0
+        priority = round(min(priority, 100.0), 2)
+
+        hard_reject = not aligned or bool(loc.get("extended"))
+        if hard_reject:
+            status = "COLD"
+        elif priority >= 80:
+            status = "HOT"
+        elif priority >= 60:
+            status = "WARMING"
+        else:
+            status = "COLD"
+        if not reasons:
+            reasons.append("candidate_discovery_only")
+
+        return {
+            "engine_version": cls.VERSION,
+            "symbol": stream.symbol,
+            "status": status,
+            "eligible_for_scan_plus": status in ("HOT", "WARMING"),
+            "priority": priority,
+            "direction": {
+                "aligned": aligned,
+                "effective": direction,
+                "1h": d60,
+                "15m": d15,
+            },
+            "location_5m": loc,
+            "activity": {"5m": activity5, "15m": activity15},
+            "perp_participation": perp,
+            "reasons": reasons,
+            "guardrails": {
+                "trade_decision": False,
+                "uses_analysis_bundle": False,
+                "uses_spot": False,
+                "uses_elliott": False,
+                "uses_harmonics": False,
+                "uses_fib": False,
+                "uses_smc": False,
+                "uses_orderbook": False,
+                "uses_entry_stop_targets": False,
+            },
+        }
+
+    @classmethod
+    def rank_existing_streams(cls, manager, limit=8):
+        """Development hook only: rank streams already active in Scan+.
+
+        Universe acquisition is intentionally a separate next step; this method
+        never activates symbols and therefore cannot churn DynamicMarketManager.
+        """
+        with manager.lock:
+            linear_streams = [pair["linear"] for pair in manager.streams.values()]
+        rows = []
+        for stream in linear_streams:
+            try:
+                rows.append(cls.analyze_stream(stream))
+            except Exception as exc:
+                rows.append({
+                    "engine_version": cls.VERSION,
+                    "symbol": getattr(stream, "symbol", None),
+                    "status": "REJECT",
+                    "eligible_for_scan_plus": False,
+                    "priority": 0.0,
+                    "reasons": [f"prescan_error:{type(exc).__name__}"],
+                })
+        rows.sort(key=lambda x: (x.get("priority", 0.0), x.get("symbol") or ""), reverse=True)
+        return rows[:max(1, int(limit))]
+
+
+prescan_engine = PreScanEngine()
+
 # ============================================================
 # GLOBAL MANAGER
 # ============================================================
@@ -4991,3 +5283,210 @@ dynamic_manager = DynamicMarketManager(
     max_symbols=6,
     idle_timeout=3600,
 )
+
+# ============================================================
+# BYBIT WS PRESCAN PROBE -- ISOLATED, NO SCAN+ SIDE EFFECTS
+# ============================================================
+
+class BybitPreScanWSProbe:
+    """One-shot feasibility probe for a lightweight Bybit-linear PreScan feed.
+
+    This class is deliberately isolated from DynamicMarketManager.  It creates
+    its own short-lived public linear websocket, subscribes only to ticker and
+    5m/15m/1h kline topics, records snapshots, then closes the connection.
+    It never starts MarketStream, never consumes the manager's six symbol slots,
+    and never invokes Scan+ analysis.
+    """
+
+    VERSION = "bybit_prescan_ws_probe_v1"
+    DEFAULT_SYMBOLS = (
+        "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT",
+        "ADAUSDT", "LINKUSDT", "AVAXUSDT", "SUIUSDT", "ENAUSDT",
+        "TAOUSDT", "AAVEUSDT", "LTCUSDT", "BCHUSDT", "NEARUSDT",
+        "APTUSDT", "ARBUSDT", "OPUSDT", "WIFUSDT", "1000PEPEUSDT",
+    )
+
+    @staticmethod
+    def _topic_symbol(topic):
+        parts = str(topic or "").split(".")
+        if not parts:
+            return None
+        symbol = parts[-1].upper()
+        return symbol if SYMBOL_RE.match(symbol) else None
+
+    @classmethod
+    def run(cls, symbols=None, timeout=12.0):
+        requested = []
+        seen = set()
+        for raw in (symbols or cls.DEFAULT_SYMBOLS):
+            symbol = str(raw or "").upper().strip()
+            if not SYMBOL_RE.match(symbol) or symbol in seen:
+                continue
+            seen.add(symbol)
+            requested.append(symbol)
+        # A probe should stay intentionally small.  The production UniverseStream
+        # can be widened only after this proves the Render -> Bybit WS path.
+        requested = requested[:50]
+        timeout = max(3.0, min(float(timeout), 25.0))
+
+        started = time.time()
+        result = {
+            "probe_version": cls.VERSION,
+            "source": "bybit_public_linear_websocket",
+            "url": WS_URLS["linear"],
+            "requested_symbols": requested,
+            "requested_symbol_count": len(requested),
+            "connected": False,
+            "subscribe_ack": None,
+            "ticker_symbols": [],
+            "kline_symbols": {"5": [], "15": [], "60": []},
+            "ticker_samples": {},
+            "closed_kline_samples": {},
+            "messages": 0,
+            "errors": [],
+        }
+        if not requested:
+            result["status"] = "FAIL"
+            result["errors"].append("no_valid_symbols")
+            return result
+
+        ws = None
+        tickers = {}
+        klines = {"5": {}, "15": {}, "60": {}}
+        topics = []
+        for symbol in requested:
+            topics.append(f"tickers.{symbol}")
+            for interval in ("5", "15", "60"):
+                topics.append(f"kline.{interval}.{symbol}")
+
+        try:
+            ws = websocket.create_connection(WS_URLS["linear"], timeout=10)
+            ws.settimeout(1.0)
+            result["connected"] = True
+            result["connect_ms"] = round((time.time() - started) * 1000.0, 2)
+            ws.send(json.dumps({"op": "subscribe", "args": topics}))
+            deadline = time.time() + timeout
+            last_ping = time.time()
+            while time.time() < deadline:
+                if time.time() - last_ping >= 10.0:
+                    try:
+                        ws.send(json.dumps({"op": "ping"}))
+                    except Exception:
+                        pass
+                    last_ping = time.time()
+                try:
+                    raw = ws.recv()
+                except websocket.WebSocketTimeoutException:
+                    continue
+                if not raw:
+                    continue
+                result["messages"] += 1
+                try:
+                    msg = json.loads(raw)
+                except Exception as exc:
+                    result["errors"].append(f"json:{type(exc).__name__}")
+                    continue
+
+                if msg.get("op") == "subscribe":
+                    result["subscribe_ack"] = {
+                        "success": msg.get("success"),
+                        "ret_msg": msg.get("ret_msg") or msg.get("retMsg"),
+                    }
+                    if msg.get("success") is False:
+                        break
+                    continue
+
+                topic = str(msg.get("topic") or "")
+                symbol = cls._topic_symbol(topic)
+                data = msg.get("data")
+                if topic.startswith("tickers.") and symbol and isinstance(data, dict):
+                    current = tickers.setdefault(symbol, {})
+                    # Ticker is snapshot+delta: merge fields so a delta cannot erase
+                    # turnover/OI received in the initial snapshot.
+                    current.update(data)
+                    current["_ts"] = msg.get("ts")
+                elif topic.startswith("kline.") and symbol and isinstance(data, list):
+                    parts = topic.split(".")
+                    interval = parts[1] if len(parts) >= 3 else None
+                    if interval in klines and data:
+                        row = data[-1]
+                        if isinstance(row, dict):
+                            klines[interval][symbol] = dict(row)
+
+                # We do not need to burn the full timeout once every requested
+                # symbol has produced a ticker and all three kline topics.
+                if len(tickers) == len(requested) and all(len(x) == len(requested) for x in klines.values()):
+                    break
+        except Exception as exc:
+            result["errors"].append(f"{type(exc).__name__}: {exc}")
+        finally:
+            if ws is not None:
+                try:
+                    ws.close()
+                except Exception:
+                    pass
+
+        now_ms = int(time.time() * 1000)
+        result["elapsed_ms"] = round((time.time() - started) * 1000.0, 2)
+        result["ticker_symbols"] = sorted(tickers)
+        result["kline_symbols"] = {tf: sorted(rows) for tf, rows in klines.items()}
+
+        for symbol, row in tickers.items():
+            ts = row.get("_ts")
+            age_ms = now_ms - int(ts) if isinstance(ts, (int, float)) else None
+            result["ticker_samples"][symbol] = {
+                "lastPrice": row.get("lastPrice"),
+                "turnover24h": row.get("turnover24h"),
+                "volume24h": row.get("volume24h"),
+                "openInterest": row.get("openInterest"),
+                "openInterestValue": row.get("openInterestValue"),
+                "fundingRate": row.get("fundingRate"),
+                "bid1Price": row.get("bid1Price"),
+                "ask1Price": row.get("ask1Price"),
+                "age_ms": age_ms,
+            }
+
+        for tf, rows in klines.items():
+            for symbol, row in rows.items():
+                result["closed_kline_samples"].setdefault(symbol, {})[tf] = {
+                    "start": row.get("start"),
+                    "end": row.get("end"),
+                    "close": row.get("close"),
+                    "volume": row.get("volume"),
+                    "turnover": row.get("turnover"),
+                    "confirm": row.get("confirm"),
+                    "timestamp": row.get("timestamp"),
+                }
+
+        ticker_count = len(tickers)
+        kline_counts = {tf: len(rows) for tf, rows in klines.items()}
+        ticker_ratio = ticker_count / len(requested)
+        all_kline_ratio = min(kline_counts.values()) / len(requested)
+        ack_ok = result.get("subscribe_ack", {}).get("success") is True if isinstance(result.get("subscribe_ack"), dict) else False
+        if result["connected"] and ack_ok and ticker_ratio >= 0.8 and all_kline_ratio >= 0.8:
+            status = "PASS"
+        elif result["connected"] and (ticker_count > 0 or max(kline_counts.values()) > 0):
+            status = "PARTIAL"
+        else:
+            status = "FAIL"
+        result["status"] = status
+        result["coverage"] = {
+            "ticker": round(ticker_ratio, 4),
+            "kline_5": round(kline_counts["5"] / len(requested), 4),
+            "kline_15": round(kline_counts["15"] / len(requested), 4),
+            "kline_60": round(kline_counts["60"] / len(requested), 4),
+        }
+        result["guardrails"] = {
+            "uses_dynamic_manager": False,
+            "starts_market_stream": False,
+            "uses_rest": False,
+            "uses_spot": False,
+            "runs_scan_plus": False,
+            "trade_decision": False,
+        }
+        return result
+
+
+def run_bybit_prescan_ws_probe(symbols=None, timeout=12.0):
+    """Public callable for the HTTP layer: return JSON-serialisable probe data."""
+    return BybitPreScanWSProbe.run(symbols=symbols, timeout=timeout)
