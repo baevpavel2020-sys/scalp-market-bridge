@@ -192,3 +192,17 @@ default backend. No blind rewrite of the monolithic collector.
 - Structure, Fibonacci, Elliott and Harmonics are compared against the canonical legacy backend.
 - Added Core API boundary tests: unknown blocks cannot execute, profiles are mutation-safe, and cross-market symbols are rejected.
 - Analytical block requests are explicitly whitelisted.
+
+
+### Cycle 2 — step 4/4 complete: Core audit
+
+Audit findings:
+- Confirmed structural pivots are fractal-confirmed using left/right bars; the current bar is not treated as a confirmed pivot.
+- BOS/CHoCH references are restricted to structural levels before the current bar.
+- Fixed a real API edge case: an empty profiled block selection previously fell back to the full default block set because of truthiness-based defaulting. It now runs only the structural dependency when no optional reusable block was requested.
+- Explicit whitelist prevents unknown analytical block names from executing.
+- Profiles are deep-copied and cross-market symbols are rejected.
+- Legacy Crypto remains authoritative; no default behavioral switch was made.
+- Important limitation: current parity tests prove wrapper equivalence to the legacy implementation, not independent mathematical equivalence of a rewritten engine. The extraction remains deliberately staged.
+
+Cycle 2 status: CLOSED.
