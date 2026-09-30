@@ -5501,7 +5501,7 @@ def run_bybit_prescan_ws_probe(symbols=None, timeout=12.0):
 class OnDemandPreScanService:
     """Manual PreScan. No permanent universe collector and no Scan+ activation."""
 
-    VERSION = "prescan_v3_1_final_candidate"
+    VERSION = "prescan_v3_2_performance_audited"
     # Deliberately broad but static v1 universe. Invalid/delisted symbols are
     # isolated by recursive WS batches and cannot poison the whole run.
     DEFAULT_UNIVERSE = (
@@ -5553,6 +5553,7 @@ class OnDemandPreScanService:
     # consistent with the current Bybit perpetual ticker. Prevents e.g. wrong
     # contract/unit mappings from entering structural analysis.
     PRICE_SANITY_MAX_RATIO = 1.35
+    ANALYSIS_WORKERS = max(2, min(8, int(os.environ.get("PRESCAN_ANALYSIS_WORKERS", "6"))))
 
     @staticmethod
     def _clean_symbols(symbols):
@@ -6491,18 +6492,31 @@ class OnDemandPreScanService:
         analysis_t0 = time.time()
         candidates = []
         analysis_errors = {}
-        for s in ranked:
-            try:
-                candidate = cls._analyze_rows(s, tickers[s], history[s], sources[s])
-            except Exception as exc:
-                err = f"{type(exc).__name__}:{exc}"
-                analysis_errors[s] = err
-                candidate = {
-                    "engine_version": cls.VERSION, "symbol": s, "status": "REJECT",
-                    "priority": 0.0, "eligible_for_scan_plus": False,
-                    "reasons": ["analysis_error"], "history_sources": sources[s],
+
+        # Candidate calculations are independent. Run them concurrently so one
+        # symbol's canonical Structure pass does not block the other 29.
+        # The mathematical functions and candidate ranking are unchanged.
+        if ranked:
+            with ThreadPoolExecutor(max_workers=min(cls.ANALYSIS_WORKERS, len(ranked))) as analysis_pool:
+                future_symbol = {
+                    analysis_pool.submit(cls._analyze_rows, s, tickers[s], history[s], sources[s]): s
+                    for s in ranked
                 }
-            candidates.append(candidate)
+                by_symbol = {}
+                for future in concurrent.futures.as_completed(future_symbol):
+                    s = future_symbol[future]
+                    try:
+                        by_symbol[s] = future.result()
+                    except Exception as exc:
+                        err = f"{type(exc).__name__}:{exc}"
+                        analysis_errors[s] = err
+                        by_symbol[s] = {
+                            "engine_version": cls.VERSION, "symbol": s, "status": "REJECT",
+                            "priority": 0.0, "eligible_for_scan_plus": False,
+                            "reasons": ["analysis_error"], "history_sources": sources[s],
+                        }
+                # Preserve deterministic pre-sort ordering for exact behavioral parity.
+                candidates = [by_symbol[s] for s in ranked]
 
         analysis_ms = round((time.time() - analysis_t0) * 1000.0, 2)
         candidates.sort(
@@ -6540,6 +6554,7 @@ class OnDemandPreScanService:
                 "history_ms": history_ms,
                 "warm_cache": cls.warm_status(),
                 "analysis_ms": analysis_ms,
+                "analysis_workers": cls.ANALYSIS_WORKERS,
                 "history_workers": cls.HISTORY_WORKERS,
                 "history_global_timeout_s": cls.HISTORY_GLOBAL_TIMEOUT,
             },
