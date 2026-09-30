@@ -206,3 +206,18 @@ Audit findings:
 - Important limitation: current parity tests prove wrapper equivalence to the legacy implementation, not independent mathematical equivalence of a rewritten engine. The extraction remains deliberately staged.
 
 Cycle 2 status: CLOSED.
+
+
+## Cycle 3 — Stocks — step 1/4
+
+Implemented the first independent Stocks adapter layer:
+- Bybit xStocks loader remains the sole tokenized-stock market-data boundary.
+- Underlying quote data is optional and isolated; no fake gap is produced when it is unavailable.
+- Stock scan requests 5m/15m/1h/4h independently.
+- Regular US session high/low is calculated from timestamped xStock candles.
+- Gap context is calculated from underlying session open vs previous close when those fields are actually supplied.
+- Shared Structure/Fibonacci/Elliott/Harmonics are reused through AnalyticalEngine.
+- Crypto-only OI/funding/liquidation logic is not imported.
+- Execution context explicitly distinguishes 24/7 xStock trading from underlying regular sessions.
+
+This is intentionally not yet the final Stocks signal engine: underlying provider integration, gap/session evidence fusion, stock-specific candidate scoring, and execution/risk rules remain separate steps.
