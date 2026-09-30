@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from scan_plus.contracts import MarketAdapter
 from scan_plus.market_profiles import get_profile
 from scan_plus.priority_engine import resolve_priorities
-from scan_plus.core.analytical_engine import AnalyticalEngine, LegacyCryptoBackend
+from scan_plus.core.analytical_engine import AnalyticalEngine, CanonicalPricePatternBackend
 from scan_plus.core.sessions import active_sessions, session_overlap
 from scan_plus.core.session_levels import session_high_low
 from scan_plus.markets.forex.stooq import StooqFXLoader
