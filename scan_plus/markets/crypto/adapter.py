@@ -68,8 +68,16 @@ class CryptoMarketAdapter(MarketAdapter):
 
         timestamp = legacy.get("generated_at")
         try:
-            timestamp = int(float(timestamp))
-        except (TypeError, ValueError):
+            if isinstance(timestamp, str) and ("T" in timestamp or "-" in timestamp):
+                from datetime import datetime
+                timestamp = datetime.fromisoformat(timestamp.replace("Z","+00:00")).timestamp()
+            else:
+                timestamp = float(timestamp)
+                # Normalize Unix milliseconds to seconds.
+                if abs(timestamp) > 100_000_000_000:
+                    timestamp /= 1000.0
+            timestamp = int(timestamp)
+        except (TypeError, ValueError, OverflowError):
             timestamp = None
         if timestamp is not None:
             x25 = event_engine.get("x25_evidence") or {}
