@@ -5500,7 +5500,7 @@ def run_bybit_prescan_ws_probe(symbols=None, timeout=12.0):
 class OnDemandPreScanService:
     """Manual PreScan. No permanent universe collector and no Scan+ activation."""
 
-    VERSION = "prescan_v2_3_audited"
+    VERSION = "prescan_v3_0_final"
     # Deliberately broad but static v1 universe. Invalid/delisted symbols are
     # isolated by recursive WS batches and cannot poison the whole run.
     DEFAULT_UNIVERSE = (
@@ -5525,6 +5525,17 @@ class OnDemandPreScanService:
     _cache_lock = threading.RLock()
     _history_cache = {}
     _provider_route_cache = {}
+    _ticker_cache = None
+    _ticker_cache_at = 0.0
+    TICKER_CACHE_TTL = 90.0
+    WARM_CACHE_ENABLED = os.environ.get("PRESCAN_WARM_CACHE", "1").strip().lower() not in ("0","false","no")
+    WARM_CACHE_INTERVAL = 240.0
+    _warm_symbols = []
+    _warmer_lock = threading.Lock()
+    _warmer_started = False
+    _warmer_thread = None
+    _warm_status = {"started_at":None,"last_finished_at":None,"last_elapsed_ms":None,
+                    "last_success":0,"last_failed":0,"ready_symbols":0,"last_error":None}
 
     @staticmethod
     def _clean_symbols(symbols):
@@ -5884,7 +5895,7 @@ class OnDemandPreScanService:
     def _http_json(cls, url, timeout=4.0):
         cls._provider_throttle(url)
         req = urllib.request.Request(url, headers={
-            "User-Agent": "scalp-market-bridge/2.3",
+            "User-Agent": "scalp-market-bridge/3.0",
             "Accept": "application/json",
         })
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -6097,8 +6108,12 @@ class OnDemandPreScanService:
         with cls._cache_lock:
             for tf in ("5", "15", "60"):
                 cached = cls._history_cache.get((symbol, tf))
-                if cached and now - cached[0] <= cls.CACHE_TTL:
-                    cached_rows[tf] = [dict(x) for x in cached[1]]
+                if cached:
+                    rows, err = cls._validate_provider_rows(cached[1], tf)
+                    if not err and len(rows) >= PreScanEngine.MIN_CANDLES[tf]:
+                        cached_rows[tf] = [dict(x) for x in rows]
+                    else:
+                        complete_cache = False
                 else:
                     complete_cache = False
         if complete_cache:
@@ -6140,6 +6155,85 @@ class OnDemandPreScanService:
             for tf in ("5","15","60")
         }
 
+
+    @classmethod
+    def _cache_symbol_ready(cls, symbol):
+        with cls._cache_lock:
+            for tf in ("5","15","60"):
+                cached = cls._history_cache.get((symbol, tf))
+                if not cached:
+                    return False
+                rows, err = cls._validate_provider_rows(cached[1], tf)
+                if err or len(rows) < PreScanEngine.MIN_CANDLES[tf]:
+                    return False
+        return True
+
+    @classmethod
+    def _warm_once(cls):
+        started = time.time()
+        base = cls._clean_symbols(cls.DEFAULT_UNIVERSE)
+        try:
+            tickers, _, _ = cls._discover_tickers(base)
+            if tickers:
+                with cls._cache_lock:
+                    cls._ticker_cache = {k:dict(v) for k,v in tickers.items()}
+                    cls._ticker_cache_at = time.time()
+                universe = sorted(tickers, key=lambda s: fnum(tickers[s].get("turnover24h")) or 0.0,
+                                  reverse=True)[:cls.TOP_BY_TURNOVER]
+                cls._warm_symbols = list(universe)
+            else:
+                universe = list(cls._warm_symbols)
+        except Exception:
+            universe = list(cls._warm_symbols)
+        ok=failed=0
+        if universe:
+            with ThreadPoolExecutor(max_workers=min(cls.HISTORY_WORKERS,len(universe))) as ex:
+                fs={ex.submit(cls._fetch_history_bundle,s):s for s in universe}
+                done,pending=wait(list(fs),timeout=cls.HISTORY_GLOBAL_TIMEOUT)
+                for f in done:
+                    try:
+                        b,_,e=f.result()
+                        good=(not e and all(len(b.get(tf) or [])>=PreScanEngine.MIN_CANDLES[tf] for tf in ("5","15","60")))
+                        ok+=int(good); failed+=int(not good)
+                    except Exception:
+                        failed+=1
+                for f in pending:
+                    f.cancel(); failed+=1
+        with cls._warmer_lock:
+            cls._warm_status.update({"last_finished_at":time.time(),
+                "last_elapsed_ms":round((time.time()-started)*1000,2),
+                "last_success":ok,"last_failed":failed,
+                "ready_symbols":sum(1 for s in universe if cls._cache_symbol_ready(s))})
+        return ok,failed
+
+    @classmethod
+    def _warmer_loop(cls):
+        time.sleep(0.8)
+        while True:
+            try:
+                cls._warm_once()
+                with cls._warmer_lock: cls._warm_status["last_error"]=None
+            except Exception as exc:
+                with cls._warmer_lock: cls._warm_status["last_error"]=f"{type(exc).__name__}:{exc}"
+            time.sleep(cls.WARM_CACHE_INTERVAL)
+
+    @classmethod
+    def ensure_warmer(cls):
+        if not cls.WARM_CACHE_ENABLED:
+            return False
+        with cls._warmer_lock:
+            if cls._warmer_started and cls._warmer_thread and cls._warmer_thread.is_alive():
+                return True
+            cls._warmer_started=True
+            cls._warm_status["started_at"]=time.time()
+            th=threading.Thread(target=cls._warmer_loop,name="prescan-cache-warmer",daemon=True)
+            cls._warmer_thread=th; th.start()
+            return True
+
+    @classmethod
+    def warm_status(cls):
+        with cls._warmer_lock:
+            return dict(cls._warm_status)
 
     @staticmethod
     def _structure(rows):
@@ -6224,6 +6318,7 @@ class OnDemandPreScanService:
     @classmethod
     def run(cls, universe=None, top_n=8, shortlist=30):
         started = time.time()
+        cls.ensure_warmer()
         symbols = cls._clean_symbols(universe or cls.DEFAULT_UNIVERSE)
         top_n = max(1, min(int(top_n), 20))
         if not symbols:
@@ -6236,20 +6331,34 @@ class OnDemandPreScanService:
                                 "skipped_symbols": [], "skipped_symbol_count": 0,
                                 "history_errors": {}, "history_error_count": 0,
                                 "analysis_errors": {}, "analysis_error_count": 0},
-                "guardrails": {"runs_continuously": False, "uses_dynamic_manager": False,
+                "guardrails": {"runs_continuously": False, "candle_cache_runs_continuously": cls.WARM_CACHE_ENABLED, "uses_dynamic_manager": False,
                                "activates_scan_plus": False, "trade_decision": False,
                                "closed_history_only": True, "exchange_rest_used": True, "scan_plus_logic_unchanged": True},
             })
 
         shortlist = max(1, min(int(shortlist), cls.TOP_BY_TURNOVER, len(symbols)))
         stage_t0 = time.time()
-        tickers, ws_errors, skipped_symbols = cls._discover_tickers(symbols)
+        with cls._cache_lock:
+            ticker_cache_fresh = cls._ticker_cache is not None and time.time()-cls._ticker_cache_at <= cls.TICKER_CACHE_TTL
+            cached_tickers = {k:dict(v) for k,v in (cls._ticker_cache or {}).items()} if ticker_cache_fresh else {}
+        if cached_tickers:
+            tickers={s:cached_tickers[s] for s in symbols if s in cached_tickers}
+            ws_errors=[]; skipped_symbols=[s for s in symbols if s not in tickers]
+            ticker_source="background_cache"
+        else:
+            tickers, ws_errors, skipped_symbols = cls._discover_tickers(symbols)
+            ticker_source="bybit_ws_live"
+            if tickers:
+                with cls._cache_lock:
+                    cls._ticker_cache={k:dict(v) for k,v in tickers.items()}
+                    cls._ticker_cache_at=time.time()
         ticker_ms = round((time.time() - stage_t0) * 1000.0, 2)
         ranked = sorted(
             tickers,
             key=lambda s: fnum(tickers[s].get("turnover24h")) or 0.0,
             reverse=True
         )[:shortlist]
+        cls._warm_symbols = list(ranked)
 
         history = {s: {} for s in ranked}
         sources = {s: {} for s in ranked}
@@ -6344,7 +6453,9 @@ class OnDemandPreScanService:
             "scan_plus_candidates": [x["symbol"] for x in actionable],
             "profile": {
                 "ticker_ms": ticker_ms,
+                "ticker_source": ticker_source,
                 "history_ms": history_ms,
+                "warm_cache": cls.warm_status(),
                 "analysis_ms": analysis_ms,
                 "history_workers": cls.HISTORY_WORKERS,
                 "history_global_timeout_s": cls.HISTORY_GLOBAL_TIMEOUT,
@@ -6356,7 +6467,7 @@ class OnDemandPreScanService:
                 "analysis_errors": analysis_errors, "analysis_error_count": len(analysis_errors),
             },
             "guardrails": {
-                "runs_continuously": False, "uses_dynamic_manager": False,
+                "runs_continuously": False, "candle_cache_runs_continuously": cls.WARM_CACHE_ENABLED, "uses_dynamic_manager": False,
                 "activates_scan_plus": False, "trade_decision": False,
                 "closed_history_only": True, "exchange_rest_used": True, "scan_plus_logic_unchanged": True,
             },
