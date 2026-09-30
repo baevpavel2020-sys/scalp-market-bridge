@@ -10,6 +10,7 @@ from scan_plus.markets.crypto.manipulation_x25 import manipulation_x25_state
 from scan_plus.markets.crypto.post_pump import detect_post_pump_pipeline
 from scan_plus.markets.crypto.reversal_trigger import detect_bearish_reversal_trigger
 from scan_plus.markets.crypto.observables import extract_crypto_observables
+from scan_plus.markets.crypto.evidence_fusion import fuse_exhaustion, healthy_continuation_veto
 
 
 def _num(value):
@@ -104,14 +105,13 @@ def observe_crypto_events(scan: Mapping[str, Any], adaptive_abnormal=None):
     pipeline=detect_post_pump_pipeline(scan, observables, adaptive_abnormal=adaptive_abnormal)
     reversal=detect_bearish_reversal_trigger(scan)
 
-    # Upgrade only with explicitly confirmed detector stages. Execution trigger
-    # remains unavailable here, so observer integration still cannot trigger a trade.
+    # Fuse independent evidence channels instead of treating correlated clues as
+    # separate votes. One clue remains useful context but cannot ARM x25 by itself.
+    exhaustion=fuse_exhaustion(pipeline)
+    continuation=healthy_continuation_veto(observables,pipeline)
     x25["abnormal_pump"] = pipeline["abnormal_pump"]["confirmed"]
-    x25["exhaustion"] = bool(
-        pipeline["aggression_inefficiency"]["confirmed"]
-        or pipeline["absorption"]["confirmed"]
-        or pipeline["spot_perp_divergence"]["confirmed"]
-    )
+    x25["exhaustion"] = exhaustion["confirmed"]
+    x25["healthy_continuation"] = continuation["active"]
     x25["leverage_fragility"] = pipeline["leverage_fragility"]["confirmed"]
     x25["failed_acceptance"] = pipeline["failed_acceptance"]["confirmed"]
     best_trigger=reversal.get("best") or {}
@@ -123,6 +123,8 @@ def observe_crypto_events(scan: Mapping[str, Any], adaptive_abnormal=None):
         "mode":"observer",
         "affects_trade_decision":False,
         "post_pump_pipeline":pipeline,
+        "exhaustion_fusion":exhaustion,
+        "healthy_continuation_veto":continuation,
         "reversal_trigger":reversal,
         "events":[
             {"event_id":e.event_id,"family":e.family,"direction":e.direction,
