@@ -5501,7 +5501,7 @@ def run_bybit_prescan_ws_probe(symbols=None, timeout=12.0):
 class OnDemandPreScanService:
     """Manual PreScan. No permanent universe collector and no Scan+ activation."""
 
-    VERSION = "prescan_v3_2_performance_audited"
+    VERSION = "prescan_v3_2_final"
     # Deliberately broad but static v1 universe. Invalid/delisted symbols are
     # isolated by recursive WS batches and cannot poison the whole run.
     DEFAULT_UNIVERSE = (
@@ -6574,3 +6574,153 @@ class OnDemandPreScanService:
 
 def run_prescan(universe=None, top_n=8, shortlist=30):
     return OnDemandPreScanService.run(universe=universe, top_n=top_n, shortlist=shortlist)
+
+# ============================================================
+# SCAN ORCHESTRATOR V1
+# ============================================================
+
+class ScanOrchestrator:
+    """Routes user intent without changing PreScan or Scan+ internals.
+
+    Modes:
+      auto   -> PreScan -> eligible candidates -> full Scan+
+      single -> exactly one requested symbol -> full Scan+ (PreScan bypassed)
+      batch  -> explicit symbol list -> full Scan+ (PreScan bypassed)
+
+    Full Scan+ calls are intentionally sequential. DynamicMarketManager owns a
+    bounded six-symbol realtime pool; sequential orchestration avoids competing
+    cold-start websocket activations and preserves the manager's eviction rules.
+    """
+
+    VERSION = "scan_orchestrator_v1"
+    MAX_AUTO_SCAN_PLUS = 8
+    MAX_BATCH_SYMBOLS = 8
+
+    @staticmethod
+    def _compact_result(scan):
+        setup = scan.get("setup") or {}
+        return {
+            "symbol": scan.get("symbol"),
+            "engine_version": scan.get("engine_version"),
+            "price": scan.get("price"),
+            "setup_state": scan.get("setup_state"),
+            "trigger_state": scan.get("trigger_state"),
+            "trade_state": scan.get("trade_state"),
+            "direction": scan.get("direction"),
+            "context": scan.get("context"),
+            "trade_style": scan.get("trade_style"),
+            "block_class": scan.get("block_class"),
+            "block_reasons": scan.get("block_reasons") or [],
+            "retryable": scan.get("retryable"),
+            "status": scan.get("status") or {},
+            "setup": {
+                "side": setup.get("side"),
+                "entry": setup.get("entry"),
+                "entry_zone": setup.get("entry_zone"),
+                "stop": setup.get("stop"),
+                "targets": setup.get("targets"),
+                "risk_reward": setup.get("risk_reward"),
+                "failed_requirements": setup.get("failed_requirements") or [],
+            },
+        }
+
+    @classmethod
+    def _scan_symbols(cls, symbols):
+        results, errors = [], {}
+        for raw in symbols:
+            try:
+                symbol = dynamic_manager.normalize_symbol(raw)
+                scan = dynamic_manager.scan(symbol)
+                results.append(cls._compact_result(scan))
+            except Exception as exc:
+                symbol = str(raw).upper().strip()
+                errors[symbol] = f"{type(exc).__name__}:{exc}"
+        return results, errors
+
+    @classmethod
+    def single(cls, symbol):
+        started = time.time()
+        normalized = dynamic_manager.normalize_symbol(symbol)
+        results, errors = cls._scan_symbols([normalized])
+        return {
+            "orchestrator_version": cls.VERSION,
+            "mode": "single",
+            "prescan_used": False,
+            "requested_symbols": [normalized],
+            "scan_plus_count": len(results),
+            "scan_plus_results": results,
+            "errors": errors,
+            "elapsed_ms": round((time.time()-started)*1000.0, 2),
+        }
+
+    @classmethod
+    def batch(cls, symbols):
+        started = time.time()
+        cleaned = []
+        seen = set()
+        for raw in symbols or []:
+            symbol = dynamic_manager.normalize_symbol(raw)
+            if symbol not in seen:
+                seen.add(symbol)
+                cleaned.append(symbol)
+        if not cleaned:
+            raise ValueError("no symbols")
+        if len(cleaned) > cls.MAX_BATCH_SYMBOLS:
+            raise ValueError(f"too many symbols; max {cls.MAX_BATCH_SYMBOLS}")
+        results, errors = cls._scan_symbols(cleaned)
+        return {
+            "orchestrator_version": cls.VERSION,
+            "mode": "batch",
+            "prescan_used": False,
+            "requested_symbols": cleaned,
+            "scan_plus_count": len(results),
+            "scan_plus_results": results,
+            "errors": errors,
+            "elapsed_ms": round((time.time()-started)*1000.0, 2),
+        }
+
+    @classmethod
+    def auto(cls, top_n=8, shortlist=30):
+        started = time.time()
+        top_n = max(1, min(int(top_n), cls.MAX_AUTO_SCAN_PLUS))
+        prescan = run_prescan(top_n=top_n, shortlist=shortlist)
+        eligible = []
+        for candidate in prescan.get("candidates") or []:
+            if candidate.get("eligible_for_scan_plus") is True:
+                symbol = candidate.get("symbol")
+                if symbol and symbol not in eligible:
+                    eligible.append(symbol)
+            if len(eligible) >= top_n:
+                break
+
+        results, errors = cls._scan_symbols(eligible)
+        return {
+            "orchestrator_version": cls.VERSION,
+            "mode": "auto",
+            "prescan_used": True,
+            "prescan": {
+                "engine_version": prescan.get("engine_version"),
+                "status": prescan.get("status"),
+                "elapsed_ms": prescan.get("elapsed_ms"),
+                "scan_plus_candidates": prescan.get("scan_plus_candidates") or [],
+                "diagnostics": prescan.get("diagnostics") or {},
+            },
+            "selected_symbols": eligible,
+            "scan_plus_count": len(results),
+            "scan_plus_results": results,
+            "errors": errors,
+            "elapsed_ms": round((time.time()-started)*1000.0, 2),
+        }
+
+
+def run_scan_auto(top_n=8, shortlist=30):
+    return ScanOrchestrator.auto(top_n=top_n, shortlist=shortlist)
+
+
+def run_scan_single(symbol):
+    return ScanOrchestrator.single(symbol)
+
+
+def run_scan_batch(symbols):
+    return ScanOrchestrator.batch(symbols)
+
