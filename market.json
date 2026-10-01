@@ -3,24 +3,24 @@
   "source": "Bybit",
   "category": "linear",
   "symbol": "BTCUSDT",
-  "generated_at": "2026-10-01T16:21:59.077Z",
+  "generated_at": "2026-10-01T16:22:59.375Z",
   "price": {
-    "best_bid": 84269,
-    "best_ask": 84269.1,
-    "mid": 84269.05,
+    "best_bid": 84288.4,
+    "best_ask": 84288.5,
+    "mid": 84288.45,
     "spread": 0.10000000000582077
   },
   "orderbook": {
     "levels": 200,
-    "bid_qty": 71.74700000000001,
-    "ask_qty": 89.42600000000004,
-    "imbalance": -0.10968958820646153
+    "bid_qty": 75.455,
+    "ask_qty": 96.65599999999998,
+    "imbalance": -0.12318213246102794
   },
   "trades": {
     "count": 1000,
-    "taker_buy_qty": 5.683999999999998,
-    "taker_sell_qty": 17.432999999999964,
-    "delta_qty": -11.748999999999967,
-    "taker_imbalance": -0.5082406886706746
+    "taker_buy_qty": 7.62600000000002,
+    "taker_sell_qty": 15.324999999999932,
+    "delta_qty": -7.698999999999912,
+    "taker_imbalance": -0.33545379286305294
   }
 }
