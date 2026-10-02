@@ -7089,8 +7089,10 @@ class ScanJobManager:
                     cls._progress(jid,done=0,total=len(symbols),current_symbol=None,stage=f"EXTERNAL_{market.upper()}")
                     if not symbols:
                         external[market]={"status":"NO_SYMBOLS","results":[]}; continue
-                    if market!="stocks" and not adapter.configured:
-                        external[market]={"status":"DATA_BLOCK","reason":"TWELVE_DATA_API_KEY_not_configured","symbols":symbols}; continue
+                    # ExternalMarketAdapter now has a public Yahoo fallback for
+                    # FX/commodities when Twelve Data is not configured. Never block
+                    # those markets solely because TWELVE_DATA_API_KEY is absent.
+                    # The adapter itself reports PARTIAL/READY per symbol/timeframe.
                     # External providers are batch-oriented: one request per
                     # timeframe for the whole market is faster and avoids a request
                     # storm across 15 symbols x 5 timeframes.
