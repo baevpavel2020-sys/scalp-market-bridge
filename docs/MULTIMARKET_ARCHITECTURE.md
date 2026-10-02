@@ -533,3 +533,20 @@ Runtime surface:
 
 Live validation limitation:
 - The GitHub connector can read workflow/status data but this session has no workflow-dispatch operation, and the public Yahoo chart endpoint was not directly fetchable through the web fetcher. Therefore provider wiring is implemented and regression-covered, but no claim of a successful live Render run is made until the deployed endpoint is actually exercised.
+
+
+## MTF State Engine — implemented + audited
+
+Implemented:
+- Added explicit MTF State Engine separating higher-timeframe context from lower-timeframe execution state.
+- States are `bullish`, `bearish`, `transition` or `unknown`; no direction averaging into a score.
+- HTF bullish + LTF conflict is represented as `countertrend_correction` only when a directional LTF state is actually confirmed; an explicit neutral/transition LTF stays `context_only`.
+- A lower-timeframe conflict never becomes a confirmed reversal.
+- Reversal confirmation requires a medium/higher timeframe structural side change.
+- Transition remains pending confirmation.
+- Crypto exposes the new MTF state additively; the legacy Crypto decision remains authoritative.
+- Multi-market normalization preserves the MTF state.
+
+Audit fixes:
+- Raw confluence initially could override an explicit neutral/range/transition state. Fixed: explicit neutral/transition state wins.
+- Added regression tests for bullish HTF + bearish/neutral LTF, aligned trend, medium-timeframe reversal and unresolved transition.
