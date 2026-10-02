@@ -454,3 +454,20 @@ Immediate audit fixes:
 - Commodity provider remains explicitly injectable; no fake default feed is introduced.
 
 CI note: the repository's regression workflow exists, but this connector session does not expose a workflow-dispatch operation, and no CI status was returned for the latest commits. Therefore no claim of a green full CI run is made here.
+
+
+## Final Multi-Scan integration — step 2 + audit
+
+Implemented:
+- Added Decision Aggregator as a cross-market normalization layer.
+- It preserves each adapter's candidate/status/direction/situation and market-specific priority emphasis.
+- It produces an attention ordering for the operator without creating a universal trade score, probability or cross-market directional vote.
+- Crypto's legacy decision remains authoritative and is only normalized at the boundary.
+- Data errors remain isolated and visible.
+
+Immediate audit:
+- Initial integration accidentally invoked `scan_many()` twice, which would have duplicated provider calls and doubled load. Fixed by storing one result batch and passing that same batch to the aggregator.
+- Added regression tests for candidate preservation, Crypto legacy adaptation, error isolation and the no-universal-score policy.
+
+Current pipeline:
+Market adapters → native candidate → Decision Aggregator → operator-facing attention list.
