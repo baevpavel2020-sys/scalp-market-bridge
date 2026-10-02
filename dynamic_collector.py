@@ -6968,7 +6968,7 @@ class ScanJobManager:
     occurred when several scans were executed inside one HTTP request.
     """
 
-    VERSION = "scan_job_manager_v3_1_1_adaptive_warmup_fix"
+    VERSION = "scan_job_manager_v3_1_2_queue_guard"
     MAX_JOBS = 20
     JOB_TTL_SECONDS = 3600
     AUTO_WARMUP_SECONDS = max(30, min(90, int(os.environ.get("SCAN_AUTO_WARMUP_SECONDS", "40"))))
@@ -7004,6 +7004,17 @@ class ScanJobManager:
     def _new_job(cls, mode, payload):
         import uuid
         cls._cleanup()
+        # Do not enqueue duplicate auto scans while an equivalent one is queued/running.
+        # The worker is intentionally single-threaded; duplicate requests only create
+        # stale queue pressure and make the live endpoint look hung.
+        with cls._lock:
+            for existing in cls._jobs.values():
+                if (
+                    existing.get("mode") == mode
+                    and existing.get("state") in ("QUEUED", "RUNNING")
+                    and existing.get("payload") == payload
+                ):
+                    return existing["job_id"]
         jid = uuid.uuid4().hex[:16]
         now = time.time()
         job = {
@@ -7194,8 +7205,12 @@ class ScanJobManager:
             elif mode == "auto":
                 top_n = max(1, min(int(payload.get("top_n", 6)), ScanOrchestrator.MAX_AUTO_SCAN_PLUS))
                 shortlist = int(payload.get("shortlist", 30))
-                cls._progress(jid, done=0, total=None, current_symbol=None, stage="PRESCAN")
+                cls._progress(jid, done=0, total=None, current_symbol=None, stage="PRESCAN_START")
                 prescan = run_prescan(top_n=top_n, shortlist=shortlist)
+                cls._progress(
+                    jid, done=0, total=None, current_symbol=None,
+                    stage="PRESCAN_DONE"
+                )
                 eligible = []
                 for candidate in prescan.get("candidates") or []:
                     if candidate.get("eligible_for_scan_plus") is True:
