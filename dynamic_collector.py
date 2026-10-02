@@ -18,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 
 import websocket
 from pump_exhaustion import detect as detect_pump_exhaustion
+from scan_architecture import opportunity_state, data_quality, pipeline_contract
 
 
 # ============================================================
@@ -6852,6 +6853,8 @@ class ScanOrchestrator:
         return {
             "symbol": scan.get("symbol"),
             "manipulation": scan.get("manipulation") or {"status":"NO_DATA","signal":"NONE"},
+            "opportunity_state": opportunity_state(setup),
+            "architecture": pipeline_contract(),
             "engine_version": scan.get("engine_version"),
             "price": scan.get("price"),
             "setup_state": scan.get("setup_state"),
