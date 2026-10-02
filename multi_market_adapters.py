@@ -186,10 +186,12 @@ class ExternalMarketAdapter:
             try:
                 raw_dt=str(x["datetime"]).replace("Z","+00:00")
                 parsed=datetime.fromisoformat(raw_dt)
-                out.append({"start":int(parsed.timestamp()*1000),"datetime":x["datetime"],
-                            "open":float(x["open"]),"high":float(x["high"]),
-                            "low":float(x["low"]),"close":float(x["close"]),
-                            "volume":float(x.get("volume") or 0),"source":"twelve_data"})
+                out.append(_with_close_state({
+                    "start":int(parsed.timestamp()*1000),"datetime":x["datetime"],
+                    "open":float(x["open"]),"high":float(x["high"]),
+                    "low":float(x["low"]),"close":float(x["close"]),
+                    "volume":float(x.get("volume") or 0),"source":"twelve_data"
+                }, interval))
             except (KeyError,TypeError,ValueError,OverflowError):
                 pass
         return out
