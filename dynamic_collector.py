@@ -17,6 +17,7 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 
 import websocket
+from pump_exhaustion import detect as detect_pump_exhaustion
 
 
 # ============================================================
@@ -4782,7 +4783,8 @@ class DynamicMarketManager:
             "setup":{
                 **setup,
                 "failed_requirements":failed,
-            },
+            },,
+            "manipulation": detect_pump_exhaustion(linear, full.get("spot",{}))
         }
 
     def replay_no_lookahead(self, candles_by_tf, checkpoints=None):
@@ -6830,6 +6832,7 @@ class ScanOrchestrator:
         setup = scan.get("setup") or {}
         return {
             "symbol": scan.get("symbol"),
+            "manipulation": scan.get("manipulation") or {"status":"NO_DATA","signal":"NONE"},
             "engine_version": scan.get("engine_version"),
             "price": scan.get("price"),
             "setup_state": scan.get("setup_state"),
@@ -7250,6 +7253,41 @@ class ScanJobManager:
                     "errors": errors,
                     "elapsed_ms": round((time.time()-started)*1000.0, 2),
                 }
+            elif mode == "unified":
+                from multi_market_adapters import ExternalMarketAdapter, external_universe
+                started_unified=time.time()
+                top_n=max(1,min(int(payload.get("top_n",5)),ScanOrchestrator.MAX_AUTO_SCAN_PLUS))
+                shortlist=int(payload.get("shortlist",30))
+                markets=[str(x).strip().lower() for x in (payload.get("markets") or ["crypto","stocks","forex","commodities"]) if str(x).strip()]
+                cls._progress(jid,done=0,total=None,current_symbol=None,stage="UNIFIED_PRESCAN")
+                prescan=run_prescan(top_n=top_n,shortlist=shortlist)
+                eligible=[]
+                for candidate in prescan.get("candidates") or []:
+                    if candidate.get("eligible_for_scan_plus") is True:
+                        symbol=candidate.get("symbol")
+                        if symbol and symbol not in eligible: eligible.append(symbol)
+                    if len(eligible)>=top_n: break
+                activated,activation_errors,warm_elapsed=cls._activate_and_warm_auto(jid,eligible)
+                crypto_results,crypto_errors=cls._scan_symbols_progressive(jid,activated)
+                errors=dict(activation_errors); errors.update({f"crypto:{k}":v for k,v in crypto_errors.items()})
+                external={}
+                adapter=ExternalMarketAdapter(); universe=external_universe()
+                for market in ("stocks","forex","commodities"):
+                    if market not in markets: continue
+                    symbols=list(universe.get(market) or [])
+                    cls._progress(jid,done=0,total=len(symbols),current_symbol=None,stage=f"EXTERNAL_{market.upper()}")
+                    if not symbols:
+                        external[market]={"status":"NO_SYMBOLS","results":[]}; continue
+                    if market!="stocks" and not adapter.configured:
+                        external[market]={"status":"DATA_BLOCK","reason":"TWELVE_DATA_API_KEY_not_configured","symbols":symbols}; continue
+                    workers=min(3,len(symbols))
+                    with ThreadPoolExecutor(max_workers=workers) as pool:
+                        vals=list(pool.map(lambda s:adapter.scan(market,s),symbols))
+                    external[market]={"status":"PASS","count":len(vals),"results":vals}
+                result={"orchestrator_version":"scan_orchestrator_v3_unified_live","mode":"unified","prescan_used":True,"markets":markets,
+                        "crypto":{"selected_symbols":eligible,"activated_symbols":activated,"warmup_seconds":round(warm_elapsed,2),"scan_plus_count":len(crypto_results),"scan_plus_results":crypto_results},
+                        "external":external,"prescan":{"status":prescan.get("status"),"engine_version":prescan.get("engine_version"),"scan_plus_candidates":prescan.get("scan_plus_candidates") or [],"diagnostics":prescan.get("diagnostics") or {}},
+                        "errors":errors,"elapsed_ms":round((time.time()-started_unified)*1000.0,2)}
             else:
                 raise ValueError(f"unsupported job mode: {mode}")
 
@@ -7273,6 +7311,11 @@ class ScanJobManager:
         jid = cls._new_job("batch", {"symbols": list(symbols or [])})
         cls._executor.submit(cls._run_job, jid)
         return cls.status(jid)
+
+    @classmethod
+    def start_unified(cls, top_n=5, shortlist=30, markets=None):
+        payload={"top_n":int(top_n),"shortlist":int(shortlist),"markets":list(markets or ["crypto","stocks","forex","commodities"])}
+        jid=cls._new_job("unified",payload); cls._executor.submit(cls._run_job,jid); return cls.status(jid)
 
     @classmethod
     def start_auto(cls, top_n=6, shortlist=30):
@@ -7301,6 +7344,10 @@ class ScanJobManager:
                 "result": job.get("result"),
                 "error": job.get("error"),
             }
+
+
+def start_scan_unified_job(top_n=5, shortlist=30, markets=None):
+    return ScanJobManager.start_unified(top_n=top_n,shortlist=shortlist,markets=markets)
 
 
 def start_scan_auto_job(top_n=6, shortlist=30):
