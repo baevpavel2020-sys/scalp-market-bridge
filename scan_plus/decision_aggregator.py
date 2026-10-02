@@ -35,14 +35,16 @@ def _candidate(result: Mapping[str, Any]) -> Mapping[str, Any]:
 def normalize_result(result: Mapping[str, Any]) -> Mapping[str, Any]:
     market = str(result.get("market") or "").lower()
     symbol = str(result.get("symbol") or "").upper()
+    if not symbol:
+        raise ValueError("missing symbol provenance")
     if market not in MARKET_ORDER:
         raise ValueError(f"unknown market provenance: {market or 'missing'}")
     candidate = _candidate(result)
     status = str(candidate.get("status") or "WATCH").upper()
+    if status not in STATUS_ORDER:
+        raise ValueError(f"unknown candidate status: {status}")
     if status == "DATA_ERROR":
         raise ValueError("candidate cannot enter normalized results as DATA_ERROR")
-    if status not in STATUS_ORDER:
-        status = "WATCH"
     mtf = result.get("mtf_state") or candidate.get("mtf_state")
     mtf_gate_blocked=False
     if status in ("CANDIDATE","SETUP") and isinstance(mtf, Mapping):
