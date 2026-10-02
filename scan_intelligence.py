@@ -370,6 +370,7 @@ def enrich_external_result(result, market):
     )
     out = dict(result)
     out["regime"] = {tf_name: classify_regime(rows) for tf_name, rows in frames.items()}
+    out["analysis_policy"] = market_block_policy(market)
     out["mtf_matrix"] = mtf_state_matrix(tf)
     out["performance"] = performance_snapshot(frames)
     out["setup"] = {**setup, "opportunity_state": opportunity_state}
@@ -398,6 +399,7 @@ def enrich_scan(scan, market="crypto"):
         }
     if not out.get("regime"):
         out["regime"] = {"composite": classify_regime_from_analysis(out.get("timeframes") or {})}
+    out["analysis_policy"] = market_block_policy(market)
     out["mtf_matrix"] = mtf_state_matrix(out.get("timeframes") or {})
     out["performance"] = performance_snapshot(frames)
     out["intelligence_version"] = INTELLIGENCE_VERSION

@@ -87,5 +87,44 @@ class TestScanPlus(unittest.TestCase):
         self.assertTrue(first["alert"]["eligible"])
         self.assertFalse(second["alert"]["eligible"])
 
+    def test_market_policies_keep_crypto_flow_isolated(self):
+        from scan_architecture import market_block_policy
+        self.assertTrue(market_block_policy("crypto")["flow"])
+        for market in ("stocks","forex","commodities"):
+            self.assertFalse(market_block_policy(market)["flow"])
+            self.assertFalse(market_block_policy(market)["manipulation"])
+    def test_xstocks_is_24_7_secondary_market(self):
+        from multi_market_adapters import market_profile
+        self.assertEqual(market_profile("stocks")["session_model"], "secondary_market_24_7")
+
+    def test_market_policies_have_distinct_event_priority(self):
+        from scan_architecture import market_block_policy
+        self.assertEqual(market_block_policy("stocks")["event_priority"][0], "gap")
+        self.assertEqual(market_block_policy("forex")["event_priority"][0], "session_failed_high")
+        self.assertEqual(market_block_policy("commodities")["event_priority"][0], "failed_breakout")
+        self.assertEqual(market_block_policy("crypto")["event_priority"][0], "pump_exhaustion")
+    def test_external_limit_geometry_uses_shared_structure(self):
+        from market_event_engine import build_setup_plan
+        analysis = {}
+        for tf, state in (("1h","uptrend"),("15m","uptrend")):
+            analysis[tf] = {
+                "last_confirmed_close": 100.0,
+                "structure":{"state":state},
+                "technical":{"atr14":1.0},
+                "regime_levels":{"supports":[99.0,97.0],"resistances":[105.0,108.0]},
+            }
+        core={"analysis":analysis}
+        rows=[{"start":i,"open":100,"high":101,"low":99,"close":100,"volume":100} for i in range(40)]
+        event={"ready":True,"reference":{"atr":1.0},"events":[]}
+        plan=build_setup_plan("forex","EUR/USD",rows,event,analysis_core=core)
+        self.assertTrue(plan["tradeable"])
+        self.assertTrue(plan["limit_plan"]["eligible"])
+        self.assertGreaterEqual(plan["limit_plan"]["rr"], 2.0)
+        self.assertEqual(plan["limit_plan"]["side"], "BUY_LIMIT")
+    def test_manipulation_is_not_a_trade_direction_override(self):
+        from pump_exhaustion import detect
+        self.assertEqual(detect({}, {}).get("signal"), "NONE")
+
+
 if __name__=="__main__":
     unittest.main()
