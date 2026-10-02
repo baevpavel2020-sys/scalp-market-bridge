@@ -629,3 +629,20 @@ The aggregator intentionally places all markets into one Operator View, but it d
 
 ### Verification limitation
 The environment could not clone the GitHub repository directly because outbound DNS/network access was unavailable. GitHub currently reports no status checks for the branch head, so this audit does not claim a green CI run; the changes were reviewed against the repository source and regression tests were added for the discovered isolation boundaries.
+
+
+## Data/timestamp audit — follow-up fixes
+
+The second pass found a separate class of isolation risk: even with correct market routing, malformed, duplicated, out-of-order or wrong-symbol provider rows could enter the shared analytical core.
+
+### Fixed
+- Added `scan_plus.core.data_contract.normalize_candles`.
+- Stocks, Forex and Commodities now normalize and validate OHLC/timestamps before analytical processing.
+- Duplicate timestamps are removed deterministically and rows are sorted by timestamp.
+- Invalid OHLC rows are rejected rather than passed to shared structure/Fibonacci/Elliott logic.
+- Every accepted candle carries a market-local symbol/interval contract marker.
+- Stock underlying quotes now reject a provider payload whose symbol differs from the requested underlying.
+- Added regression tests for timestamp normalization, duplicate isolation, malformed OHLC rejection and underlying-symbol provenance.
+
+### Remaining provider-specific behavior
+4H FX/commodity bars are derived from provider 1H data on explicit UTC four-hour buckets. This is intentional and market-neutral; it must not be interpreted as an exchange-native 4H candle. The derived-bar path remains isolated to the owning adapter/provider and is not shared with Crypto or tokenized Stocks.
