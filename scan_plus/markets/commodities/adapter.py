@@ -75,6 +75,25 @@ class CommoditiesMarketAdapter(MarketAdapter):
         symbol=str(symbol).upper()
         profile=self.profile(symbol)
         frames={}
+        daily=self._load(symbol,"D")
+        daily_rows=self._normalize(daily.get("candles"))
+        daily_rows,daily_quality=normalize_candles(
+            daily_rows,symbol=symbol,interval="D",closed_only=True
+        )
+        frames["1d"]={
+            "bars":len(daily_rows),
+            "data_quality":daily_quality,
+            "provider_error":daily.get("error"),
+            "analysis":self.engine.analyze_profiled(daily_rows,profile.get("scan") or []),
+            "provider_context":{k:v for k,v in daily.items() if k!="candles"},
+            "commodity_context":build_commodity_context(
+                group=profile.get("group"),provider_context=daily
+            ),
+            "latest_timestamp_ms":max(
+                [r.get("timestamp_ms") for r in daily_rows if r.get("timestamp_ms") is not None],
+                default=None,
+            ),
+        }
         for label,interval in (("5m","5"),("15m","15"),("1h","60"),("4h","240")):
             data=self._load(symbol,interval)
             rows=self._normalize(data.get("candles"))
