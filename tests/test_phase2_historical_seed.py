@@ -75,15 +75,12 @@ class Phase2SeedTests(unittest.TestCase):
                     "candles": {"1": [candle]},
                 }, fh)
 
-            old_dir = os.environ.get("CANDLE_SEED_DIR")
-            os.environ["CANDLE_SEED_DIR"] = tmp
+            old_dir = dynamic_collector.CANDLE_SEED_DIR
+            dynamic_collector.CANDLE_SEED_DIR = tmp
             try:
                 stream = dynamic_collector.MarketStream("BTCUSDT", "linear")
             finally:
-                if old_dir is None:
-                    os.environ.pop("CANDLE_SEED_DIR", None)
-                else:
-                    os.environ["CANDLE_SEED_DIR"] = old_dir
+                dynamic_collector.CANDLE_SEED_DIR = old_dir
 
         self.assertEqual(len(stream.candles["1"]), 1)
         self.assertEqual(stream.candles["1"][0]["source"], "bybit_seed")
