@@ -14,6 +14,7 @@ from analytical_depth import analytical_depth_snapshot, apply_hard_invalidations
 from scan_architecture import market_block_policy
 from risk_engine import execution_cost, mae_mfe
 from scenario_engine import scenario_snapshot
+from context_engine import build_context
 
 INTELLIGENCE_VERSION = "intelligence_v3_opportunity_funnel"
 WATCHLIST_TTL = 6 * 3600
@@ -493,6 +494,7 @@ def enrich_scan(scan, market="crypto"):
     out["mtf_matrix"] = mtf_state_matrix(out.get("timeframes") or {})
     out["performance"] = performance_snapshot(frames)
     out["data_provenance"] = data_provenance(frames)
+    out["market_context"] = build_context(market, out.get("symbol"), frames)
     out["setup"] = dict(out.get("setup") or {})
     out["scenario"] = out["setup"].get("scenario") or scenario_snapshot({"analysis":out.get("timeframes") or {}}, out["setup"].get("event_basis") or [])
     out["execution_cost"] = _setup_cost(out["setup"],market)
