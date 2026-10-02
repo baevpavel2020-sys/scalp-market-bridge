@@ -11,6 +11,7 @@ import io
 import json
 import math
 import os
+import json
 import re
 import urllib.error
 import urllib.request
@@ -6754,7 +6755,7 @@ class ScanJobManager:
     occurred when several scans were executed inside one HTTP request.
     """
 
-    VERSION = "scan_job_manager_v3_1_2_queue_guard"
+    VERSION = "scan_job_manager_v3_2_0_redis_resume"
     MAX_JOBS = 20
     JOB_TTL_SECONDS = 3600
     AUTO_WARMUP_SECONDS = max(30, min(90, int(os.environ.get("SCAN_AUTO_WARMUP_SECONDS", "40"))))
@@ -6763,6 +6764,78 @@ class ScanJobManager:
     JOB_PRESCAN_TIMEOUT = max(20.0, min(60.0, float(os.environ.get("SCAN_PRESCAN_TIMEOUT", "45"))))
     _lock = threading.RLock()
     _jobs = {}
+    _resumed_jobs = set()
+    _redis_client = None
+    _redis_checked = False
+
+    @classmethod
+    def _redis(cls):
+        """Best-effort external job store. Memory remains the hot cache."""
+        if cls._redis_checked:
+            return cls._redis_client
+        cls._redis_checked = True
+        url = os.environ.get("SCAN_JOB_REDIS_URL") or os.environ.get("REDIS_URL")
+        if not url:
+            return None
+        try:
+            import redis
+            client = redis.Redis.from_url(
+                url, socket_connect_timeout=2, socket_timeout=3,
+                decode_responses=True,
+            )
+            client.ping()
+            cls._redis_client = client
+        except Exception as exc:
+            cls._redis_client = None
+            _scan_log("JOB_STORE_UNAVAILABLE", error=f"{type(exc).__name__}:{exc}")
+        return cls._redis_client
+
+    @classmethod
+    def _persist(cls, job):
+        client = cls._redis()
+        if client is None or not job:
+            return
+        try:
+            jid = job["job_id"]
+            client.setex(
+                f"scan:job:{jid}",
+                max(cls.JOB_TTL_SECONDS, 21600),
+                json.dumps(job, ensure_ascii=False, separators=(",", ":"), default=str),
+            )
+            if job.get("mode") == "unified":
+                client.set("scan:latest:unified", jid)
+        except Exception as exc:
+            _scan_log("JOB_STORE_WRITE_FAILED", job_id=(job or {}).get("job_id"),
+                      error=f"{type(exc).__name__}:{exc}")
+
+    @classmethod
+    def _load_persisted(cls, jid):
+        client = cls._redis()
+        if client is None:
+            return None
+        try:
+            raw = client.get(f"scan:job:{jid}")
+            if not raw:
+                return None
+            job = json.loads(raw)
+            with cls._lock:
+                cls._jobs[jid] = job
+            return job
+        except Exception as exc:
+            _scan_log("JOB_STORE_READ_FAILED", job_id=jid,
+                      error=f"{type(exc).__name__}:{exc}")
+            return None
+
+    @classmethod
+    def _executor_submit_resume(cls, jid):
+        """Resume an orphaned active job once per process, preserving job_id."""
+        with cls._lock:
+            if jid in cls._resumed_jobs:
+                return
+            cls._resumed_jobs.add(jid)
+        _scan_log("JOB_RESUMED_AFTER_RESTART", job_id=jid)
+        cls._executor.submit(cls._run_job, jid)
+
     _executor = concurrent.futures.ThreadPoolExecutor(
         max_workers=max(1, min(2, int(os.environ.get("SCAN_JOB_WORKERS", "1")))),
         thread_name_prefix="scan-job",
@@ -6820,6 +6893,7 @@ class ScanJobManager:
         }
         with cls._lock:
             cls._jobs[jid] = job
+        cls._persist(job)
         return jid
 
     @classmethod
@@ -6830,6 +6904,8 @@ class ScanJobManager:
                 return
             job.update(changes)
             job["updated_at"] = time.time()
+            snapshot = dict(job)
+        cls._persist(snapshot)
 
     @classmethod
     def _progress(cls, jid, done=None, total=None, current_symbol=None, stage=None, warmup_remaining=None):
@@ -6849,6 +6925,8 @@ class ScanJobManager:
                 p["warmup_remaining_seconds"] = max(0, int(warmup_remaining))
             job["progress"] = p
             job["updated_at"] = time.time()
+            snapshot = dict(job)
+        cls._persist(snapshot)
 
     @classmethod
     def _activate_and_warm_auto(cls, jid, symbols):
@@ -7174,7 +7252,18 @@ class ScanJobManager:
                 if job.get("mode") == "unified"
             ]
             if not jobs:
-                return None
+                client = cls._redis()
+                if client is not None:
+                    try:
+                        latest_id = client.get("scan:latest:unified")
+                    except Exception:
+                        latest_id = None
+                    if latest_id:
+                        loaded = cls._load_persisted(latest_id)
+                        if loaded:
+                            jobs = [loaded]
+                if not jobs:
+                    return None
             active = [
                 job for job in jobs
                 if job.get("state") in ("QUEUED", "RUNNING")
@@ -7190,6 +7279,18 @@ class ScanJobManager:
     @classmethod
     def status(cls, jid):
         cls._cleanup()
+        with cls._lock:
+            job = cls._jobs.get(jid)
+        loaded_from_store = False
+        if not job:
+            job = cls._load_persisted(jid)
+            loaded_from_store = bool(job)
+        if not job:
+            return None
+        # A process restart kills the old worker but not Redis. Re-run the same
+        # logical job under the same id when an active persisted job is recovered.
+        if loaded_from_store and job.get("state") in ("QUEUED", "RUNNING"):
+            cls._executor_submit_resume(jid)
         with cls._lock:
             job = cls._jobs.get(jid)
             if not job:
