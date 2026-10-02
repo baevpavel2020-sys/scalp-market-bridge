@@ -3,7 +3,12 @@ Multi-market external data adapters for Scan+.
 Provider: Twelve Data, configured with TWELVE_DATA_API_KEY.
 This layer is analysis-only until a broker/execution connector is explicitly added.
 """
-import json, os, urllib.parse, urllib.request
+import json, math, os, urllib.parse, urllib.request
+from datetime import datetime, timezone
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    ZoneInfo = None
 
 BASE="https://api.twelvedata.com"
 TF={"1m":"1min","5m":"5min","15m":"15min","1h":"1h","4h":"4h","1D":"1day"}
@@ -47,20 +52,24 @@ def market_profile(market):
     return dict(MARKET_PROFILES.get(str(market).lower(), {}))
 
 def session_context(market, now_epoch=None):
-    import datetime as _dt
-    ts=_dt.datetime.fromtimestamp(now_epoch or __import__("time").time(), _dt.timezone.utc)
-    hour=ts.hour + ts.minute/60.0
     market=str(market).lower()
-    if market=="forex":
-        if 0 <= hour < 8: session="ASIA"
-        elif 8 <= hour < 13: session="LONDON"
-        elif 13 <= hour < 17: session="LONDON_NY_OVERLAP"
-        elif 17 <= hour < 22: session="NEW_YORK"
+    now=float(now_epoch) if now_epoch is not None else __import__("time").time()
+    utc_dt=datetime.fromtimestamp(now, timezone.utc)
+    if market=="forex" and ZoneInfo:
+        london=utc_dt.astimezone(ZoneInfo("Europe/London"))
+        newyork=utc_dt.astimezone(ZoneInfo("America/New_York"))
+        # Session labels follow local market clocks, so DST is handled by IANA zones.
+        lh=london.hour + london.minute/60.0
+        nh=newyork.hour + newyork.minute/60.0
+        if 8 <= lh < 13 and 8 <= nh < 17: session="LONDON_NY_OVERLAP"
+        elif 8 <= lh < 17: session="LONDON"
+        elif 8 <= nh < 17: session="NEW_YORK"
+        elif 0 <= utc_dt.hour < 8: session="ASIA"
         else: session="ROLLOVER"
     elif market=="stocks": session="GLOBAL_XSTOCKS_24_7"
     elif market=="commodities": session="INSTRUMENT_SESSION"
     else: session="24_7"
-    return {"market":market,"session":session,"utc_hour":round(hour,2),"profile":market_profile(market)}
+    return {"market":market,"session":session,"utc_hour":round(utc_dt.hour+utc_dt.minute/60.0,2),"profile":market_profile(market)}
 
 class MarketProfileRouter:
     """Routes external-market data into the shared technical core without
@@ -164,8 +173,7 @@ class ExternalMarketAdapter:
             for tf in ("1D","4h","1h","15m","5m"):
                 try: frames[tf]=self.candles(symbol,tf)
                 except Exception as e: errors[tf]=f"{type(e).__name__}:{e}"
-            try: quote=self.quote(symbol)
-            except Exception as e: quote={"error":f"{type(e).__name__}:{e}"}
+            quote=None
             configured=self.configured
         ready=all(len(frames.get(tf,[]))>=50 for tf in ("1D","4h","1h","15m","5m"))
         return {"market":market,"symbol":symbol,"adapter_version":self.VERSION,"provider":provider,"configured":configured,"analysis_ready":ready,"execution_ready":False,"execution_reason":"external_market_execution_connector_not_configured","frames":frames,"quote":quote,"errors":errors,"capabilities":{"ohlcv":True,"realtime_quote":True,"orderbook":False,"open_interest":False,"funding":False,"spot_cvd":False},"market_profile":market_profile(market),"session_context":session_context(market)}
