@@ -386,15 +386,17 @@ class TestScanPlus(unittest.TestCase):
 
     def test_stage5_provider_rows_reject_nan_and_stale_data(self):
         from dynamic_collector import OnDemandPreScanService
+        import time
+        base = int(time.time() * 1000) - 900_000
         good = [{
-            "start": 1700000000000,
-            "end": 1700000299999,
+            "start": base + i * 300_000,
+            "end": base + i * 300_000 + 299_999,
             "open": 100,
             "high": 101,
             "low": 99,
             "close": 100.5,
             "volume": 100,
-        } for _ in range(120)]
+        } for i in range(120)]
         clean, err = OnDemandPreScanService._validate_provider_rows(good, "5")
         self.assertEqual(err, "stale_history")
         self.assertEqual(clean, [])
