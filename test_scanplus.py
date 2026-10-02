@@ -591,3 +591,34 @@ if __name__=="__main__":
         out=prescan_context("ETHUSDT",histories)
         self.assertEqual(out["authority"],"context_only_not_trade_direction")
         self.assertEqual(out["session_profile"]["session"],"24_7")
+
+    def test_v4_block3_elliott_recursive_contract_preserves_higher_degree(self):
+        from analytical_core_v4 import elliott_degree_contract
+        out=elliott_degree_contract({"major":{"ready":True,"primary":{"type":"impulse"}},
+                                     "minor":{"ready":True,"primary":{"type":"zigzag"}}},"minor")
+        self.assertEqual(out["higher_degree_anchor"],"major")
+        self.assertIn("higher_degree_count_survives",out["preservation_rule"])
+        self.assertIn("overlap_invalidates_standard_impulse",out["overlap_rule"])
+
+    def test_v4_block3_evidence_deduplicates_same_causal_confirmation(self):
+        from analytical_core_v4 import causal_evidence_contract
+        item={"source":"fibonacci","type":"target","value":{"direction":"bullish"},"derived_from":["structure","liquidity"]}
+        out=causal_evidence_contract({"confirmations":[item,{**item,"source":"harmonics"}]})
+        self.assertEqual(len(out["confirmations"]),1)
+        self.assertEqual(len(out["deduplicated_confirmations"]),1)
+        self.assertFalse(out["vote_counting"])
+
+    def test_v4_block3_harmonic_contract_declares_full_family_set(self):
+        from analytical_core_v4 import harmonic_contract
+        out=harmonic_contract({"ready":True,"confirmed":[],"developing":[]})
+        for name in ("Gartley","Bat","Alternate Bat","Butterfly","Crab","Deep Crab","Cypher","Shark","5-0","AB=CD","Extended AB=CD"):
+            self.assertIn(name,out["supported_families"])
+        self.assertEqual(out["role"],"PRZ_context_not_reversal_command")
+
+    def test_v4_block3_hard_invalidation_downgrades_funnel(self):
+        from scan_intelligence import opportunity_funnel
+        setup={"trade_state":"SETUP","direction":"bullish","trigger_confirmed":True,
+               "hard_invalidations":[{"source":"structure","reason":"wave_invalidation"}]}
+        out=opportunity_funnel(setup,True,True)
+        self.assertNotEqual(out["stage"],"TRADE")
+        self.assertFalse(out["trade_authorized"])
