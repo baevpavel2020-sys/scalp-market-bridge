@@ -4,6 +4,7 @@ Provider: Twelve Data, configured with TWELVE_DATA_API_KEY.
 This layer is analysis-only until a broker/execution connector is explicitly added.
 """
 import json, math, os, threading, time, urllib.parse, urllib.request
+from market_event_engine import detect_events, build_setup_plan
 from datetime import datetime, timezone
 try:
     from zoneinfo import ZoneInfo
@@ -184,7 +185,10 @@ class ExternalMarketAdapter:
             except Exception as e: quote={"error":f"{type(e).__name__}:{e}"}
             configured=self.configured
         ready=all(len(frames.get(tf,[]))>=50 for tf in ("1D","4h","1h","15m","5m"))
-        return {"market":market,"symbol":symbol,"adapter_version":self.VERSION,"provider":provider,"configured":configured,"analysis_ready":ready,"execution_ready":False,"execution_reason":"external_market_execution_connector_not_configured","frames":frames,"quote":quote,"errors":errors,"capabilities":{"ohlcv":True,"realtime_quote":True,"orderbook":False,"open_interest":False,"funding":False,"spot_cvd":False},"market_profile":market_profile(market),"session_context":session_context(market)}
+        event_frames={tf:frames[tf] for tf in ("1D","4h","1h","15m","5m") if frames.get(tf)}
+        events={tf:detect_events(market,symbol,rows) for tf,rows in event_frames.items()}
+        setup={tf:build_setup_plan(market,symbol,rows,events[tf]) for tf,rows in event_frames.items()}
+        return {"market":market,"symbol":symbol,"adapter_version":self.VERSION,"provider":provider,"configured":configured,"analysis_ready":ready,"execution_ready":False,"execution_reason":"external_market_execution_connector_not_configured","frames":frames,"quote":quote,"events":events,"setup_plans":setup,"errors":errors,"capabilities":{"ohlcv":True,"realtime_quote":True,"orderbook":False,"open_interest":False,"funding":False,"spot_cvd":False},"market_profile":market_profile(market),"session_context":session_context(market)}
 def external_universe():
     try: stocks=bybit_xstocks_top15()
     except Exception: stocks=list(DEFAULT_STOCKS)
