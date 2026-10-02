@@ -172,6 +172,110 @@ class ExternalMarketAdapter:
             except (KeyError,TypeError,ValueError): pass
         return out
     def quote(self,symbol): return self._get("/quote",{"symbol":symbol})
+
+    @staticmethod
+    def _parse_values(values):
+        out=[]
+        for x in values or []:
+            try:
+                raw_dt=str(x["datetime"]).replace("Z","+00:00")
+                parsed=datetime.fromisoformat(raw_dt)
+                out.append({"start":int(parsed.timestamp()*1000),"datetime":x["datetime"],
+                            "open":float(x["open"]),"high":float(x["high"]),
+                            "low":float(x["low"]),"close":float(x["close"]),
+                            "volume":float(x.get("volume") or 0),"source":"twelve_data"})
+            except (KeyError,TypeError,ValueError,OverflowError):
+                pass
+        return out
+
+    def candles_batch(self,symbols,interval,outputsize=500):
+        symbols=[str(s) for s in symbols if str(s)]
+        if not symbols:
+            return {}
+        data=self._get("/time_series",{
+            "symbol":",".join(symbols),
+            "interval":TF[interval],
+            "outputsize":min(int(outputsize),5000),
+            "order":"ASC","timezone":"UTC",
+        })
+        # Twelve Data returns a single response for one symbol and keyed
+        # responses for multi-symbol batch requests. Normalize both forms.
+        if isinstance(data.get("values"),list):
+            key=str((data.get("meta") or {}).get("symbol") or symbols[0])
+            return {key:self._parse_values(data.get("values"))}
+        result={}
+        for key,payload in (data.items() if isinstance(data,dict) else []):
+            if not isinstance(payload,dict) or key in ("status","message"):
+                continue
+            if isinstance(payload.get("values"),list):
+                result[str(key)]=self._parse_values(payload.get("values"))
+        return result
+
+    def quotes_batch(self,symbols):
+        symbols=[str(s) for s in symbols if str(s)]
+        if not symbols:
+            return {}
+        data=self._get("/quote",{"symbol":",".join(symbols)})
+        if isinstance(data,dict) and "symbol" in data:
+            return {str(data.get("symbol")):data}
+        return {str(k):v for k,v in data.items()
+                if isinstance(v,dict) and ("close" in v or "price" in v or "symbol" in v)}
+
+    def scan_many(self,market,symbols):
+        symbols=list(dict.fromkeys(str(s) for s in symbols if str(s)))
+        if not symbols:
+            return {}
+        if market=="stocks":
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(5,len(symbols))) as pool:
+                vals=list(pool.map(lambda s:self.scan(market,s),symbols))
+            return {v.get("symbol"):v for v in vals}
+
+        frames_by_symbol={s:{} for s in symbols}
+        errors_by_symbol={s:{} for s in symbols}
+        for tf in ("1D","4h","1h","15m","5m"):
+            try:
+                batch=self.candles_batch(symbols,tf)
+                for s in symbols:
+                    frames_by_symbol[s][tf]=batch.get(s,[])
+                    if not batch.get(s):
+                        errors_by_symbol[s][tf]="no_data_in_batch_response"
+            except Exception as exc:
+                for s in symbols:
+                    frames_by_symbol[s][tf]=[]
+                    errors_by_symbol[s][tf]=f"{type(exc).__name__}:{exc}"
+        try:
+            quotes=self.quotes_batch(symbols)
+        except Exception as exc:
+            quotes={}; quote_error=f"{type(exc).__name__}:{exc}"
+        results={}
+        for symbol in symbols:
+            frames=frames_by_symbol[symbol]
+            errors=errors_by_symbol[symbol]
+            quote=quotes.get(symbol)
+            if quote is None and "quote_error" in locals():
+                quote={"error":quote_error}
+            ready=all(len(frames.get(tf,[]))>=50 for tf in ("1D","4h","1h","15m","5m"))
+            event_frames={tf:frames[tf] for tf in ("1D","4h","1h","15m","5m") if frames.get(tf)}
+            events={tf:detect_events(market,symbol,rows) for tf,rows in event_frames.items()}
+            analysis_core=MarketProfileRouter.analyze(market,symbol,frames)
+            setup={tf:build_setup_plan(market,symbol,rows,events[tf],analysis_core=analysis_core) for tf,rows in event_frames.items()}
+            result={"market":market,"symbol":symbol,"adapter_version":self.VERSION,"provider":"twelve_data",
+                    "configured":self.configured,"analysis_ready":ready,"execution_ready":False,
+                    "execution_reason":"external_market_execution_connector_not_configured",
+                    "frames":frames,"quote":quote,"analysis_core":analysis_core,"events":events,
+                    "setup_plans":setup,"errors":errors,
+                    "capabilities":{"ohlcv":True,"realtime_quote":True,"orderbook":False,
+                                    "open_interest":False,"funding":False,"spot_cvd":False},
+                    "market_profile":market_profile(market),"session_context":session_context(market),
+                    "data_quality":{"state":"READY" if ready else "PARTIAL",
+                                    "missing_timeframes":[tf for tf in ("1D","4h","1h","15m","5m")
+                                                          if len(frames.get(tf,[]))<50]}}
+            enriched=enrich_external_result(result,market)
+            enriched.pop("frames",None)
+            if isinstance(enriched.get("analysis_core"),dict):
+                enriched["analysis_core"].pop("frames",None)
+            results[symbol]=enriched
+        return results
     def scan(self,market,symbol):
         frames={}; errors={}
         provider="twelve_data"
