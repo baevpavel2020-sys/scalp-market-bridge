@@ -84,7 +84,7 @@ def detect_events(market,symbol,rows):
  ev=_dedupe_events(ev)
  for event in ev:
   event["market"]=market; event["symbol"]=symbol; event["lifecycle"]=EVENT_LIFECYCLE.update(event,confirmed=True)["state"]
- return {"ready":True,"engine_version":VERSION,"market":market,"symbol":symbol,"events":ev,"session":sess,"reference":{"atr":atr,"range_high":hi,"range_low":lo},"event_lifecycle":EVENT_LIFECYCLE.snapshot()}
+ return {"ready":True,"engine_version":VERSION,"market":market,"symbol":symbol,"events":ev,"session":sess,"reference":{"atr":atr,"range_high":hi,"range_low":lo},"event_lifecycle":EVENT_LIFECYCLE.snapshot(market,symbol)}
 
 def _shared_direction(analysis_core):
     analysis=(analysis_core or {}).get("analysis") or {}
