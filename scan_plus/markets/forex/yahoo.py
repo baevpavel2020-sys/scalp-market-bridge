@@ -9,19 +9,32 @@ import requests
 
 def _aggregate_4h(rows):
     rows=sorted(rows,key=lambda x:int(x["timestamp_ms"]))
-    out=[]
-    bucket=None
+    buckets={}
     for row in rows:
-        start=int(row["timestamp_ms"]) // 14400000
-        if bucket is None or bucket["bucket"]!=start:
-            if bucket is not None: out.append(bucket["row"])
-            bucket={"bucket":start,"row":dict(row)}
-            bucket["row"]["timestamp_ms"]=start*14400000
-        else:
-            r=bucket["row"]
-            r["high"]=max(r["high"],row["high"]); r["low"]=min(r["low"],row["low"])
-            r["close"]=row["close"]; r["volume"]+=row.get("volume",0) or 0
-    if bucket is not None: out.append(bucket["row"])
+        ts=int(row["timestamp_ms"])
+        bucket_start=(ts//14400000)*14400000
+        buckets.setdefault(bucket_start,[]).append(row)
+
+    out=[]
+    for start, group in sorted(buckets.items()):
+        group=sorted(group,key=lambda x:int(x["timestamp_ms"]))
+        # A synthetic 4H candle is valid only when all four hourly bars are present
+        # and contiguous. Never manufacture a 4H bar across provider gaps.
+        expected=[start + i*3600000 for i in range(4)]
+        actual=[int(r["timestamp_ms"]) for r in group]
+        if actual != expected:
+            continue
+        first,last=group[0],group[-1]
+        out.append({
+            "timestamp_ms":start,
+            "open":first["open"],
+            "high":max(r["high"] for r in group),
+            "low":min(r["low"] for r in group),
+            "close":last["close"],
+            "volume":sum(r.get("volume",0) or 0 for r in group),
+            "source_bars":4,
+            "derived_4h":True,
+        })
     return out
 
 class YahooFXLoader:
