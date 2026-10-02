@@ -6,6 +6,7 @@ This layer is analysis-only until a broker/execution connector is explicitly add
 import concurrent.futures
 import json, math, os, threading, time, urllib.parse, urllib.request
 from market_event_engine import detect_events, build_setup_plan
+from scan_architecture import market_block_policy
 from scan_intelligence import enrich_external_result
 from datetime import datetime, timezone
 try:
@@ -46,18 +47,31 @@ def bybit_xstocks_top15():
         _XSTOCKS_CACHE["expires"]=now+_XSTOCKS_CACHE_TTL
     return top
 
+def _interval_ms(interval):
+    return {"1m":60000,"5m":300000,"15m":900000,"1h":3600000,"4h":14400000,"1D":86400000,
+            "1":"60000","5":"300000","15":"900000","60":"3600000","240":"14400000","D":"86400000"}.get(str(interval),900000)
+
+def _with_close_state(row, interval):
+    start=int(row["start"])
+    end=start+_interval_ms(interval)
+    return {**row,"end":end,"confirm":bool(end<=int(time.time()*1000))}
+
 def bybit_xstock_candles(symbol,interval="15",limit=500):
     data=_bybit_get("/v5/market/kline",{"category":"spot","symbol":symbol,"interval":interval,"limit":min(int(limit),1000)})
     out=[]
     for row in reversed(data.get("result",{}).get("list",[]) or []):
-        try: out.append({"start":int(row[0]),"open":float(row[1]),"high":float(row[2]),"low":float(row[3]),"close":float(row[4]),"volume":float(row[5]),"turnover":float(row[6]),"confirm":True,"source":"bybit_xstocks"})
+        try:
+            out.append(_with_close_state({
+                "start":int(row[0]),"open":float(row[1]),"high":float(row[2]),
+                "low":float(row[3]),"close":float(row[4]),"volume":float(row[5]),
+                "turnover":float(row[6]),"source":"bybit_xstocks"
+            }, interval))
         except (IndexError,TypeError,ValueError): pass
     return out
 
-
 MARKET_PROFILES = {
     "crypto": {"session_model":"24_7","volume_model":"exchange_volume","oi":True,"funding":True,"liquidations":True,"orderbook":True,"cvd":True,"execution":"exchange_perpetual_or_spot","special_events":["pump_exhaustion","short_squeeze","long_liquidation_cascade","liquidity_sweep"]},
-    "stocks": {"session_model":"exchange_session","volume_model":"exchange_volume","oi":False,"funding":False,"liquidations":False,"orderbook":True,"cvd":False,"execution":"bybit_xstock_spot","special_events":["gap","opening_range","session_liquidity","failed_breakout"]},
+    "stocks": {"session_model":"secondary_market_24_7","volume_model":"exchange_volume","oi":False,"funding":False,"liquidations":False,"orderbook":True,"cvd":False,"execution":"bybit_xstock_spot","special_events":["gap","opening_range","session_liquidity","failed_breakout"]},
     "forex": {"session_model":"asia_london_newyork","volume_model":"tick_or_provider_volume","oi":False,"funding":False,"liquidations":False,"orderbook":False,"cvd":False,"execution":"external_fx_broker_required","special_events":["session_liquidity","london_breakout","ny_reversal","failed_breakout"]},
     "commodities": {"session_model":"instrument_session","volume_model":"provider_volume","oi":False,"funding":False,"liquidations":False,"orderbook":False,"cvd":False,"execution":"external_commodity_broker_required","special_events":["session_liquidity","inventory_event","contract_rollover","failed_breakout"]},
 }
@@ -112,7 +126,9 @@ class MarketProfileRouter:
                 if not all(math.isfinite(x) for x in (o,h,l,cl)) or h<max(o,cl) or l>min(o,cl) or h<l:
                     continue
                 out.append({"start":int(ts or i),"open":o,"high":h,"low":l,"close":cl,
-                            "volume":float(row.get("volume") or 0),"confirm":True})
+                            "volume":float(row.get("volume") or 0),
+                            "confirm":bool(row.get("confirm",True)),
+                            "end":row.get("end")})
             except (KeyError,TypeError,ValueError,OverflowError):
                 continue
         return out
@@ -127,10 +143,11 @@ class MarketProfileRouter:
         for tf,rows in normalized.items():
             analysis[tf]=analyzer._analysis_bundle(rows) if rows else {"ready":False}
         profile=market_profile(market)
+        policy=market_block_policy(market)
         return {
             "router_version":cls.VERSION,
             "market":str(market).lower(),"symbol":symbol,
-            "profile":profile,"session_context":session_context(market),
+            "profile":profile,"policy":policy,"session_context":session_context(market),
             "analysis":analysis,
             "execution_ready":False,
             "execution_reason":profile.get("execution","external_execution_not_configured"),
@@ -161,40 +178,161 @@ class ExternalMarketAdapter:
         return data
     def candles(self,symbol,interval,outputsize=500):
         data=self._get("/time_series",{"symbol":symbol,"interval":TF[interval],"outputsize":min(int(outputsize),5000),"order":"ASC","timezone":"UTC"})
+        return self._parse_values(data.get("values",[]) or [], interval)
+    def quote(self,symbol): return self._get("/quote",{"symbol":symbol})
+
+    @staticmethod
+    def _parse_values(values, interval):
         out=[]
-        for x in data.get("values",[]) or []:
+        for x in values or []:
             try:
                 raw_dt=str(x["datetime"]).replace("Z","+00:00")
                 parsed=datetime.fromisoformat(raw_dt)
-                out.append({"start":int(parsed.timestamp()*1000),"datetime":x["datetime"],"open":float(x["open"]),"high":float(x["high"]),"low":float(x["low"]),"close":float(x["close"]),"volume":float(x.get("volume") or 0),"source":"twelve_data"})
-            except (KeyError,TypeError,ValueError): pass
+                out.append(_with_close_state({
+                    "start":int(parsed.timestamp()*1000),"datetime":x["datetime"],
+                    "open":float(x["open"]),"high":float(x["high"]),
+                    "low":float(x["low"]),"close":float(x["close"]),
+                    "volume":float(x.get("volume") or 0),"source":"twelve_data"
+                }, interval))
+            except (KeyError,TypeError,ValueError,OverflowError):
+                pass
         return out
-    def quote(self,symbol): return self._get("/quote",{"symbol":symbol})
+
+    def candles_batch(self,symbols,interval,outputsize=500):
+        symbols=[str(s) for s in symbols if str(s)]
+        if not symbols:
+            return {}
+        data=self._get("/time_series",{
+            "symbol":",".join(symbols),
+            "interval":TF[interval],
+            "outputsize":min(int(outputsize),5000),
+            "order":"ASC","timezone":"UTC",
+        })
+        # Twelve Data returns a single response for one symbol and keyed
+        # responses for multi-symbol batch requests. Normalize both forms.
+        if isinstance(data.get("values"),list):
+            key=str((data.get("meta") or {}).get("symbol") or symbols[0])
+            return {key:self._parse_values(data.get("values"),interval)}
+        result={}
+        for key,payload in (data.items() if isinstance(data,dict) else []):
+            if not isinstance(payload,dict) or key in ("status","message"):
+                continue
+            if isinstance(payload.get("values"),list):
+                result[str(key)]=self._parse_values(payload.get("values"),interval)
+        return result
+
+    def quotes_batch(self,symbols):
+        symbols=[str(s) for s in symbols if str(s)]
+        if not symbols:
+            return {}
+        data=self._get("/quote",{"symbol":",".join(symbols)})
+        if isinstance(data,dict) and "symbol" in data:
+            return {str(data.get("symbol")):data}
+        return {str(k):v for k,v in data.items()
+                if isinstance(v,dict) and ("close" in v or "price" in v or "symbol" in v)}
+
+    def scan_many(self,market,symbols):
+        symbols=list(dict.fromkeys(str(s) for s in symbols if str(s)))
+        if not symbols:
+            return {}
+        if market=="stocks":
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(5,len(symbols))) as pool:
+                vals=list(pool.map(lambda s:self.scan(market,s),symbols))
+            return {v.get("symbol"):v for v in vals}
+
+        frames_by_symbol={s:{} for s in symbols}
+        errors_by_symbol={s:{} for s in symbols}
+        for tf in ("1D","4h","1h","15m","5m"):
+            try:
+                batch=self.candles_batch(symbols,tf)
+                for s in symbols:
+                    frames_by_symbol[s][tf]=batch.get(s,[])
+                    if not batch.get(s):
+                        errors_by_symbol[s][tf]="no_data_in_batch_response"
+            except Exception as exc:
+                for s in symbols:
+                    frames_by_symbol[s][tf]=[]
+                    errors_by_symbol[s][tf]=f"{type(exc).__name__}:{exc}"
+        try:
+            quotes=self.quotes_batch(symbols)
+        except Exception as exc:
+            quotes={}; quote_error=f"{type(exc).__name__}:{exc}"
+        results={}
+        for symbol in symbols:
+            frames=frames_by_symbol[symbol]
+            errors=errors_by_symbol[symbol]
+            quote=quotes.get(symbol)
+            if quote is None and "quote_error" in locals():
+                quote={"error":quote_error}
+            ready=all(sum(1 for row in frames.get(tf,[]) if row.get("confirm",True))>=50 for tf in ("1D","4h","1h","15m","5m"))
+            event_frames={tf:frames[tf] for tf in ("1D","4h","1h","15m","5m") if frames.get(tf)}
+            events={tf:detect_events(market,symbol,rows) for tf,rows in event_frames.items()}
+            analysis_core=MarketProfileRouter.analyze(market,symbol,frames)
+            setup={tf:build_setup_plan(market,symbol,rows,events[tf],analysis_core=analysis_core) for tf,rows in event_frames.items()}
+            result={"market":market,"symbol":symbol,"adapter_version":self.VERSION,"provider":"twelve_data",
+                    "configured":self.configured,"analysis_ready":ready,"execution_ready":False,
+                    "execution_reason":"external_market_execution_connector_not_configured",
+                    "frames":frames,"quote":quote,"analysis_core":analysis_core,"events":events,
+                    "setup_plans":setup,"errors":errors,
+                    "capabilities":{"ohlcv":True,"realtime_quote":True,"orderbook":False,
+                                    "open_interest":False,"funding":False,"spot_cvd":False},
+                    "market_profile":market_profile(market),"session_context":session_context(market),
+                    "data_quality":{"state":"READY" if ready else "PARTIAL",
+                                    "missing_timeframes":[tf for tf in ("1D","4h","1h","15m","5m")
+                                                          if len(frames.get(tf,[]))<50]}}
+            enriched=enrich_external_result(result,market)
+            enriched.pop("frames",None)
+            if isinstance(enriched.get("analysis_core"),dict):
+                enriched["analysis_core"].pop("frames",None)
+            results[symbol]=enriched
+        return results
     def scan(self,market,symbol):
         frames={}; errors={}
         provider="twelve_data"
         if market=="stocks":
             provider="bybit_xstocks"
             tf_intervals={"1D":"D","4h":"240","1h":"60","15m":"15","5m":"5"}
-            for tf,itv in tf_intervals.items():
-                try: frames[tf]=bybit_xstock_candles(symbol,itv)
-                except Exception as e: errors[tf]=f"{type(e).__name__}:{e}"
+            def fetch_xstock(item):
+                tf,itv=item
+                try:
+                    return tf, bybit_xstock_candles(symbol,itv), None
+                except Exception as e:
+                    return tf, [], f"{type(e).__name__}:{e}"
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+                for tf, rows, err in pool.map(fetch_xstock, tuple(tf_intervals.items())):
+                    frames[tf]=rows
+                    if err:
+                        errors[tf]=err
             quote=None
             configured=True
         else:
-            for tf in ("1D","4h","1h","15m","5m"):
-                try: frames[tf]=self.candles(symbol,tf)
-                except Exception as e: errors[tf]=f"{type(e).__name__}:{e}"
+            # Fetch analytical horizons concurrently per symbol. The unified
+            # scanner already caps symbol concurrency, preventing unbounded fan-out.
+            def fetch_tf(tf):
+                try:
+                    return tf, self.candles(symbol,tf), None
+                except Exception as e:
+                    return tf, [], f"{type(e).__name__}:{e}"
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+                for tf, rows, err in pool.map(fetch_tf, ("1D","4h","1h","15m","5m")):
+                    frames[tf]=rows
+                    if err:
+                        errors[tf]=err
             try: quote=self.quote(symbol)
             except Exception as e: quote={"error":f"{type(e).__name__}:{e}"}
             configured=self.configured
         ready=all(len(frames.get(tf,[]))>=50 for tf in ("1D","4h","1h","15m","5m"))
         event_frames={tf:frames[tf] for tf in ("1D","4h","1h","15m","5m") if frames.get(tf)}
         events={tf:detect_events(market,symbol,rows) for tf,rows in event_frames.items()}
-        setup={tf:build_setup_plan(market,symbol,rows,events[tf]) for tf,rows in event_frames.items()}
         analysis_core=MarketProfileRouter.analyze(market,symbol,frames)
-        result={"market":market,"symbol":symbol,"adapter_version":self.VERSION,"provider":provider,"configured":configured,"analysis_ready":ready,"execution_ready":False,"execution_reason":"external_market_execution_connector_not_configured","frames":frames,"quote":quote,"analysis_core":analysis_core,"events":events,"setup_plans":setup,"errors":errors,"capabilities":{"ohlcv":True,"realtime_quote":True,"orderbook":False,"open_interest":False,"funding":False,"spot_cvd":False},"market_profile":market_profile(market),"session_context":session_context(market),"data_quality":{"state":"READY" if ready else "PARTIAL","missing_timeframes":[tf for tf in ("1D","4h","1h","15m","5m") if len(frames.get(tf,[]))<50]}}
-        return enrich_external_result(result,market)
+        setup={tf:build_setup_plan(market,symbol,rows,events[tf],analysis_core=analysis_core) for tf,rows in event_frames.items()}
+        result={"market":market,"symbol":symbol,"adapter_version":self.VERSION,"provider":provider,"configured":configured,"analysis_ready":ready,"execution_ready":False,"execution_reason":"external_market_execution_connector_not_configured","frames":frames,"quote":quote,"analysis_core":analysis_core,"events":events,"setup_plans":setup,"errors":errors,"capabilities":{"ohlcv":True,"realtime_quote":True,"orderbook":False,"open_interest":False,"funding":False,"spot_cvd":False},"market_profile":market_profile(market),"session_context":session_context(market),"data_quality":{"state":"READY" if ready else "PARTIAL","missing_timeframes":[tf for tf in ("1D","4h","1h","15m","5m") if sum(1 for row in frames.get(tf,[]) if row.get("confirm",True))<50]}}
+        enriched=enrich_external_result(result,market)
+        # Raw OHLCV is an internal input, not part of the public unified payload.
+        enriched.pop("frames",None)
+        if isinstance(enriched.get("analysis_core"),dict):
+            enriched["analysis_core"].pop("frames",None)
+        return enriched
 def external_universe():
     try:
         stocks = bybit_xstocks_top15()
