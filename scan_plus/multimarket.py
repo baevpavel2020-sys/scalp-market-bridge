@@ -101,11 +101,12 @@ class MultiMarketOrchestrator:
         if not parsed.get("markets") and not parsed.get("symbols"):
             return {"status":"INVALID_COMMAND","reason":"no_market_or_symbol"}
         requests=self.build_requests(parsed)
+        results=self.scan_many(requests)
         return {
             "status":"OK",
             "command":str(command),
             "parsed":parsed,
             "requests":requests,
-            "results":self.scan_many(requests),
-            "decision":aggregate_results(self.scan_many(requests)),
+            "results":results,
+            "decision":aggregate_results(results),
         }
