@@ -33,6 +33,7 @@ def build_stock_candidate(*, frames, gap, underlying, ticker, session=None):
     gap_info=classify_gap(gap or {})
     structure,structure_tf=_structure_state(frames or {})
     fibo,fibo_tf=_shared_confirmation(frames or {},structure_tf)
+    mtf_state=build_mtf_state(frames or {})
     underlying_ready=bool(underlying and underlying.get("ready",True))
     price=float((ticker or {}).get("last_price") or 0)
 
@@ -47,6 +48,8 @@ def build_stock_candidate(*, frames, gap, underlying, ticker, session=None):
 
     blockers=[]
     if structure=="unknown": blockers.append("structure_unavailable")
+    if mtf_state["regime"] in ("countertrend_correction","context_only","unresolved"):
+        blockers.append("mtf_execution_not_aligned")
     if not fibo: blockers.append("fibonacci_or_elliott_unavailable")
     if not underlying_ready: blockers.append("underlying_unavailable")
 
@@ -75,5 +78,6 @@ def build_stock_candidate(*, frames, gap, underlying, ticker, session=None):
         "direction":direction,
         "price":price,
         "evidence":evidence,
+        "mtf_state":mtf_state,
         "decision_rule":"gap/session context cannot override unresolved structure",
     }
