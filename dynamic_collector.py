@@ -6843,6 +6843,7 @@ class ScanOrchestrator:
             "block_reasons": scan.get("block_reasons") or [],
             "retryable": scan.get("retryable"),
             "status": scan.get("status") or {},
+            "data_quality": scan.get("data_quality") or {},
             "setup": {
                 "side": setup.get("side"),
                 "entry": setup.get("entry"),
@@ -6851,7 +6852,6 @@ class ScanOrchestrator:
                 "targets": setup.get("targets"),
                 "risk_reward": setup.get("risk_reward"),
                 "limit_plan": setup.get("limit_plan") or {"eligible":False,"state":"NO_LIMIT_PLAN"},
-                "data_quality": scan.get("data_quality") or {},
                 "failed_requirements": setup.get("failed_requirements") or [],
             },
         }
