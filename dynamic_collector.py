@@ -7315,7 +7315,11 @@ class ScanJobManager:
                     workers=min(3,len(symbols))
                     with ThreadPoolExecutor(max_workers=workers) as pool:
                         vals=list(pool.map(lambda s:adapter.scan(market,s),symbols))
-                    external[market]={"status":"PASS","count":len(vals),"results":vals}
+                    rankings=relative_strength(vals,market_key=market)
+                    rank_map={x["symbol"]:x for x in rankings}
+                    for item in vals:
+                        item["relative_strength"]=rank_map.get(item.get("symbol"))
+                    external[market]={"status":"PASS","count":len(vals),"results":vals,"relative_strength_ranking":rankings}
                 result={"orchestrator_version":"scan_orchestrator_v3_unified_live","mode":"unified","prescan_used":True,"markets":markets,
                         "crypto":{"selected_symbols":eligible,"activated_symbols":activated,"warmup_seconds":round(warm_elapsed,2),"scan_plus_count":len(crypto_results),"scan_plus_results":crypto_results},
                         "external":external,"prescan":{"status":prescan.get("status"),"engine_version":prescan.get("engine_version"),"scan_plus_candidates":prescan.get("scan_plus_candidates") or [],"diagnostics":prescan.get("diagnostics") or {}},
