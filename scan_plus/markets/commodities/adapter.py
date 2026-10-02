@@ -19,7 +19,10 @@ class CommoditiesMarketAdapter(MarketAdapter):
     market="commodities"
 
     def __init__(self, loader, engine=None):
-        self.loader=loader if isinstance(loader,CommodityLoader) else CommodityLoader(loader)
+        if isinstance(loader, CommodityLoader) or callable(getattr(loader, "candles", None)):
+            self.loader=loader
+        else:
+            self.loader=CommodityLoader(loader)
         self.engine=engine or AnalyticalEngine(CanonicalPricePatternBackend())
 
     def default_symbols(self, limit=9):
