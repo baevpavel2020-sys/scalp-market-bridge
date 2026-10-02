@@ -39,10 +39,12 @@ def normalize_result(result: Mapping[str, Any]) -> Mapping[str, Any]:
     if status not in STATUS_ORDER:
         status = "WATCH"
     mtf = result.get("mtf_state") or candidate.get("mtf_state")
+    mtf_gate_blocked=False
     if status in ("CANDIDATE","SETUP") and isinstance(mtf, Mapping):
         regime=str(mtf.get("regime") or "")
         if regime in ("countertrend_correction","context_only","unresolved") and not mtf.get("reversal_confirmed"):
             status="WATCH"
+            mtf_gate_blocked=True
 
     priority = result.get("priority") or {}
     weights = priority.get("weights") if isinstance(priority, Mapping) else {}
@@ -65,6 +67,7 @@ def normalize_result(result: Mapping[str, Any]) -> Mapping[str, Any]:
         "direction": str(candidate.get("direction") or "unknown").lower(),
         "situation": candidate.get("situation"),
         "reason": candidate.get("reason"),
+        "mtf_gate_blocked": mtf_gate_blocked,
         "mtf_state": mtf,
         "priority": {
             "top_weight": top_weight,
