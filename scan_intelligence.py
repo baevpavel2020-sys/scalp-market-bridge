@@ -13,6 +13,7 @@ import time
 from analytical_depth import analytical_depth_snapshot, apply_hard_invalidations
 from scan_architecture import market_block_policy
 from risk_engine import mae_mfe
+from scenario_engine import scenario_snapshot
 
 INTELLIGENCE_VERSION = "intelligence_v2"
 WATCHLIST_TTL = 6 * 3600
