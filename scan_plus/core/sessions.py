@@ -23,7 +23,9 @@ def _aware_utc(value=None):
     if value is None: return datetime.now(timezone.utc)
     if isinstance(value,datetime):
         return (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
-    return datetime.fromtimestamp(float(value),tz=timezone.utc)
+    numeric=float(value)
+    if abs(numeric)>1e11: numeric/=1000.0
+    return datetime.fromtimestamp(numeric,tz=timezone.utc)
 
 def active_sessions(market,timestamp=None):
     dt=_aware_utc(timestamp)
