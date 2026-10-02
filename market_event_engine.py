@@ -1,5 +1,20 @@
 """Market-specific event engine for Scan+ external markets."""
 import math,time
+
+def _dedupe_events(events):
+    groups={}
+    priority={"failed_breakout":4,"failed_breakdown":4,"gap":3,"range_expansion":2,"volume_expansion":1}
+    for e in events or []:
+        d=e.get("direction"); level=e.get("level")
+        key=(e.get("event"),d,level) if d is None and level is None else (d,level)
+        if key not in groups:
+            groups[key]=dict(e); continue
+        cur=groups[key]
+        if priority.get(e.get("event"),0)>priority.get(cur.get("event"),0):
+            primary=dict(e); primary["confirmations"]=list(cur.get("confirmations") or [])+[cur.get("event")]; groups[key]=primary
+        else:
+            cur.setdefault("confirmations",[]).append(e.get("event"))
+    return list(groups.values())
 from datetime import datetime,timezone
 try:
  from zoneinfo import ZoneInfo
@@ -62,6 +77,7 @@ def detect_events(market,symbol,rows):
  elif market=="commodities":
   ev += [{"event":"instrument_session_context","confidence":"context"},{"event":"inventory_event","confidence":"unavailable","status":"fundamental_calendar_not_connected"},{"event":"contract_rollover","confidence":"unavailable","status":"contract_calendar_not_connected"}]
  elif market=="stocks":ev.append({"event":"xstock_24_7_context","confidence":"context"})
+ ev=_dedupe_events(ev)
  return {"ready":True,"engine_version":VERSION,"market":market,"symbol":symbol,"events":ev,"session":sess,"reference":{"atr":atr,"range_high":hi,"range_low":lo}}
 
 def build_setup_plan(market,symbol,rows,result):
