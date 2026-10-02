@@ -165,6 +165,7 @@ def enrich_external_result(result, market):
 
 def enrich_scan(scan, market="crypto"):
     out=dict(scan or {})
+    out.pop("_frames",None)
     frames=(scan.get("_frames") or {})
     if frames:
         out["regime"]={tf:classify_regime(rows) for tf,rows in frames.items() if tf in ("1D","D","4h","240","1h","60","15m","15","5m","5")}
