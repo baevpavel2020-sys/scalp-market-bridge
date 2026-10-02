@@ -4,7 +4,7 @@ This detector is deliberately conservative: it identifies a reversal *candidate*
 but never turns a pump into an immediate short. Entry remains gated by structure
 break + retest in the main execution engine.
 """
-VERSION = "pump_exhaustion_v2"
+VERSION = "liquidity_leverage_event_engine_v3"
 
 def _num(x):
     try:
@@ -39,9 +39,14 @@ def detect(linear, spot=None):
     oi5 = _num(o5.get("change_pct"))
     funding = _num(linear.get("funding_rate"))
     imbalance = _num(book.get("imbalance_50"))
+    liquidations = linear.get("liquidations") or linear.get("liquidation") or {}
+    liq_long = _num(liquidations.get("long_usd") or liquidations.get("long"))
+    liq_short = _num(liquidations.get("short_usd") or liquidations.get("short"))
 
     reasons = []
     score = 0
+    events = []
+    diagnostics = {"spot_perp_driver":"unknown","leverage_fragility":"unknown","exhaustion":"unconfirmed","liquidation_context":"unavailable"}
 
     # Abnormal pump proxy. Normalized delta is used instead of raw volume so the
     # detector is not biased by instrument size.
@@ -52,8 +57,19 @@ def detect(linear, spot=None):
         and delta5 >= 0.25
     )
     if not pump:
+        # The unified engine also reports leverage/liquidation events even when
+        # there is no pump-exhaustion candidate.
+        if liq_long is not None or liq_short is not None:
+            diagnostics["liquidation_context"] = {"long_usd":liq_long,"short_usd":liq_short}
+            if liq_long and liq_short is not None and liq_long > max(liq_short * 2, 1):
+                events.append({"type":"LONG_LIQUIDATION_CASCADE","direction":"bearish","confirmed":True})
+            elif liq_short and liq_long is not None and liq_short > max(liq_long * 2, 1):
+                events.append({"type":"SHORT_SQUEEZE","direction":"bullish","confirmed":True})
         return {
-            "status": "NO_EVENT",
+            "engine_version": VERSION,
+            "events": events,
+            "diagnostics": diagnostics,
+            "status": "NO_EVENT" if not events else "EVENT_CONTEXT",
             "signal": "NONE",
             "score": 0,
             "direction": "NONE",
@@ -82,15 +98,18 @@ def detect(linear, spot=None):
         and spot_price5 < price5 * 0.40
     )
     if perp_led:
+        diagnostics["spot_perp_driver"] = "perp"
         score += 2
         reasons.append("perp_led_move_spot_not_confirming")
     elif spot_confirming:
+        diagnostics["spot_perp_driver"] = "spot_confirmed"
         reasons.append("spot_confirms_move")
     else:
         reasons.append("spot_confirmation_unavailable")
 
     # Leverage fragility: rising OI and/or crowded positive funding into the pump.
     if oi5 is not None and o5.get("usable") and oi5 >= 1:
+        diagnostics["leverage_fragility"] = "rising_oi"
         score += 1
         reasons.append("open_interest_rising_into_move")
     if funding is not None and funding >= 0.0005:
@@ -111,10 +130,18 @@ def detect(linear, spot=None):
         and delta1 < delta5 * 0.65
     ):
         score += 1
+        diagnostics["exhaustion"] = "aggression_efficiency_falling"
         reasons.append("aggression_efficiency_falling")
 
+    if liq_long is not None or liq_short is not None:
+        diagnostics["liquidation_context"] = {"long_usd":liq_long,"short_usd":liq_short}
     if score >= 4:
+        events.append({"type":"PUMP_EXHAUSTION","direction":"bearish","score":score,"confirmed":False,
+                       "next_confirmation":"structure_break_then_failed_retest"})
         return {
+            "engine_version": VERSION,
+            "events": events,
+            "diagnostics": diagnostics,
             "status": "DETECTED",
             "signal": "SHORT_CANDIDATE",
             "score": score,
@@ -125,6 +152,9 @@ def detect(linear, spot=None):
         }
 
     return {
+        "engine_version": VERSION,
+        "events": events,
+        "diagnostics": diagnostics,
         "status": "WATCH",
         "signal": "PUMP_NO_EXHAUSTION_CONFIRMATION",
         "score": score,
