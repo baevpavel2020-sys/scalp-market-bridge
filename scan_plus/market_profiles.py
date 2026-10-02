@@ -15,7 +15,7 @@ MARKET_PROFILES = {
         "scan": ["structure_mtf", "fibonacci", "underlying_volume", "gaps", "elliott", "harmonics"],
     },
     "forex": {
-        "prescan": ["volatility", "active_session", "session_high_low", "structure", "relative_strength"],
+        "prescan": ["volatility", "active_session", "session_high_low", "structure"],
         "scan": ["structure_mtf", "elliott", "fibonacci", "session_liquidity", "harmonics"],
     },
     "commodities": {
@@ -34,7 +34,7 @@ INSTRUMENT_PROFILES = {
     "MSFT": {"market":"stocks","group":"tech_equity","product":"bybit_tokenized_stock"},
     "EURUSD": {
         "market":"forex","group":"major_fx","product":"spot_fx",
-        "prescan":["active_session","volatility","session_high_low","structure","relative_strength"],
+        "prescan":["active_session","volatility","session_high_low","structure"],
         "scan":["structure_mtf","elliott","session_liquidity","fibonacci","harmonics"],
     },
     "GBPUSD": {"market":"forex","group":"major_fx","product":"spot_fx"},
@@ -42,7 +42,7 @@ INSTRUMENT_PROFILES = {
 
     "XAUUSD": {
         "market": "commodities", "group": "metals",
-        "prescan": ["volatility", "active_session", "session_high_low", "structure", "liquidity"],
+        "prescan": ["volatility", "structure", "liquidity"],
         "scan": ["structure_mtf", "liquidity", "fibonacci", "elliott", "usd_yields_context", "harmonics"],
     },
     "XAGUSD": {
