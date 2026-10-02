@@ -5513,7 +5513,7 @@ def run_bybit_prescan_ws_probe(symbols=None, timeout=12.0):
 class OnDemandPreScanService:
     """Manual PreScan. No permanent universe collector and no Scan+ activation."""
 
-    VERSION = "prescan_v3_2_final"
+    VERSION = "prescan_v3_3_ranked_fallback"
     # Deliberately broad but static v1 universe. Invalid/delisted symbols are
     # isolated by recursive WS batches and cannot poison the whole run.
     DEFAULT_UNIVERSE = (
@@ -6539,12 +6539,38 @@ class OnDemandPreScanService:
             ),
             reverse=True
         )
-        actionable = [x for x in candidates if x.get("eligible_for_scan_plus")][:top_n]
+        # Tier A keeps the original strict HOT/WARMING gate. Tier B fills
+        # unused deep-analysis slots from the best structurally analyzable COLD
+        # markets. This is candidate discovery only: fallback never upgrades a
+        # COLD market into a signal and full Scan+ retains all execution gates.
+        strict_actionable = [x for x in candidates if x.get("eligible_for_scan_plus")][:top_n]
         analyzable = [
             x for x in candidates
-            if "analysis_error" not in x.get("reasons", [])
+            if x.get("status") != "REJECT"
+            and "analysis_error" not in x.get("reasons", [])
             and not any(str(r).startswith("history_unavailable:") for r in x.get("reasons", []))
         ]
+        actionable = list(strict_actionable)
+        selected_symbols = {x.get("symbol") for x in actionable}
+        for candidate in analyzable:
+            if len(actionable) >= top_n:
+                break
+            if candidate.get("symbol") in selected_symbols:
+                continue
+            # Preserve market-quality hard rejection. Misalignment/extension are
+            # allowed only as discovery context and remain visible to Scan+.
+            if "market_quality_reject" in (candidate.get("reasons") or []):
+                continue
+            fallback = dict(candidate)
+            fallback["selection_tier"] = "RANKED_FALLBACK"
+            fallback["eligible_for_scan_plus"] = False
+            fallback["selection_reason"] = "fill_unused_deep_scan_capacity"
+            actionable.append(fallback)
+            selected_symbols.add(fallback.get("symbol"))
+        for candidate in actionable:
+            if "selection_tier" not in candidate:
+                candidate["selection_tier"] = "STRICT"
+                candidate["selection_reason"] = "prescan_hot_or_warming"
 
         if not tickers:
             overall = "FAIL"
@@ -6560,6 +6586,7 @@ class OnDemandPreScanService:
             "elapsed_ms": round((time.time() - started) * 1000.0, 2),
             "candidates": candidates[:top_n],
             "scan_plus_candidates": [x["symbol"] for x in actionable],
+            "scan_plus_selection": [{"symbol":x.get("symbol"),"tier":x.get("selection_tier"),"priority":x.get("priority"),"status":x.get("status"),"reason":x.get("selection_reason")} for x in actionable],
             "profile": {
                 "ticker_ms": ticker_ms,
                 "ticker_source": ticker_source,
@@ -7136,17 +7163,19 @@ class ScanJobManager:
             elif mode == "unified":
                 from multi_market_adapters import ExternalMarketAdapter, external_universe
                 started_unified=time.time()
-                top_n=max(1,min(int(payload.get("top_n",5)),ScanOrchestrator.MAX_AUTO_SCAN_PLUS))
+                top_n=max(1,min(int(payload.get("top_n",8)),ScanOrchestrator.MAX_AUTO_SCAN_PLUS))
                 shortlist=int(payload.get("shortlist",30))
                 markets=[str(x).strip().lower() for x in (payload.get("markets") or ["crypto","stocks"]) if str(x).strip()]
                 cls._progress(jid,done=0,total=None,current_symbol=None,stage="UNIFIED_PRESCAN")
                 prescan=run_prescan(top_n=top_n,shortlist=shortlist)
+                # PreScan owns ranking/strict-vs-fallback selection. Do not
+                # reconstruct the old HOT/WARMING-only gate here.
                 eligible=[]
-                for candidate in prescan.get("candidates") or []:
-                    if candidate.get("eligible_for_scan_plus") is True:
-                        symbol=candidate.get("symbol")
-                        if symbol and symbol not in eligible: eligible.append(symbol)
-                    if len(eligible)>=top_n: break
+                for symbol in prescan.get("scan_plus_candidates") or []:
+                    if symbol and symbol not in eligible:
+                        eligible.append(symbol)
+                    if len(eligible)>=top_n:
+                        break
                 activated,activation_errors,warm_elapsed=cls._activate_and_warm_auto(jid,eligible)
                 crypto_results,crypto_errors=cls._scan_symbols_progressive(jid,activated)
                 crypto_rankings=relative_strength(crypto_results,market_key="crypto")
@@ -7188,7 +7217,7 @@ class ScanJobManager:
                     external[market]={"status":"PASS","count":len(vals),"results":vals,"relative_strength_ranking":rankings}
                 result={"orchestrator_version":"scan_orchestrator_v3_unified_live","mode":"unified","prescan_used":True,"markets":markets,
                         "crypto":{"selected_symbols":eligible,"activated_symbols":activated,"warmup_seconds":round(warm_elapsed,2),"scan_plus_count":len(crypto_results),"scan_plus_results":crypto_results},
-                        "external":external,"prescan":{"status":prescan.get("status"),"engine_version":prescan.get("engine_version"),"scan_plus_candidates":prescan.get("scan_plus_candidates") or [],"diagnostics":prescan.get("diagnostics") or {}},
+                        "external":external,"prescan":{"status":prescan.get("status"),"engine_version":prescan.get("engine_version"),"scan_plus_candidates":prescan.get("scan_plus_candidates") or [],"scan_plus_selection":prescan.get("scan_plus_selection") or [],"diagnostics":prescan.get("diagnostics") or {}},
                         "errors":errors,"elapsed_ms":round((time.time()-started_unified)*1000.0,2)}
             else:
                 raise ValueError(f"unsupported job mode: {mode}")
@@ -7209,7 +7238,7 @@ class ScanJobManager:
         return cls.status(jid)
 
     @classmethod
-    def start_unified(cls, top_n=5, shortlist=30, markets=None):
+    def start_unified(cls, top_n=8, shortlist=30, markets=None):
         payload = {
             "top_n": int(top_n),
             "shortlist": int(shortlist),
