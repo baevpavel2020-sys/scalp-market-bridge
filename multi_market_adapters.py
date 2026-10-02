@@ -6,6 +6,7 @@ This layer is analysis-only until a broker/execution connector is explicitly add
 import concurrent.futures
 import json, math, os, threading, time, urllib.parse, urllib.request
 from market_event_engine import detect_events, build_setup_plan
+from scan_architecture import market_block_policy
 from scan_intelligence import enrich_external_result
 from datetime import datetime, timezone
 try:
@@ -127,10 +128,11 @@ class MarketProfileRouter:
         for tf,rows in normalized.items():
             analysis[tf]=analyzer._analysis_bundle(rows) if rows else {"ready":False}
         profile=market_profile(market)
+        policy=market_block_policy(market)
         return {
             "router_version":cls.VERSION,
             "market":str(market).lower(),"symbol":symbol,
-            "profile":profile,"session_context":session_context(market),
+            "profile":profile,"policy":policy,"session_context":session_context(market),
             "analysis":analysis,
             "execution_ready":False,
             "execution_reason":profile.get("execution","external_execution_not_configured"),
@@ -182,19 +184,33 @@ class ExternalMarketAdapter:
             quote=None
             configured=True
         else:
-            for tf in ("1D","4h","1h","15m","5m"):
-                try: frames[tf]=self.candles(symbol,tf)
-                except Exception as e: errors[tf]=f"{type(e).__name__}:{e}"
+            # Fetch analytical horizons concurrently per symbol. The unified
+            # scanner already caps symbol concurrency, preventing unbounded fan-out.
+            def fetch_tf(tf):
+                try:
+                    return tf, self.candles(symbol,tf), None
+                except Exception as e:
+                    return tf, [], f"{type(e).__name__}:{e}"
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+                for tf, rows, err in pool.map(fetch_tf, ("1D","4h","1h","15m","5m")):
+                    frames[tf]=rows
+                    if err:
+                        errors[tf]=err
             try: quote=self.quote(symbol)
             except Exception as e: quote={"error":f"{type(e).__name__}:{e}"}
             configured=self.configured
         ready=all(len(frames.get(tf,[]))>=50 for tf in ("1D","4h","1h","15m","5m"))
         event_frames={tf:frames[tf] for tf in ("1D","4h","1h","15m","5m") if frames.get(tf)}
         events={tf:detect_events(market,symbol,rows) for tf,rows in event_frames.items()}
-        setup={tf:build_setup_plan(market,symbol,rows,events[tf]) for tf,rows in event_frames.items()}
         analysis_core=MarketProfileRouter.analyze(market,symbol,frames)
+        setup={tf:build_setup_plan(market,symbol,rows,events[tf],analysis_core=analysis_core) for tf,rows in event_frames.items()}
         result={"market":market,"symbol":symbol,"adapter_version":self.VERSION,"provider":provider,"configured":configured,"analysis_ready":ready,"execution_ready":False,"execution_reason":"external_market_execution_connector_not_configured","frames":frames,"quote":quote,"analysis_core":analysis_core,"events":events,"setup_plans":setup,"errors":errors,"capabilities":{"ohlcv":True,"realtime_quote":True,"orderbook":False,"open_interest":False,"funding":False,"spot_cvd":False},"market_profile":market_profile(market),"session_context":session_context(market),"data_quality":{"state":"READY" if ready else "PARTIAL","missing_timeframes":[tf for tf in ("1D","4h","1h","15m","5m") if len(frames.get(tf,[]))<50]}}
-        return enrich_external_result(result,market)
+        enriched=enrich_external_result(result,market)
+        # Raw OHLCV is an internal input, not part of the public unified payload.
+        enriched.pop("frames",None)
+        if isinstance(enriched.get("analysis_core"),dict):
+            enriched["analysis_core"].pop("frames",None)
+        return enriched
 def external_universe():
     try:
         stocks = bybit_xstocks_top15()
