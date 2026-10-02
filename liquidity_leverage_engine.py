@@ -50,7 +50,7 @@ def _classify_move(price5,delta5,spot_price5,spot_delta5,oi5,funding,liq_long,li
  return "unclassified"
 
 def detect(linear,spot=None,analysis=None,now=None):
- now=now or time.time(); spot=spot or {}; flow=linear.get("flow") or {}; sf=spot.get("flow") or {}
+ now=now or time.time(); linear=linear or {}; spot=spot or {}; flow=linear.get("flow") or {}; sf=spot.get("flow") or {}
  f1=flow.get("1m") or {}; f5=flow.get("5m") or {}; sf5=sf.get("5m") or {}
  p5=_n(f5.get("price_change_pct")); d5=_n(f5.get("delta_ratio")); d1=_n(f1.get("delta_ratio"))
  sp5=_n(sf5.get("price_change_pct")); sd5=_n(sf5.get("delta_ratio"))
