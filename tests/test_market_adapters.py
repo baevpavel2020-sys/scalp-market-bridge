@@ -40,3 +40,19 @@ class CryptoAdapterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StockCandidateOptionalUnderlyingTests(unittest.TestCase):
+    def test_missing_underlying_does_not_block_valid_xstock_structure(self):
+        from scan_plus.markets.stocks.candidate import build_stock_candidate
+        frames={
+            "1h":{"analysis":{"structure":{"state":"bullish"},"fibonacci":{"ready":True},"elliott":{"ready":True}}},
+            "15m":{"analysis":{"structure":{"state":"bullish"},"fibonacci":{"ready":True},"elliott":{"ready":True}}},
+        }
+        out=build_stock_candidate(
+            frames=frames, gap={}, underlying=None,
+            ticker={"last_price":100.0}, session=["new_york"],
+        )
+        self.assertEqual(out["status"],"CANDIDATE")
+        self.assertIn("underlying_context_unavailable",out["reason"])
+        self.assertFalse(out["evidence"]["underlying"]["ready"])
