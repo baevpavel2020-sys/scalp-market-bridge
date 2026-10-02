@@ -64,7 +64,7 @@ class CommoditiesMarketAdapter(MarketAdapter):
         interval=kwargs.get("interval","60")
         data=self._load(symbol,interval)
         rows=self._normalize(data.get("candles"))
-        rows, quality=normalize_candles(rows, symbol=symbol, interval=interval)
+        rows, quality=normalize_candles(rows, symbol=symbol, interval=interval, closed_only=True)
         return {"market":self.market,"symbol":symbol,"status":"OK",
                 "profile":self.profile(symbol),"source":data.get("source"),
                 "interval":interval,"bars":len(rows),"data_quality":quality,"provider_error":data.get("error"),
