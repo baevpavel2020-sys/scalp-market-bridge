@@ -193,12 +193,16 @@ def build_setup_plan(market,symbol,rows,result,analysis_core=None):
     },analysis_core)
     if shared:
         directional=[e for e in result.get("events",[]) if e.get("direction")==shared["direction"]]
+        priority=market_block_policy(market).get("event_priority") or []
+        directional.sort(key=lambda e: priority.index(e.get("event")) if e.get("event") in priority else len(priority))
         shared["event_basis"]=directional[:4]
         return shared
 
     # Conservative fallback when the shared MTF core is not ready.
     atr=float(result["reference"]["atr"]); c=rows[-1]
     ds=[e for e in result["events"] if e.get("confidence")=="high" and e.get("direction") in ("bullish","bearish")]
+    priority=market_block_policy(market).get("event_priority") or []
+    ds.sort(key=lambda e: priority.index(e.get("event")) if e.get("event") in priority else len(priority))
     if not ds:
         return {"ready":True,"tradeable":False,"reason":"no_confirmed_direction_or_high_confidence_event"}
     e=next((x for x in ds if x["event"] in ("failed_breakout","failed_breakdown")),ds[0])
