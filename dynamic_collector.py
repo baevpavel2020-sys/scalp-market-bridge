@@ -25,6 +25,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 import websocket
 from pump_exhaustion import detect as detect_pump_exhaustion
 from scan_intelligence import enrich_scan, relative_strength
+from risk_engine import exposure_cluster
 
 
 # ============================================================
@@ -7072,8 +7073,12 @@ class ScanJobManager:
                     vals_map=adapter.scan_many(market,symbols)
                     vals=[vals_map[s] for s in symbols if s in vals_map]
                     rankings=relative_strength(vals,market_key=market)
+                    setups=[v.get("setup") for v in vals if isinstance(v.get("setup"),dict) and v.get("setup",{}).get("tradeable")]
+                    clusters=exposure_cluster([dict(s,market=market) for s in setups])
                     rank_map={x["symbol"]:x for x in rankings}
-                    for item in vals: item["relative_strength"]=rank_map.get(item.get("symbol"))
+                    for item in vals:
+                        item["relative_strength"]=rank_map.get(item.get("symbol"))
+                        item["risk_clusters"]=clusters
                     external[market]={"status":"PASS","count":len(vals),"results":vals,"relative_strength_ranking":rankings}
                 result={"orchestrator_version":"scan_orchestrator_v3_unified_live","mode":"unified","prescan_used":True,"markets":markets,
                         "crypto":{"selected_symbols":eligible,"activated_symbols":activated,"warmup_seconds":round(warm_elapsed,2),"scan_plus_count":len(crypto_results),"scan_plus_results":crypto_results},
