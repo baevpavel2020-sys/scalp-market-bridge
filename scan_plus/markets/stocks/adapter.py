@@ -11,6 +11,7 @@ from scan_plus.markets.stocks.bybit_xstocks import BybitXStocksLoader
 from scan_plus.markets.stocks.session_gap import classify_gap, gap_fill_progress
 from scan_plus.markets.stocks.candidate import build_stock_candidate
 from scan_plus.core.mtf_state import build_mtf_state
+from scan_plus.core.data_contract import normalize_candles
 
 
 class StocksMarketAdapter(MarketAdapter):
@@ -71,7 +72,9 @@ class StocksMarketAdapter(MarketAdapter):
         for label, interval in (("5m","5"),("15m","15"),("1h","60"),("4h","240")):
             data = self.loader.klines(symbol, interval=interval, limit=240)
             rows = data["candles"]
+            rows, quality = normalize_candles(rows, symbol=symbol, interval=interval)
             frame = {"bars": len(rows),
+                     "data_quality": quality,
                      "latest_timestamp_ms": max(
                          [r.get("timestamp_ms") for r in rows if r.get("timestamp_ms") is not None],
                          default=None,
