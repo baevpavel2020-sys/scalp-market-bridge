@@ -272,7 +272,7 @@ def scan_auto():
 @app.get("/scan-auto/start")
 def scan_auto_start():
     try:
-        top_n = int(request.args.get("top", "6"))
+        top_n = int(request.args.get("top", "8"))
         shortlist = int(request.args.get("shortlist", "30"))
         return jsonify(start_scan_auto_job(top_n=top_n, shortlist=shortlist)), 202
     except ValueError as exc:
