@@ -172,13 +172,19 @@ def _event_fingerprint(setup):
             "timeframe": event.get("timeframe"),
             "confirmed": event.get("confirmed") or event.get("confirmed_by_close"),
         })
+    limit_plan = setup.get("limit_plan") or {}
+    targets = setup.get("targets")
+    target = (
+        limit_plan.get("take_profit") or limit_plan.get("target")
+        or (targets.get("t1") if isinstance(targets, dict) else None)
+    )
     payload = {
         "state": setup.get("opportunity_state"),
         "direction": setup.get("direction") or setup.get("side"),
-        "entry": (setup.get("limit_plan") or {}).get("entry") or setup.get("entry"),
-        "stop": (setup.get("limit_plan") or {}).get("stop") or setup.get("stop"),
-        "target": (setup.get("limit_plan") or {}).get("take_profit") or (setup.get("targets") or {}).get("t1") if isinstance(setup.get("targets"), dict) else (setup.get("limit_plan") or {}).get("take_profit"),
-        "rr": setup.get("risk_reward") or (setup.get("limit_plan") or {}).get("risk_reward") or (setup.get("limit_plan") or {}).get("rr"),
+        "entry": limit_plan.get("entry") or setup.get("entry"),
+        "stop": limit_plan.get("stop") or setup.get("stop"),
+        "target": target,
+        "rr": setup.get("risk_reward") or limit_plan.get("risk_reward") or limit_plan.get("rr"),
         "events": normalized,
     }
     return hashlib.sha256(
@@ -294,7 +300,7 @@ class OutcomeLogger:
             "direction": setup.get("side") or setup.get("direction") or scan.get("direction"),
             "entry": setup.get("entry") or (setup.get("limit_plan") or {}).get("entry"),
             "stop": setup.get("stop") or (setup.get("limit_plan") or {}).get("stop"),
-            "target": (setup.get("limit_plan") or {}).get("take_profit"),
+            "target": (setup.get("limit_plan") or {}).get("take_profit") or ((setup.get("targets") or {}).get("t1") if isinstance(setup.get("targets"), dict) else None),
             "rr": setup.get("risk_reward")
             or (setup.get("limit_plan") or {}).get("risk_reward")
             or (setup.get("limit_plan") or {}).get("rr"),
