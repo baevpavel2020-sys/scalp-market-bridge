@@ -35,7 +35,7 @@ class MTFGateTests(unittest.TestCase):
     def test_confirmed_reversal_can_pass_final_gate(self):
         mtf=build_mtf_state({
             "1d":{"analysis":{"structure":{"state":"uptrend"}}},
-            "4h":{"analysis":{"structure":{"state":"downtrend"}}},
+            "4h":{"analysis":{"structure":{"state":"downtrend","last_event":{"type":"CHOCH","direction":"bearish"}}},
             "1h":{"analysis":{"structure":{"state":"downtrend"}}},
             "15m":{"analysis":{"structure":{"state":"downtrend"}}},
         })
@@ -47,3 +47,21 @@ class MTFGateTests(unittest.TestCase):
         self.assertEqual(out["status"],"CANDIDATE")
 
 if __name__=="__main__": unittest.main()
+
+class CryptoLegacyAuthorityTests(unittest.TestCase):
+    def test_crypto_legacy_candidate_is_not_rewritten_by_additive_mtf(self):
+        mtf=build_mtf_state({
+            "4h":{"analysis":{"structure":{"state":"uptrend"}}},
+            "1h":{"analysis":{"structure":{"state":"uptrend"}}},
+            "15m":{"analysis":{"structure":{"state":"downtrend"}}},
+        })
+        out=normalize_result({
+            "market":"crypto","symbol":"BTCUSDT",
+            "candidate":{"status":"CANDIDATE","direction":"bullish"},
+            "mtf_state":mtf,
+        })
+        self.assertEqual(out["status"],"CANDIDATE")
+        self.assertFalse(out["mtf_gate_blocked"])
+
+if __name__=="__main__":
+    unittest.main()
