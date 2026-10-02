@@ -1,1 +1,1 @@
-"""Independent Scan+ market adapters."""\n
+"""Independent Scan+ market adapters."""
