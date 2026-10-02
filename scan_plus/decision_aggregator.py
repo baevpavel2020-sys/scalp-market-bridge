@@ -49,6 +49,7 @@ def normalize_result(result: Mapping[str, Any]) -> Mapping[str, Any]:
     attention_rank = (
         STATUS_ORDER[status],
         -MARKET_ORDER.get(market, 99),
+        str(result.get("symbol") or candidate.get("symbol") or "").upper(),
     )
 
     return {
