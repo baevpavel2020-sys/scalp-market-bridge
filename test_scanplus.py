@@ -87,24 +87,18 @@ class TestScanPlus(unittest.TestCase):
         self.assertTrue(first["alert"]["eligible"])
         self.assertFalse(second["alert"]["eligible"])
 
-if __name__=="__main__":
-    unittest.main()
-
-
     def test_market_policies_keep_crypto_flow_isolated(self):
         from scan_architecture import market_block_policy
         self.assertTrue(market_block_policy("crypto")["flow"])
         for market in ("stocks","forex","commodities"):
             self.assertFalse(market_block_policy(market)["flow"])
             self.assertFalse(market_block_policy(market)["manipulation"])
-
     def test_market_policies_have_distinct_event_priority(self):
         from scan_architecture import market_block_policy
         self.assertEqual(market_block_policy("stocks")["event_priority"][0], "gap")
         self.assertEqual(market_block_policy("forex")["event_priority"][0], "session_failed_high")
         self.assertEqual(market_block_policy("commodities")["event_priority"][0], "failed_breakout")
         self.assertEqual(market_block_policy("crypto")["event_priority"][0], "pump_exhaustion")
-
     def test_external_limit_geometry_uses_shared_structure(self):
         from market_event_engine import build_setup_plan
         analysis = {}
@@ -123,7 +117,10 @@ if __name__=="__main__":
         self.assertTrue(plan["limit_plan"]["eligible"])
         self.assertGreaterEqual(plan["limit_plan"]["rr"], 2.0)
         self.assertEqual(plan["limit_plan"]["side"], "BUY_LIMIT")
-
     def test_manipulation_is_not_a_trade_direction_override(self):
         from pump_exhaustion import detect
         self.assertEqual(detect({"candles": []}, {"candles": []}).get("execution"), "NO_SHORT_UNTIL_EXHAUSTION")
+
+
+if __name__=="__main__":
+    unittest.main()
