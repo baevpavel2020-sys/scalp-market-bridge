@@ -47,7 +47,7 @@ def normalize_result(result: Mapping[str, Any]) -> Mapping[str, Any]:
         raise ValueError("candidate cannot enter normalized results as DATA_ERROR")
     mtf = result.get("mtf_state") or candidate.get("mtf_state")
     mtf_gate_blocked=False
-    if status in ("CANDIDATE","SETUP") and isinstance(mtf, Mapping):
+    if market != "crypto" and status in ("CANDIDATE","SETUP") and isinstance(mtf, Mapping):
         regime=str(mtf.get("regime") or "")
         if regime in ("countertrend_correction","context_only","unresolved") and not mtf.get("reversal_confirmed"):
             status="WATCH"
