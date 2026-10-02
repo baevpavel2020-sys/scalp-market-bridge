@@ -3498,8 +3498,10 @@ class DynamicMarketManager:
             event_type=last_event.get("type")
             # Price discovery is an event, not a direction rewrite. A same-TF
             # structure event may change effective direction only after close confirmation.
-            event_confirmed=bool(last_event.get("confirmed_by_close") or last_event.get("confirmed"))
-                and event_type in ("BOS","CHoCH")
+            event_confirmed=(
+                bool(last_event.get("confirmed_by_close") or last_event.get("confirmed"))
+                and event_type in ("BOS", "CHoCH")
+            )
             if pending_direction and event_confirmed and event_dir==pending_direction:
                 effective_direction=pending_direction
             elif pending_direction:
