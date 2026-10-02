@@ -8,7 +8,7 @@ from spot_collector import spot_collector
 from dynamic_collector import (dynamic_manager, run_bybit_prescan_ws_probe, run_prescan, start_scan_auto_job, start_scan_unified_job, start_scan_batch_job, get_scan_job)
 from multi_market_adapters import ExternalMarketAdapter, external_universe, MarketProfileRouter
 from market_event_engine import detect_events, build_setup_plan
-from scan_intelligence import WATCHLIST, backtest_event_setups, edge_discovery
+from scan_intelligence import WATCHLIST, backtest_event_setups, walk_forward_backtest, edge_discovery
 
 app = Flask(__name__)
 
@@ -148,6 +148,29 @@ def intelligence_backtest(symbol):
             data=ExternalMarketAdapter().scan(market,symbol)
             rows=list((data.get("frames") or {}).get("15m") or [])[-limit:]
         return jsonify(backtest_event_setups(market,symbol,rows,detect_events,build_setup_plan,max_checkpoints=100))
+    except ValueError as exc:
+        return jsonify({"error":str(exc)}),400
+    except Exception as exc:
+        return jsonify({"status":"FAIL","error":f"{type(exc).__name__}:{exc}"}),500
+
+@app.get("/intelligence/walkforward/<symbol>")
+def intelligence_walkforward(symbol):
+    try:
+        market=request.args.get("market","crypto").strip().lower()
+        if market not in ("crypto","stocks","forex","commodities"):
+            return jsonify({"error":"unsupported market"}),400
+        limit=max(30,min(int(request.args.get("limit","1000")),5000))
+        train=max(100,min(int(request.args.get("train","300")),2000))
+        test=max(20,min(int(request.args.get("test","100")),1000))
+        if market=="crypto":
+            symbol=dynamic_manager.normalize_symbol(symbol)
+            snap=dynamic_manager.snapshot(symbol)
+            rows=list(((snap.get("linear") or {}).get("candles") or {}).get("15") or [])[-limit:]
+        else:
+            data=ExternalMarketAdapter().scan(market,symbol)
+            rows=list((data.get("frames") or {}).get("15m") or [])[-limit:]
+        return jsonify(walk_forward_backtest(market,symbol,rows,detect_events,build_setup_plan,
+                                             train_bars=train,test_bars=test))
     except ValueError as exc:
         return jsonify({"error":str(exc)}),400
     except Exception as exc:
