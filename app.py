@@ -1,3 +1,4 @@
+import concurrent.futures
 import os
 import requests
 from flask import Flask, jsonify, request
@@ -110,8 +111,13 @@ def scan_markets():
             if market not in universe: continue
             symbols=universe[market]
             market_ready=adapter.configured or market=="stocks"
-            out["markets"][market]=[adapter.scan(market,s) for s in symbols] if market_ready else {
-                "status":"DATA_BLOCK","reason":"TWELVE_DATA_API_KEY_not_configured","symbols":symbols}
+            if market_ready:
+                workers=min(3,len(symbols)) or 1
+                with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+                    out["markets"][market]=list(pool.map(lambda s: adapter.scan(market,s), symbols))
+            else:
+                out["markets"][market]={
+                    "status":"DATA_BLOCK","reason":"TWELVE_DATA_API_KEY_not_configured","symbols":symbols}
         return jsonify(out)
     except Exception as exc:
         return jsonify({"status":"FAIL","error":f"{type(exc).__name__}:{exc}"}),500
