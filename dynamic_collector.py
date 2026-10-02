@@ -47,9 +47,14 @@ def fnum(value):
 
 KLINE_INTERVALS = ("1", "5", "15", "60", "240", "D")
 KLINE_LIMIT = 500
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 CANDLE_STORE_DIR = os.environ.get(
     "CANDLE_STORE_DIR",
     "/tmp/scalp-market-bridge/candles",
+)
+CANDLE_SEED_DIR = os.environ.get(
+    "CANDLE_SEED_DIR",
+    os.path.join(PROJECT_DIR, "seed_data"),
 )
 
 
@@ -453,7 +458,7 @@ class MarketStream:
         Production intentionally has no REST history-fetch path.
         WebSocket remains the live authority and replaces seed candles on overlap.
         """
-        seed_dir = os.environ.get("CANDLE_SEED_DIR", CANDLE_STORE_DIR)
+        seed_dir = CANDLE_SEED_DIR
         safe_symbol = re.sub(r"[^A-Z0-9]", "", self.symbol)
         safe_market = re.sub(r"[^a-z]", "", self.market.lower())
         candidates = (
@@ -2208,7 +2213,7 @@ class MarketStream:
                     "error": self.history_error,
                     "store_path": self._cache_path(),
                     "seed_source": (
-                        "binance_usdm_public_archive"
+                        "bybit_historical_market_data"
                         if any(self.seed_counts.values()) else None
                     ),
                     "seed_counts": dict(self.seed_counts),
