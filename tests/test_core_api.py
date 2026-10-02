@@ -22,7 +22,8 @@ class CoreApiTests(unittest.TestCase):
 
     def test_empty_profile_selection_does_not_run_optional_blocks(self):
         out=AnalyticalEngine(LegacyCryptoBackend()).analyze_profiled([],["gaps"])
-        self.assertEqual(set(out),{"structure"})
+        self.assertEqual(set(out),{"structure","_context_blocks_requested"})
+        self.assertEqual(out["_context_blocks_requested"],["gaps"])
 
     def test_profile_does_not_mutate_global_configuration(self):
         first=resolve_priorities("stocks","NVDA","gap")
