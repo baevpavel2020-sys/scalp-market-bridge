@@ -188,9 +188,7 @@ def build_setup_plan(market,symbol,rows,result,analysis_core=None):
 
     # Prefer the shared analytical core. This makes xStocks/Forex/Commodities use
     # the same structural discipline as crypto without importing crypto-only flow.
-    shared=_shared_limit_geometry(market,symbol,{str(k):v for k,v in (analysis_core or {}).get("analysis",{}).items()} if False else {
-        "15m": rows
-    },analysis_core)
+    shared=_shared_limit_geometry(market,symbol,analysis_core)
     if shared:
         directional=[e for e in result.get("events",[]) if e.get("direction")==shared["direction"]]
         priority=market_block_policy(market).get("event_priority") or []
