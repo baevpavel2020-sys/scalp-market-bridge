@@ -44,7 +44,7 @@ def _target(frames,direction):
     return None,None,None
 
 
-def build_forex_execution_plan(*,candidate,frames,price,equity=None,risk_fraction=None,
+def build_forex_execution_plan(*,candidate,frames,price,equity,risk_fraction,
                                symbol=None,account_currency="USD",quote_to_account=None,
                                min_rr=2.0,entry_policy="retest_or_limit"):
     if not isinstance(candidate,Mapping) or candidate.get("status")!="CANDIDATE":
