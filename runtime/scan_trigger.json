@@ -1,1 +1,5 @@
-{"command":"scan","requested_at":"2026-10-02T22:13:57.099Z","nonce":"verify-fx-commodities-1790979237102"}
+{
+  "action": "scan",
+  "reason": "post-deploy persistence/resume verification",
+  "nonce": "2026-10-03T01:33:00+03:00"
+}
