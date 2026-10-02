@@ -86,13 +86,18 @@ class MultiMarketOrchestrator:
         if not symbols:
             return [(market,None) for market in markets]
         requests=[]
+        seen=set()
         for symbol in symbols:
             resolved=resolve_market(symbol)
             if resolved:
                 if not markets or resolved in markets:
-                    requests.append((resolved,symbol))
+                    key=(resolved,str(symbol).upper())
+                    if key not in seen:
+                        requests.append(key); seen.add(key)
             elif len(markets)==1:
-                requests.append((markets[0],symbol))
+                key=(markets[0],str(symbol).upper())
+                if key not in seen:
+                    requests.append(key); seen.add(key)
         return requests
 
     def scan_many(self, requests):
@@ -113,7 +118,11 @@ class MultiMarketOrchestrator:
                     results.append({"status":"NO_UNIVERSE","market":key,
                                     "reason":"market_native_universe_unavailable"})
                     continue
-                expanded.extend((key,item) for item in symbols)
+                local_seen=set()
+                for item in symbols:
+                    normalized=str(item).upper()
+                    if normalized not in local_seen:
+                        expanded.append((key,normalized)); local_seen.add(normalized)
             else:
                 expanded.append((key,symbol))
 
