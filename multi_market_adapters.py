@@ -11,6 +11,30 @@ FOREX=("EUR/USD","GBP/USD","USD/JPY","USD/CHF","AUD/USD","NZD/USD","USD/CAD","EU
 COMMODITIES=("XAU/USD","XAG/USD","WTI/USD","BRENT/USD","HG1")
 STOCKS=("AAPL","MSFT","NVDA","AMZN","META","GOOGL","TSLA","AMD","NFLX","AVGO","JPM","XOM")
 
+
+BYBIT_BASE="https://api.bybit.com"
+def _bybit_get(path,params):
+    q=urllib.parse.urlencode(params); req=urllib.request.Request(BYBIT_BASE+path+"?"+q,headers={"User-Agent":"scalp-market-bridge/1.0"})
+    with urllib.request.urlopen(req,timeout=12) as r: data=json.loads(r.read().decode("utf-8"))
+    if data.get("retCode") not in (0,None): raise RuntimeError(str(data))
+    return data
+
+def bybit_xstocks_top15():
+    data=_bybit_get("/v5/market/instruments-info",{"category":"spot","symbolType":"xstocks","limit":1000})
+    symbols=[x["symbol"] for x in data.get("result",{}).get("list",[]) if x.get("status")=="Trading"]
+    if not symbols: return []
+    tick=_bybit_get("/v5/market/tickers",{"category":"spot"})
+    rows={x.get("symbol"):x for x in tick.get("result",{}).get("list",[])}
+    return sorted(symbols,key=lambda s:float(rows.get(s,{}).get("turnover24h") or 0),reverse=True)[:15]
+
+def bybit_xstock_candles(symbol,interval="15",limit=500):
+    data=_bybit_get("/v5/market/kline",{"category":"spot","symbol":symbol,"interval":interval,"limit":min(int(limit),1000)})
+    out=[]
+    for row in reversed(data.get("result",{}).get("list",[]) or []):
+        try: out.append({"start":int(row[0]),"open":float(row[1]),"high":float(row[2]),"low":float(row[3]),"close":float(row[4]),"volume":float(row[5]),"turnover":float(row[6]),"confirm":True,"source":"bybit_xstocks"})
+        except (IndexError,TypeError,ValueError): pass
+    return out
+
 class ExternalMarketAdapter:
     VERSION="external_market_adapter_v1"
     def __init__(self,api_key=None):
@@ -46,4 +70,6 @@ class ExternalMarketAdapter:
         ready=all(len(frames.get(tf,[]))>=50 for tf in ("1D","4h","1h","15m","5m"))
         return {"market":market,"symbol":symbol,"adapter_version":self.VERSION,"provider":"twelve_data","configured":self.configured,"analysis_ready":ready,"execution_ready":False,"execution_reason":"external_market_execution_connector_not_configured","frames":frames,"quote":quote,"errors":errors,"capabilities":{"ohlcv":True,"realtime_quote":True,"orderbook":False,"open_interest":False,"funding":False,"spot_cvd":False}}
 def external_universe():
-    return {"forex":list(FOREX),"commodities":list(COMMODITIES),"stocks":list(STOCKS)}
+    try: stocks=bybit_xstocks_top15()
+    except Exception: stocks=list(DEFAULT_STOCKS)
+    return {"forex":list(FOREX),"commodities":list(COMMODITIES),"stocks":stocks}
