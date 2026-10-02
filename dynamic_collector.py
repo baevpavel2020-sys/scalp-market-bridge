@@ -7223,3 +7223,7 @@ def start_scan_batch_job(symbols):
 def get_scan_job(job_id):
     return ScanJobManager.status(job_id)
 
+
+def get_latest_unified_scan_job():
+    return ScanJobManager.latest_unified()
+
