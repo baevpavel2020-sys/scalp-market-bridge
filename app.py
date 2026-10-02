@@ -5,7 +5,7 @@ from flask import Flask, jsonify, request
 from collector import collector
 from spot_collector import spot_collector
 from dynamic_collector import (dynamic_manager, run_bybit_prescan_ws_probe, run_prescan, run_scan_auto, run_scan_single, run_scan_batch, start_scan_auto_job, start_scan_batch_job, get_scan_job)
-from multi_market_adapters import ExternalMarketAdapter, external_universe
+from multi_market_adapters import ExternalMarketAdapter, external_universe, MarketProfileRouter
 
 app = Flask(__name__)
 
@@ -96,6 +96,25 @@ def market_dynamic(symbol):
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
+
+@app.get("/scan-markets")
+def scan_markets():
+    """Analysis-only multi-market scan using market-specific profiles."""
+    try:
+        adapter=ExternalMarketAdapter()
+        requested=request.args.get("markets","forex,commodities,stocks").split(",")
+        universe=external_universe()
+        out={"adapter_version":adapter.VERSION,"router_version":MarketProfileRouter.VERSION,"markets":{}}
+        for market in requested:
+            market=market.strip().lower()
+            if market not in universe: continue
+            symbols=universe[market]
+            market_ready=adapter.configured or market=="stocks"
+            out["markets"][market]=[adapter.scan(market,s) for s in symbols] if market_ready else {
+                "status":"DATA_BLOCK","reason":"TWELVE_DATA_API_KEY_not_configured","symbols":symbols}
+        return jsonify(out)
+    except Exception as exc:
+        return jsonify({"status":"FAIL","error":f"{type(exc).__name__}:{exc}"}),500
 
 @app.get("/scan-markets")
 def scan_markets():
