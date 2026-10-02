@@ -24,6 +24,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 
 import websocket
 from pump_exhaustion import detect as detect_pump_exhaustion
+from scan_intelligence import enrich_scan
 
 
 # ============================================================
@@ -4808,6 +4809,13 @@ class DynamicMarketManager:
             },
             "manipulation": detect_pump_exhaustion(linear, full.get("spot",{}))
         }
+        result["regime"]={"composite":__import__("scan_intelligence").classify_regime_from_analysis(result.get("timeframes") or {})}
+        result["mtf_matrix"]=__import__("scan_intelligence").mtf_state_matrix(result.get("timeframes") or {})
+        result["intelligence_version"]="intelligence_v1"
+        result["alert"]=__import__("scan_intelligence").alert_payload(result)
+        __import__("scan_intelligence").WATCHLIST.upsert(result)
+        __import__("scan_intelligence").OUTCOMES.record(result)
+        return result
 
     def replay_no_lookahead(self, candles_by_tf, checkpoints=None):
         """Deterministic prefix replay for regression tests.
