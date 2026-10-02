@@ -24,6 +24,60 @@ _XSTOCKS_CACHE_LOCK=threading.Lock()
 _XSTOCKS_CACHE_TTL=60.0
 
 
+YAHOO_BASE="https://query1.finance.yahoo.com"
+YAHOO_STOCK_MAP = {
+    "AAPLXUSDT":"AAPL","NVDAXUSDT":"NVDA","TSLAXUSDT":"TSLA","GOOGLXUSDT":"GOOGL",
+    "AMZNXUSDT":"AMZN","METAXUSDT":"META","COINXUSDT":"COIN","HOODXUSDT":"HOOD",
+    "CRCLXUSDT":"CRCL","MSTRXUSDT":"MSTR","SPCXXUSDT":None,"NFLXXUSDT":"NFLX",
+    "AVGOXUSDT":"AVGO","MSFTXUSDT":"MSFT","JPMXUSDT":"JPM",
+}
+YAHOO_FOREX_MAP = {s: s.replace("/","")+"=X" for s in FOREX}
+YAHOO_COMMODITY_MAP = {"XAU/USD":"GC=F","XAG/USD":"SI=F","WTI/USD":"CL=F","BRENT/USD":"BZ=F","HG1":"HG=F"}
+
+def _yahoo_get(symbol, interval, period1, period2):
+    params=urllib.parse.urlencode({"period1":int(period1),"period2":int(period2),"interval":interval,"events":"history","includeAdjustedClose":"true"})
+    req=urllib.request.Request(f"{YAHOO_BASE}/v8/finance/chart/{urllib.parse.quote(symbol, safe='')}?{params}",headers={"User-Agent":"Mozilla/5.0 scalp-market-bridge/1.0"})
+    with urllib.request.urlopen(req,timeout=15) as r: data=json.loads(r.read().decode("utf-8"))
+    result=((data.get("chart") or {}).get("result") or [])
+    if not result: raise RuntimeError(str(((data.get("chart") or {}).get("error") or {}) or "yahoo_no_result"))
+    return result[0]
+
+def _yahoo_period(interval):
+    return {"5m":60*86400,"15m":60*86400,"1h":365*86400,"4h":730*86400,"1D":5*365*86400}.get(interval,60*86400)
+
+def _resample_ohlcv(rows, bucket_ms):
+    buckets={}
+    for row in rows or []:
+        key=(int(row["start"])//bucket_ms)*bucket_ms
+        b=buckets.get(key)
+        if b is None:
+            buckets[key]={"start":key,"open":row["open"],"high":row["high"],"low":row["low"],"close":row["close"],"volume":row.get("volume",0.0),"source":row.get("source","yahoo_finance"),"confirm":True}
+        else:
+            b["high"]=max(b["high"],row["high"]); b["low"]=min(b["low"],row["low"]); b["close"]=row["close"]; b["volume"]+=row.get("volume",0.0)
+    return [buckets[k] for k in sorted(buckets)]
+
+def _yahoo_candles(symbol, interval):
+    now=int(time.time())
+    base_interval="1h" if interval=="4h" else {"1D":"1d"}.get(interval,interval)
+    raw=_yahoo_get(symbol,base_interval,now-_yahoo_period(interval),now)
+    ts=raw.get("timestamp") or []
+    q=((raw.get("indicators") or {}).get("quote") or [{}])[0]
+    opens=q.get("open") or []; highs=q.get("high") or []; lows=q.get("low") or []; closes=q.get("close") or []; vols=q.get("volume") or []
+    rows=[]
+    for i,t in enumerate(ts):
+        try:
+            o,h,l,cl=[float(x[i]) for x in (opens,highs,lows,closes)]
+            if not all(math.isfinite(x) for x in (o,h,l,cl)) or h<max(o,cl) or l>min(o,cl) or h<l: continue
+            rows.append({"start":int(t)*1000,"open":o,"high":h,"low":l,"close":cl,"volume":float(vols[i] or 0) if i<len(vols) else 0.0,"source":"yahoo_finance","confirm":True})
+        except (TypeError,ValueError,IndexError): continue
+    return _resample_ohlcv(rows,4*3600000) if interval=="4h" else rows
+
+def _yahoo_quote(symbol):
+    raw=_yahoo_get(symbol,"1d",int(time.time())-3*86400,int(time.time()))
+    price=(raw.get("meta") or {}).get("regularMarketPrice")
+    if price is None: raise RuntimeError("yahoo_quote_missing_price")
+    return {"symbol":symbol,"price":float(price),"source":"yahoo_finance"}
+
 BYBIT_BASE="https://api.bybit.com"
 def _bybit_get(path,params):
     q=urllib.parse.urlencode(params); req=urllib.request.Request(BYBIT_BASE+path+"?"+q,headers={"User-Agent":"scalp-market-bridge/1.0"})
@@ -290,37 +344,46 @@ class ExternalMarketAdapter:
         frames={}; errors={}
         provider="twelve_data"
         if market=="stocks":
-            provider="bybit_xstocks"
+            provider="bybit_xstocks+yahoo_fallback"
             tf_intervals={"1D":"D","4h":"240","1h":"60","15m":"15","5m":"5"}
+            yahoo_symbol=YAHOO_STOCK_MAP.get(symbol)
             def fetch_xstock(item):
                 tf,itv=item
                 try:
                     return tf, bybit_xstock_candles(symbol,itv), None
-                except Exception as e:
-                    return tf, [], f"{type(e).__name__}:{e}"
+                except Exception as bybit_exc:
+                    if yahoo_symbol:
+                        try: return tf, _yahoo_candles(yahoo_symbol,tf), f"bybit_fallback:yahoo:{type(bybit_exc).__name__}"
+                        except Exception as yahoo_exc: return tf, [], f"bybit:{type(bybit_exc).__name__};yahoo:{type(yahoo_exc).__name__}"
+                    return tf, [], f"{type(bybit_exc).__name__}:no_yahoo_mapping"
             with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
                 for tf, rows, err in pool.map(fetch_xstock, tuple(tf_intervals.items())):
                     frames[tf]=rows
-                    if err:
-                        errors[tf]=err
-            quote=None
+                    if err: errors[tf]=err
+            try: quote=_yahoo_quote(yahoo_symbol) if yahoo_symbol else bybit_xstock_candles(symbol,"5",limit=2)[-1]
+            except Exception as quote_exc: quote={"error":f"{type(quote_exc).__name__}:{quote_exc}"}
             configured=True
         else:
-            # Fetch analytical horizons concurrently per symbol. The unified
-            # scanner already caps symbol concurrency, preventing unbounded fan-out.
             def fetch_tf(tf):
-                try:
-                    return tf, self.candles(symbol,tf), None
-                except Exception as e:
-                    return tf, [], f"{type(e).__name__}:{e}"
+                try: return tf, self.candles(symbol,tf), None
+                except Exception as e: return tf, [], f"{type(e).__name__}:{e}"
             with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
                 for tf, rows, err in pool.map(fetch_tf, ("1D","4h","1h","15m","5m")):
                     frames[tf]=rows
-                    if err:
-                        errors[tf]=err
+                    if err: errors[tf]=err
             try: quote=self.quote(symbol)
             except Exception as e: quote={"error":f"{type(e).__name__}:{e}"}
             configured=self.configured
+            if not self.configured:
+                yahoo_symbol=YAHOO_FOREX_MAP.get(symbol) if market=="forex" else YAHOO_COMMODITY_MAP.get(symbol)
+                if yahoo_symbol:
+                    provider="yahoo_finance"
+                    for tf in ("1D","4h","1h","15m","5m"):
+                        try: frames[tf]=_yahoo_candles(yahoo_symbol,tf)
+                        except Exception as exc: frames[tf]=[]; errors[tf]=f"{type(exc).__name__}:{exc}"
+                    try: quote=_yahoo_quote(yahoo_symbol)
+                    except Exception as exc: quote={"error":f"{type(exc).__name__}:{exc}"}
+                    configured=True
         ready=all(sum(1 for row in frames.get(tf,[]) if row.get("confirm",True))>=50 for tf in ("1D","4h","1h","15m","5m"))
         event_frames={tf:frames[tf] for tf in ("1D","4h","1h","15m","5m") if frames.get(tf)}
         events={tf:detect_events(market,symbol,rows) for tf,rows in event_frames.items()}
