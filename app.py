@@ -89,6 +89,26 @@ def prescan_manual():
         return jsonify({"status": "FAIL", "error": f"{type(exc).__name__}: {exc}"}), 500
 
 
+@app.get("/prescan/status")
+def prescan_status():
+    """Read-only PreScan cache/provider readiness; never starts a Scan+ job."""
+    try:
+        from dynamic_collector import OnDemandPreScanService
+        return jsonify({
+            "engine_version": OnDemandPreScanService.VERSION,
+            "warm_cache": OnDemandPreScanService.warm_status(),
+            "warm_cache_enabled": OnDemandPreScanService.WARM_CACHE_ENABLED,
+            "ticker_cache_ttl_seconds": OnDemandPreScanService.TICKER_CACHE_TTL,
+            "history_cache_ttl_seconds": OnDemandPreScanService.CACHE_TTL,
+            "disk_cache_ttl_seconds": OnDemandPreScanService.DISK_CACHE_TTL,
+            "history_workers": OnDemandPreScanService.HISTORY_WORKERS,
+            "analysis_workers": OnDemandPreScanService.ANALYSIS_WORKERS,
+            "history_global_timeout_seconds": OnDemandPreScanService.HISTORY_GLOBAL_TIMEOUT,
+            "providers": ["okx_swap_rest", "kucoin_futures_rest", "binance_spot_marketdata"],
+        })
+    except Exception as exc:
+        return jsonify({"status":"FAIL","error":f"{type(exc).__name__}:{exc}"}),500
+
 @app.get("/market/BTCUSDT")
 def market_btcusdt():
     ensure_market_collectors()
