@@ -2374,11 +2374,13 @@ class MarketStream:
             structure = {i: analysis[i]["structure"] for i in KLINE_INTERVALS}
             liquidity = {i: analysis[i]["liquidity"] for i in KLINE_INTERVALS}
             counts = {i: len(c) for i, c in self.candles.items()}
+            persistence_counts = {i: counts[i] for i in KLINE_INTERVALS}
             checks = {
                 "connected": bool(self.connected),
                 "orderbook_ready": bool(self.orderbook_ready),
                 "candles_receiving": any(v > 0 for v in counts.values()),
                 "technical_full_6_of_6": all(technical[i]["ready"] for i in KLINE_INTERVALS),
+                "persistence_250_all_6": all(v >= PERSISTENCE_SEED_TARGET for v in persistence_counts.values()),
             }
             return {
                 "symbol": self.symbol,
@@ -2391,6 +2393,7 @@ class MarketStream:
                     and checks["candles_receiving"]
                 ),
                 "full_technical_pass": checks["technical_full_6_of_6"],
+                "persistence_pass": checks["persistence_250_all_6"],
                 "history": {
                     "source": self.history_source,
                     "cache_loaded": self.history_bootstrapped,
@@ -2402,6 +2405,8 @@ class MarketStream:
                         if any(self.seed_counts.values()) else None
                     ),
                     "seed_counts": dict(self.seed_counts),
+                    "persistence_target": PERSISTENCE_SEED_TARGET,
+                    "persistence_ready": checks["persistence_250_all_6"],
                 },
                 "candle_counts": counts,
                 "technical": technical,
