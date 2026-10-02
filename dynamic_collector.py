@@ -4521,6 +4521,97 @@ class DynamicMarketManager:
             "warmed_flow_windows": execution.get("warmed_flow_windows") or [],
         }
 
+    @staticmethod
+    def _data_quality_engine_v1(linear, spot, execution, mtf, setup):
+        """Separate data/readiness diagnostics from trade-decision state.
+
+        A missing execution feed must be reported precisely instead of collapsing
+        the whole analysis into a generic DATA_BLOCK. This layer is presentation
+        and routing only; it never creates or removes a trade signal.
+        """
+        analysis = linear.get("analysis") or {}
+        windows = execution.get("windows") or {}
+
+        def fresh_ticker():
+            ts = fnum((linear.get("ticker") or {}).get("updated_at"))
+            return bool(ts is not None and time.time() - ts <= 15.0)
+
+        tf_ready = {tf: bool((analysis.get(tf) or {}).get("ready")) for tf in ("D","240","60","15","5","1")}
+        flow_ready = {
+            w: bool((windows.get(w) or {}).get("linear_warm")
+                    and (windows.get(w) or {}).get("perp_flow_usable"))
+            for w in ("1m","5m","15m","1h")
+        }
+        oi_ready = {
+            w: bool((windows.get(w) or {}).get("oi_usable"))
+            for w in ("1m","5m","15m","1h")
+        }
+
+        checks = {
+            "linear_transport": bool(linear.get("connected")),
+            "linear_capability": linear.get("capability_state", "unknown") not in ("unsupported",),
+            "realtime_price": execution.get("price") is not None,
+            "ticker_fresh": fresh_ticker(),
+            "orderbook_ready": bool((linear.get("orderbook") or {}).get("ready")),
+            "history_D": tf_ready["D"],
+            "history_4H": tf_ready["240"],
+            "history_1H": tf_ready["60"],
+            "history_15m": tf_ready["15"],
+            "history_5m": tf_ready["5"],
+            "history_1m": tf_ready["1"],
+            "flow_1m": flow_ready["1m"],
+            "flow_5m": flow_ready["5m"],
+            "flow_15m": flow_ready["15m"],
+            "flow_1h": flow_ready["1h"],
+            "oi_1m": oi_ready["1m"],
+            "oi_5m": oi_ready["5m"],
+            "oi_15m": oi_ready["15m"],
+            "oi_1h": oi_ready["1h"],
+        }
+
+        missing = [name for name, ok in checks.items() if not ok]
+        analysis_ready = all(checks[k] for k in (
+            "history_D","history_4H","history_1H","history_15m","history_5m"
+        ))
+        realtime_ready = all(checks[k] for k in (
+            "linear_transport","linear_capability","realtime_price","ticker_fresh","orderbook_ready"
+        ))
+        flow_windows = [w for w, ok in flow_ready.items() if ok]
+        oi_windows = [w for w, ok in oi_ready.items() if ok]
+
+        trade_data_ready = bool(execution.get("trade_data_ready"))
+        execution_ready = bool(execution.get("ready") and trade_data_ready)
+        decision_ready = bool(
+            analysis_ready
+            and realtime_ready
+            and trade_data_ready
+            and setup.get("block_class") != "DATA_BLOCK"
+        )
+
+        return {
+            "version": "data_quality_v1",
+            "checks": checks,
+            "missing": missing,
+            "analysis_ready": analysis_ready,
+            "realtime_ready": realtime_ready,
+            "flow_ready": bool(flow_windows),
+            "oi_ready": bool(oi_windows),
+            "trade_data_ready": trade_data_ready,
+            "execution_ready": execution_ready,
+            "decision_ready": decision_ready,
+            "flow_windows": flow_windows,
+            "oi_windows": oi_windows,
+            "execution_mode": execution.get("execution_mode"),
+            "spot_capability_state": spot.get("capability_state", "unknown"),
+            "spot_available": spot.get("available"),
+            "block_reasons": list(set(
+                (setup.get("block_reasons") or [])
+                + ([] if analysis_ready else ["analysis_history_not_ready"])
+                + ([] if realtime_ready else ["realtime_market_data_not_ready"])
+                + ([] if trade_data_ready else ["execution_trade_data_not_ready"])
+            )),
+        }
+
     def snapshot(
         self,
         symbol,
@@ -4557,14 +4648,16 @@ class DynamicMarketManager:
         execution = self._execution_engine_v37(linear, spot)
         mtf = self._mtf_engine_v37(linear, execution)
         setup = self._trade_engine_v37(linear, mtf, execution)
+        data_quality = self._data_quality_engine_v1(linear, spot, execution, mtf, setup)
 
         return {
             "symbol": symbol,
             "generated_at": time.time(),
-            "engine_version": "scan_plus_v3_9_limit_plan",
+            "engine_version": "scan_plus_v3_10_data_quality",
             "linear": linear,
             "spot": spot,
             "driver": self._driver(linear, spot),
+            "data_quality": data_quality,
             "scan_plus": {
                 "mtf": mtf,
                 "execution": execution,
@@ -4657,6 +4750,7 @@ class DynamicMarketManager:
             "trade_state":setup.get("trade_state"),
             "trade_style":setup.get("trade_style"),
             "execution_mode":execution.get("execution_mode"),
+            "data_quality":full.get("data_quality") or {},
             "market_capabilities":execution.get("market_capabilities"),
             "execution_regime":execution.get("execution_regime"),
             "block_class":setup.get("block_class"),
@@ -6757,6 +6851,7 @@ class ScanOrchestrator:
                 "targets": setup.get("targets"),
                 "risk_reward": setup.get("risk_reward"),
                 "limit_plan": setup.get("limit_plan") or {"eligible":False,"state":"NO_LIMIT_PLAN"},
+                "data_quality": scan.get("data_quality") or {},
                 "failed_requirements": setup.get("failed_requirements") or [],
             },
         }
