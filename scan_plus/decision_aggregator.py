@@ -18,7 +18,9 @@ def _candidate(result: Mapping[str, Any]) -> Mapping[str, Any]:
     # without changing the underlying Crypto strategy.
     status = result.get("trade_state") or result.get("setup_state")
     setup = result.get("setup") if isinstance(result.get("setup"), Mapping) else {}
-    limit_plan = setup.get("limit_plan") if isinstance(setup.get("limit_plan"), Mapping) else None
+    limit_plan = result.get("limit_plan") if isinstance(result.get("limit_plan"), Mapping) else None
+    if limit_plan is None:
+        limit_plan = setup.get("limit_plan") if isinstance(setup.get("limit_plan"), Mapping) else None
 
     # A valid conditional LIMIT_PLAN is an execution-ready setup even when the
     # market trigger has not fired yet. It never bypasses the plan's own
