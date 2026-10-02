@@ -3,6 +3,7 @@ Multi-market external data adapters for Scan+.
 Provider: Twelve Data, configured with TWELVE_DATA_API_KEY.
 This layer is analysis-only until a broker/execution connector is explicitly added.
 """
+import concurrent.futures
 import json, math, os, threading, time, urllib.parse, urllib.request
 from market_event_engine import detect_events, build_setup_plan
 from datetime import datetime, timezone
@@ -16,6 +17,7 @@ TF={"1m":"1min","5m":"5min","15m":"15min","1h":"1h","4h":"4h","1D":"1day"}
 FOREX=("EUR/USD","GBP/USD","USD/JPY","USD/CHF","AUD/USD","NZD/USD","USD/CAD","EUR/GBP","EUR/JPY","GBP/JPY")
 COMMODITIES=("XAU/USD","XAG/USD","WTI/USD","BRENT/USD","HG1")
 STOCKS=("AAPL","MSFT","NVDA","AMZN","META","GOOGL","TSLA","AMD","NFLX","AVGO","JPM","XOM")
+DEFAULT_STOCKS=STOCKS
 _XSTOCKS_CACHE={"expires":0.0,"symbols":None}
 _XSTOCKS_CACHE_LOCK=threading.Lock()
 _XSTOCKS_CACHE_TTL=60.0
@@ -181,14 +183,14 @@ class ExternalMarketAdapter:
             for tf in ("1D","4h","1h","15m","5m"):
                 try: frames[tf]=self.candles(symbol,tf)
                 except Exception as e: errors[tf]=f"{type(e).__name__}:{e}"
-            try: quote=self.quote(symbol)
-            except Exception as e: quote={"error":f"{type(e).__name__}:{e}"}
+            quote=None
             configured=self.configured
         ready=all(len(frames.get(tf,[]))>=50 for tf in ("1D","4h","1h","15m","5m"))
         event_frames={tf:frames[tf] for tf in ("1D","4h","1h","15m","5m") if frames.get(tf)}
         events={tf:detect_events(market,symbol,rows) for tf,rows in event_frames.items()}
         setup={tf:build_setup_plan(market,symbol,rows,events[tf]) for tf,rows in event_frames.items()}
-        return {"market":market,"symbol":symbol,"adapter_version":self.VERSION,"provider":provider,"configured":configured,"analysis_ready":ready,"execution_ready":False,"execution_reason":"external_market_execution_connector_not_configured","frames":frames,"quote":quote,"events":events,"setup_plans":setup,"errors":errors,"capabilities":{"ohlcv":True,"realtime_quote":True,"orderbook":False,"open_interest":False,"funding":False,"spot_cvd":False},"market_profile":market_profile(market),"session_context":session_context(market)}
+        analysis_core=MarketProfileRouter.analyze(market,symbol,frames)
+        return {"market":market,"symbol":symbol,"adapter_version":self.VERSION,"provider":provider,"configured":configured,"analysis_ready":ready,"execution_ready":False,"execution_reason":"external_market_execution_connector_not_configured","frames":frames,"quote":quote,"analysis_core":analysis_core,"events":events,"setup_plans":setup,"errors":errors,"capabilities":{"ohlcv":True,"realtime_quote":True,"orderbook":False,"open_interest":False,"funding":False,"spot_cvd":False},"market_profile":market_profile(market),"session_context":session_context(market)}
 def external_universe():
     try: stocks=bybit_xstocks_top15()
     except Exception: stocks=list(DEFAULT_STOCKS)
