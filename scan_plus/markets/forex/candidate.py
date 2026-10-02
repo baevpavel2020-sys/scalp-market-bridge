@@ -41,6 +41,7 @@ def _sweeps(frames):
 def build_forex_candidate(*, frames, active_sessions=None, overlap=False):
     direction,structure_tf=_structure_state(frames)
     shared_ready,confirmation_tf=_shared_ready(frames,structure_tf)
+    mtf_state=build_mtf_state(frames)
     sweeps=_sweeps(frames)
 
     bullish_sweep=any(state=="low_sweep" and tf==confirmation_tf for tf,_,state in sweeps)
@@ -48,6 +49,8 @@ def build_forex_candidate(*, frames, active_sessions=None, overlap=False):
 
     blockers=[]
     if direction=="unknown": blockers.append("structure_direction_unresolved")
+    if mtf_state["regime"] in ("countertrend_correction","context_only","unresolved"):
+        blockers.append("mtf_execution_not_aligned")
     if not shared_ready: blockers.append("fibonacci_or_elliott_unavailable")
 
     # Sweep is confirmation/context, never the source of direction.
@@ -72,6 +75,7 @@ def build_forex_candidate(*, frames, active_sessions=None, overlap=False):
         "confirmation_timeframe":confirmation_tf,
         "active_sessions":list(active_sessions or []),
         "sweeps":sweeps,
+        "mtf_state":mtf_state,
         "evidence_policy":{
             "structure_primary":True,
             "elliott_required":True,
