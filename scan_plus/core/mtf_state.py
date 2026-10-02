@@ -90,17 +90,24 @@ def build_mtf_state(frames):
     else:
         regime="countertrend_correction"
 
-    # A reversal is only structurally confirmed when the medium/higher structure
-    # itself agrees with the new side. A single LTF conflict is not a reversal.
+    # A disagreement is not a reversal. Require a structural CHOCH/MSS
+    # event on 4H/1H in the opposing direction.
     reversal_confirmed=False
     for tf in ("4h","1h"):
-        if states.get(tf) and states.get(tf)!=context and states.get(tf) in ("bullish","bearish"):
-            reversal_confirmed=True
-            break
+        frame=normalized.get(tf) or {}
+        analysis=frame.get("analysis") if isinstance(frame.get("analysis"),Mapping) else frame
+        structure=analysis.get("structure") if isinstance(analysis,Mapping) else {}
+        if not isinstance(structure,Mapping):
+            continue
+        event=structure.get("last_event") or {}
+        event_type=str(event.get("type") or "").upper()
+        event_direction=str(event.get("direction") or "").lower()
+        if event_type in ("CHOCH","MSS") and event_direction in ("bullish","bearish"):
+            if context and event_direction != context:
+                reversal_confirmed=True
+                break
 
-    transition = any(
-        _state(normalized.get(tf))=="transition" for tf in TF_ORDER if tf in normalized
-    )
+    transition = any(states.get(tf)=="transition" for tf in TF_ORDER if tf in states)
 
     return {
         "states":states,
