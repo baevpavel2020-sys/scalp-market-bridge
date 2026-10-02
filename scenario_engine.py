@@ -65,6 +65,9 @@ class EventLifecycle:
         for fp,item in list(self.items.items()):
             if now-item["updated_at"]>self.ttl and item["state"] not in ("CONSUMED","INVALIDATED"):
                 item["state"]="EXPIRED"
-    def snapshot(self):
+    def snapshot(self,market=None,symbol=None):
         self.expire()
-        return [dict(x) for x in self.items.values()]
+        values=[dict(x) for x in self.items.values()]
+        if market is not None: values=[x for x in values if x.get("event",{}).get("market")==market]
+        if symbol is not None: values=[x for x in values if x.get("event",{}).get("symbol")==symbol]
+        return values
