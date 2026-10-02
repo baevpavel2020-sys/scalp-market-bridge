@@ -16,7 +16,7 @@ BASE="https://api.twelvedata.com"
 TF={"1m":"1min","5m":"5min","15m":"15min","1h":"1h","4h":"4h","1D":"1day"}
 FOREX=("EUR/USD","GBP/USD","USD/JPY","USD/CHF","AUD/USD","NZD/USD","USD/CAD","EUR/GBP","EUR/JPY","GBP/JPY")
 COMMODITIES=("XAU/USD","XAG/USD","WTI/USD","BRENT/USD","HG1")
-STOCKS=("AAPL","MSFT","NVDA","AMZN","META","GOOGL","TSLA","AMD","NFLX","AVGO","JPM","XOM")
+STOCKS=("AAPLXUSDT","NVDAXUSDT","TSLAXUSDT","GOOGLXUSDT","AMZNXUSDT","METAXUSDT","COINXUSDT","HOODXUSDT","CRCLXUSDT","MSTRXUSDT","SPCXXUSDT","NFLXXUSDT","AVGOXUSDT","MSFTXUSDT","JPMXUSDT")
 _XSTOCKS_CACHE={"expires":0.0,"symbols":None}
 _XSTOCKS_CACHE_LOCK=threading.Lock()
 _XSTOCKS_CACHE_TTL=60.0
@@ -163,7 +163,9 @@ class ExternalMarketAdapter:
         out=[]
         for x in data.get("values",[]) or []:
             try:
-                out.append({"datetime":x["datetime"],"open":float(x["open"]),"high":float(x["high"]),"low":float(x["low"]),"close":float(x["close"]),"volume":float(x.get("volume") or 0),"source":"twelve_data"})
+                raw_dt=str(x["datetime"]).replace("Z","+00:00")
+                parsed=datetime.fromisoformat(raw_dt)
+                out.append({"start":int(parsed.timestamp()*1000),"datetime":x["datetime"],"open":float(x["open"]),"high":float(x["high"]),"low":float(x["low"]),"close":float(x["close"]),"volume":float(x.get("volume") or 0),"source":"twelve_data"})
             except (KeyError,TypeError,ValueError): pass
         return out
     def quote(self,symbol): return self._get("/quote",{"symbol":symbol})
@@ -190,7 +192,7 @@ class ExternalMarketAdapter:
         events={tf:detect_events(market,symbol,rows) for tf,rows in event_frames.items()}
         setup={tf:build_setup_plan(market,symbol,rows,events[tf]) for tf,rows in event_frames.items()}
         analysis_core=MarketProfileRouter.analyze(market,symbol,frames)
-        return {"market":market,"symbol":symbol,"adapter_version":self.VERSION,"provider":provider,"configured":configured,"analysis_ready":ready,"execution_ready":False,"execution_reason":"external_market_execution_connector_not_configured","frames":frames,"quote":quote,"analysis_core":analysis_core,"events":events,"setup_plans":setup,"errors":errors,"capabilities":{"ohlcv":True,"realtime_quote":True,"orderbook":False,"open_interest":False,"funding":False,"spot_cvd":False},"market_profile":market_profile(market),"session_context":session_context(market)}
+        return {"market":market,"symbol":symbol,"adapter_version":self.VERSION,"provider":provider,"configured":configured,"analysis_ready":ready,"execution_ready":False,"execution_reason":"external_market_execution_connector_not_configured","frames":frames,"quote":quote,"analysis_core":analysis_core,"events":events,"setup_plans":setup,"errors":errors,"capabilities":{"ohlcv":True,"realtime_quote":True,"orderbook":False,"open_interest":False,"funding":False,"spot_cvd":False},"market_profile":market_profile(market),"session_context":session_context(market),"data_quality":{"state":"READY" if ready else "PARTIAL","missing_timeframes":[tf for tf in ("1D","4h","1h","15m","5m") if len(frames.get(tf,[]))<50]}}
 def external_universe():
     try: stocks=bybit_xstocks_top15()
     except Exception: stocks=list(DEFAULT_STOCKS)
