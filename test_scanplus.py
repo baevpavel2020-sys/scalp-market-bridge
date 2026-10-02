@@ -72,7 +72,13 @@ class TestScanPlus(unittest.TestCase):
             base=100.0 + i*0.05
             rows.append({"start":i*900000,"open":base,"high":base+1.0,"low":base-1.0,"close":base+0.5,"volume":100})
         event={"ready":True,"reference":{"atr":1.0},"events":[{"event":"failed_breakout","direction":"bearish","confidence":"high","level":102}]}
-        plan=build_setup_plan("forex","EUR/USD",rows,event)
+        core={"analysis":{
+            "5m":{"ready":True,"regime_levels":{"supports":[99.0],"resistances":[105.0]},"technical":{"atr14":1.0}},
+            "15m":{"ready":True,"last_confirmed_close":100.0,"regime_levels":{"supports":[99.0,97.0],"resistances":[105.0]},"technical":{"atr14":1.0}},
+            "1h":{"ready":True,"structure":{"state":"downtrend"},"regime_levels":{"supports":[97.0],"resistances":[104.0]}},
+            "4h":{"ready":True,"regime_levels":{"supports":[95.0],"resistances":[110.0]}},
+        }}
+        plan=build_setup_plan("forex","EUR/USD",rows,event,analysis_core=core)
         self.assertTrue(plan["tradeable"])
         self.assertGreaterEqual(plan["limit_plan"]["rr"], MIN_RR)
         self.assertEqual(plan["limit_plan"]["minimum_rr"], 2.0)
