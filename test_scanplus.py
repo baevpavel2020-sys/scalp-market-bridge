@@ -53,7 +53,7 @@ class TestScanPlus(unittest.TestCase):
 
 
     def test_performance_snapshot_uses_one_closed_bar(self):
-        rows = [{"close": 100.0}, {"close": 101.0}, {"close": 102.0}]
+        rows = [{"close": 100.0}, {"close": 100.0}, {"close": 101.0}]
         perf = performance_snapshot({"15": rows})
         self.assertEqual(perf["15m"]["bars"], 2)
         self.assertAlmostEqual(perf["15m"]["change_pct"], 1.0, places=6)
