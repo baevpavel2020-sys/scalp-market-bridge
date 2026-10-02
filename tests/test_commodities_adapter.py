@@ -31,7 +31,7 @@ class CommoditiesAdapterTests(unittest.TestCase):
         out=self.adapter.scan("XAUUSD")
         self.assertEqual(out["market"],"commodities")
         self.assertEqual(out["instrument_group"],"metals")
-        self.assertEqual(set(out["frames"]),{"5m","15m","1h","4h"})
+        self.assertEqual(set(out["frames"]),{"1d","5m","15m","1h","4h"})
         self.assertTrue(out["execution_context"]["provider_context_only"])
 
     def test_provider_error_isolated(self):
