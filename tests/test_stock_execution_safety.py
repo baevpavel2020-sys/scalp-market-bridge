@@ -4,10 +4,16 @@ from scan_plus.markets.stocks.execution import build_stock_execution_plan
 
 class StockExecutionSafetyTests(unittest.TestCase):
     def test_no_implicit_risk_budget(self):
-        with self.assertRaises(TypeError):
-            build_stock_execution_plan(
-                candidate={"status":"CANDIDATE","direction":"bullish"},
-                frames={},price=100,equity=10000)
+        out=build_stock_execution_plan(
+            candidate={"status":"CANDIDATE","direction":"bullish"},
+            frames={"15m":{"analysis":{
+                "structure":{"last_swing_low":{"price":98}},
+                "fibonacci":{"extensions":{"1.618":106}}
+            }}},
+            price=100)
+        self.assertEqual(out["status"],"PLAN")
+        self.assertEqual(out["risk"]["sizing_status"],"ACCOUNT_CONTEXT_REQUIRED")
+        self.assertIsNone(out["risk"]["quantity"])
 
     def test_plan_never_submits(self):
         frames={"15m":{"analysis":{
