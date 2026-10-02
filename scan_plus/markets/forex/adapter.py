@@ -155,7 +155,7 @@ class ForexMarketAdapter(MarketAdapter):
         )
         latest_price=(frames.get("5m") or {}).get("latest_close")
         limit_plan=build_forex_execution_plan(
-            candidate=candidate, frames=frames, price=latest_price, symbol=symbol
+            candidate=candidate, frames=frames, price=latest_price, equity=None, risk_fraction=None, symbol=symbol
         ) if latest_price is not None else {"status":"WAIT","reason":"latest_price_unavailable"}
         candidate=dict(candidate)
         candidate["limit_plan"]=limit_plan if limit_plan.get("status")=="PLAN" else None
