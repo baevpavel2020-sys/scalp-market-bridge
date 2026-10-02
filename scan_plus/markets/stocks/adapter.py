@@ -10,6 +10,7 @@ from scan_plus.core.session_levels import session_high_low
 from scan_plus.markets.stocks.bybit_xstocks import BybitXStocksLoader
 from scan_plus.markets.stocks.session_gap import classify_gap, gap_fill_progress
 from scan_plus.markets.stocks.candidate import build_stock_candidate
+from scan_plus.core.mtf_state import build_mtf_state
 
 
 class StocksMarketAdapter(MarketAdapter):
