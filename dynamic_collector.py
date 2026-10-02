@@ -7193,6 +7193,7 @@ class ScanJobManager:
                 crypto_exposure=exposure_buckets([dict(s,market="crypto") for s in crypto_setups])
                 for item in crypto_results:
                     item["relative_strength"]=crypto_rank_map.get(item.get("symbol"))
+                    if isinstance(item.get("market_context"),dict): item["market_context"]["relative_strength"]=item["relative_strength"]
                     item["risk_clusters"]=crypto_clusters
                     item["exposure_buckets"]=crypto_exposure
                 errors=dict(activation_errors); errors.update({f"crypto:{k}":v for k,v in crypto_errors.items()})
@@ -7220,6 +7221,7 @@ class ScanJobManager:
                     rank_map={x["symbol"]:x for x in rankings}
                     for item in vals:
                         item["relative_strength"]=rank_map.get(item.get("symbol"))
+                        if isinstance(item.get("market_context"),dict): item["market_context"]["relative_strength"]=item["relative_strength"]
                         item["risk_clusters"]=clusters
                         item["exposure_buckets"]=exposure
                     external[market]={"status":"PASS","count":len(vals),"results":vals,"relative_strength_ranking":rankings}
