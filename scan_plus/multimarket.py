@@ -48,11 +48,31 @@ def parse_scan_command(command):
         if clean:
             symbols.append(clean)
 
+    routing_errors=[]
     if symbols and not markets:
         resolved=[resolve_market(s) for s in symbols]
+        unknown=[s for s,m in zip(symbols,resolved) if m is None]
         known=tuple(dict.fromkeys(m for m in resolved if m))
-        return {"markets": known, "symbols": symbols}
-    return {"markets": tuple(markets) if markets else (), "symbols": symbols}
+        if unknown:
+            routing_errors.extend({"symbol":s,"reason":"market_unresolved"} for s in unknown)
+        return {"markets": known, "symbols": symbols, "routing_errors": routing_errors}
+    if markets:
+        for symbol in symbols:
+            resolved=resolve_market(symbol)
+            if resolved is not None and resolved not in markets:
+                routing_errors.append({
+                    "symbol":symbol,
+                    "resolved_market":resolved,
+                    "requested_markets":list(markets),
+                    "reason":"market_symbol_mismatch",
+                })
+            elif resolved is None and len(markets)>1:
+                routing_errors.append({
+                    "symbol":symbol,
+                    "requested_markets":list(markets),
+                    "reason":"ambiguous_symbol_for_multiple_markets",
+                })
+    return {"markets": tuple(markets) if markets else (), "symbols": symbols, "routing_errors": routing_errors}
 
 
 class MultiMarketOrchestrator:
@@ -118,6 +138,16 @@ class MultiMarketOrchestrator:
             return {"status":"INVALID_COMMAND","reason":"no_market_or_symbol"}
         requests=self.build_requests(parsed)
         results=self.scan_many(requests)
+        for error in parsed.get("routing_errors") or []:
+            results.append({
+                "status":"DATA_ERROR",
+                "market":(error.get("resolved_market") or (
+                    error.get("requested_markets") or [None]
+                )[0]),
+                "symbol":error.get("symbol"),
+                "error":error.get("reason"),
+                "routing_error":dict(error),
+            })
         decision=aggregate_results(results)
         return {
             "status":"OK",
