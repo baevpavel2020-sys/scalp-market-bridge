@@ -4,6 +4,7 @@ This layer intentionally knows nothing about Elliott/Fibo/order flow internals.
 It only resolves user intent and invokes independent market adapters.
 """
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from scan_plus.market_registry import MarketRegistry
 from scan_plus.instrument_resolver import normalize_symbol, resolve_market
@@ -76,7 +77,8 @@ class MultiMarketOrchestrator:
 
     def scan_many(self, requests):
         """Expand market-native universes and run isolated full scans."""
-        results = []
+        expanded=[]
+        results=[]
         for market, symbol in requests:
             key=str(market).lower()
             if symbol is None:
@@ -91,10 +93,23 @@ class MultiMarketOrchestrator:
                     results.append({"status":"NO_UNIVERSE","market":key,
                                     "reason":"market_native_universe_unavailable"})
                     continue
-                for item in symbols:
-                    results.append(self.registry.safe_scan(key,item))
+                expanded.extend((key,item) for item in symbols)
             else:
-                results.append(self.registry.safe_scan(key,symbol))
+                expanded.append((key,symbol))
+
+        # Provider calls are independent per instrument. Parallelize them with a
+        # bounded pool to reduce wall-clock time without creating unbounded load.
+        workers=min(8,max(1,len(expanded)))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures={pool.submit(self.registry.safe_scan,market,symbol):(market,symbol)
+                      for market,symbol in expanded}
+            for future in as_completed(futures):
+                market,symbol=futures[future]
+                try:
+                    results.append(future.result())
+                except Exception as exc:
+                    results.append({"status":"DATA_ERROR","market":market,"symbol":symbol,
+                                    "error":f"{type(exc).__name__}: {exc}"})
         return results
 
     def scan(self, command):
