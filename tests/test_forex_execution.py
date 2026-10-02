@@ -41,3 +41,21 @@ class ForexExecutionTests(unittest.TestCase):
 
 if __name__=="__main__":
     unittest.main()
+
+
+class YahooFXProviderHardeningTests(unittest.TestCase):
+    def test_loader_uses_injected_session_and_normalizes_payload(self):
+        from unittest.mock import Mock
+        from scan_plus.markets.forex.yahoo import YahooFXLoader
+        session=Mock()
+        response=Mock()
+        response.status_code=200
+        response.json.return_value={"chart":{"result":[{
+            "timestamp":[1704103200],
+            "indicators":{"quote":[{"open":[1.1],"high":[1.2],"low":[1.0],"close":[1.15],"volume":[0]}]}
+        }]}}
+        session.get.return_value=response
+        out=YahooFXLoader(session=session).candles("EURUSD","60")
+        self.assertEqual(len(out["candles"]),1)
+        self.assertEqual(out["symbol"],"EURUSD")
+        session.get.assert_called_once()
