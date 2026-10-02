@@ -4809,6 +4809,7 @@ class DynamicMarketManager:
             },
             "manipulation": detect_pump_exhaustion(linear, full.get("spot",{}))
         }
+        result["_frames"]={tf:list(rows) for tf,rows in (linear.get("candles") or {}).items()}
         result["regime"]={"composite":__import__("scan_intelligence").classify_regime_from_analysis(result.get("timeframes") or {})}
         result["mtf_matrix"]=__import__("scan_intelligence").mtf_state_matrix(result.get("timeframes") or {})
         result["intelligence_version"]="intelligence_v1"
