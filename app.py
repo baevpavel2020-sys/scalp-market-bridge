@@ -248,7 +248,7 @@ def scan_command():
     Non-blocking: returns a job handle; poll /scan-job/<job_id> for the final result.
     """
     try:
-        top_n = max(1, min(int(request.args.get("top", "6")), 6))
+        top_n = max(1, min(int(request.args.get("top", "8")), 8))
         shortlist = max(top_n, min(int(request.args.get("shortlist", "30")), 100))
         return jsonify(start_scan_auto_job(top_n=top_n, shortlist=shortlist)), 202
     except ValueError as exc:
@@ -260,7 +260,7 @@ def scan_command():
 def scan_auto():
     """Compatibility route: now STARTS a background job instead of blocking."""
     try:
-        top_n = int(request.args.get("top", "6"))
+        top_n = int(request.args.get("top", "8"))
         shortlist = int(request.args.get("shortlist", "30"))
         return jsonify(start_scan_auto_job(top_n=top_n, shortlist=shortlist)), 202
     except ValueError as exc:
