@@ -5,6 +5,7 @@ confirmatory only and can never manufacture a direction when the provider did no
 supply the relevant evidence.
 """
 from typing import Mapping
+from scan_plus.core.mtf_state import build_mtf_state
 
 
 GROUP_RULES = {
