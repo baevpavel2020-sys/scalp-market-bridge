@@ -107,10 +107,12 @@ class WatchlistStore:
         state=setup.get("opportunity_state") or "WATCH"
         with self.lock:
             prev=self.items.get(sym)
-            changed=prev is None or prev.get("state")!=state
+            event_basis=setup.get("event_basis") or []
+            signature=json.dumps([(e.get("event"),e.get("direction"),e.get("level")) for e in event_basis if isinstance(e,dict)],sort_keys=True,default=str)
+            changed=prev is None or prev.get("state")!=state or prev.get("event_signature")!=signature
             self.items[sym]={"symbol":sym,"market":scan.get("market","crypto"),"state":state,"direction":scan.get("direction"),
                              "rr":(setup.get("risk_reward") or (setup.get("limit_plan") or {}).get("rr")),
-                             "updated_at":time.time(),"state_changed":changed}
+                             "event_signature":signature,"updated_at":time.time(),"state_changed":changed}
             return dict(self.items[sym])
     def snapshot(self,market=None):
         now=time.time()
@@ -173,8 +175,12 @@ def enrich_scan(scan, market="crypto"):
     out["mtf_matrix"]=mtf_state_matrix(scan.get("timeframes") or {})
     out["performance"]=performance_snapshot(frames)
     out["intelligence_version"]=INTELLIGENCE_VERSION
-    WATCHLIST.upsert(out)
+    watch=WATCHLIST.upsert(out)
+    out["watchlist"]=watch
     out["alert"]=alert_payload(out)
+    if watch and not watch.get("state_changed"):
+        out["alert"]["eligible"]=False
+        out["alert"]["reason"]="no_new_setup_state_or_event"
     OUTCOMES.record(out)
     return out
 
