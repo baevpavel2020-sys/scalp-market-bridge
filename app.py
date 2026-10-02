@@ -5,7 +5,7 @@ from flask import Flask, jsonify, request
 
 from collector import collector
 from spot_collector import spot_collector
-from dynamic_collector import (dynamic_manager, run_bybit_prescan_ws_probe, run_prescan, start_scan_auto_job, start_scan_batch_job, get_scan_job)
+from dynamic_collector import (dynamic_manager, run_bybit_prescan_ws_probe, run_prescan, start_scan_auto_job, start_scan_unified_job, start_scan_batch_job, get_scan_job)
 from multi_market_adapters import ExternalMarketAdapter, external_universe, MarketProfileRouter
 
 app = Flask(__name__)
@@ -121,6 +121,21 @@ def scan_markets():
         return jsonify(out)
     except Exception as exc:
         return jsonify({"status":"FAIL","error":f"{type(exc).__name__}:{exc}"}),500
+
+@app.get("/scan-live")
+def scan_live():
+    """Unified LIVE scan: crypto + xStocks + Forex + commodities."""
+    try:
+        top_n=max(1,min(int(request.args.get("top","5")),6))
+        shortlist=int(request.args.get("shortlist","30"))
+        raw=request.args.get("markets","crypto,stocks,forex,commodities")
+        markets=[x.strip().lower() for x in raw.split(",") if x.strip()]
+        return jsonify(start_scan_unified_job(top_n=top_n,shortlist=shortlist,markets=markets)),202
+    except ValueError as exc:
+        return jsonify({"error":str(exc)}),400
+    except Exception as exc:
+        return jsonify({"status":"FAIL","error":f"{type(exc).__name__}:{exc}"}),500
+
 
 @app.get("/scan-auto")
 def scan_auto():
