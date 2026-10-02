@@ -7,7 +7,8 @@ from collector import collector
 from spot_collector import spot_collector
 from dynamic_collector import (dynamic_manager, run_bybit_prescan_ws_probe, run_prescan, start_scan_auto_job, start_scan_unified_job, start_scan_batch_job, get_scan_job)
 from multi_market_adapters import ExternalMarketAdapter, external_universe, MarketProfileRouter
-from scan_intelligence import WATCHLIST
+from market_event_engine import detect_events, build_setup_plan
+from scan_intelligence import WATCHLIST, backtest_event_setups
 
 app = Flask(__name__)
 
@@ -129,6 +130,29 @@ def scan_markets():
                 out["markets"][market]={
                     "status":"DATA_BLOCK","reason":"TWELVE_DATA_API_KEY_not_configured","symbols":symbols}
         return jsonify(out)
+    except Exception as exc:
+        return jsonify({"status":"FAIL","error":f"{type(exc).__name__}:{exc}"}),500
+
+@app.get("/intelligence/backtest/<symbol>")
+def intelligence_backtest(symbol):
+    try:
+        market=request.args.get("market","crypto").strip().lower()
+        if market not in ("crypto","stocks","forex","commodities"):
+            return jsonify({"error":"unsupported market"}),400
+        limit=max(30,min(int(request.args.get("limit","500")),1000))
+        if market=="crypto":
+            snap=dynamic_manager.snapshot(dynamic_manager.normalize_symbol(symbol))
+            frames=(snap.get("linear") or {}).get("candles") or {}
+            rows=list(frames.get("15") or [])[-limit:]
+            symbol=dynamic_manager.normalize_symbol(symbol)
+        else:
+            adapter=ExternalMarketAdapter()
+            data=adapter.scan(market,symbol)
+            rows=list((data.get("frames") or {}).get("15m") or [])[-limit:]
+        result=backtest_event_setups(market,symbol,rows,detect_events,build_setup_plan,max_checkpoints=100)
+        return jsonify(result)
+    except ValueError as exc:
+        return jsonify({"error":str(exc)}),400
     except Exception as exc:
         return jsonify({"status":"FAIL","error":f"{type(exc).__name__}:{exc}"}),500
 
