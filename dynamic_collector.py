@@ -291,7 +291,6 @@ class MarketStream:
 
         topics = [
             f"publicTrade.{self.symbol}",
-            f"allLiquidation.{self.symbol}",
             f"orderbook.50.{self.symbol}",
             f"tickers.{self.symbol}",
 
@@ -303,6 +302,8 @@ class MarketStream:
             f"kline.240.{self.symbol}",
             f"kline.D.{self.symbol}",
         ]
+        if self.market == "linear":
+            topics.insert(1, f"allLiquidation.{self.symbol}")
 
         ws.send(
             json.dumps(
