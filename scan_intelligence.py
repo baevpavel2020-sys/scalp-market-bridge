@@ -510,24 +510,60 @@ def backtest_event_setups(market, symbol, rows, detect_fn, plan_fn, max_checkpoi
                 break
         if filled_at is None:
             outcome = "NOT_FILLED"
+        stat_start=filled_at if filled_at is not None else checkpoint+1
+        stat_end=(resolved_at+1) if resolved_at is not None else len(rows)
+        excursion=mae_mfe(direction,entry,rows[stat_start:stat_end])
+        realized_r=(float(limit_plan.get("rr") or 0.0) if outcome=="TP" else -1.0 if outcome=="SL" else None)
         results.append({
             "checkpoint": rows[checkpoint].get("end", rows[checkpoint].get("start", checkpoint)),
             "entry": entry, "stop": stop, "target": target,
             "rr": limit_plan.get("rr") or limit_plan.get("risk_reward"),
             "outcome": outcome,
+            "realized_r": realized_r,
+            "mae": excursion.get("mae"),
+            "mfe": excursion.get("mfe"),
             "filled_at_bar": None if filled_at is None else filled_at - checkpoint,
             "bars_to_resolution": None if resolved_at is None else resolved_at - checkpoint,
         })
     resolved = [item for item in results if item["outcome"] in ("TP", "SL")]
     tp = sum(item["outcome"] == "TP" for item in resolved)
     sl = sum(item["outcome"] == "SL" for item in resolved)
+    resolved_r=[item["realized_r"] for item in results if item.get("realized_r") is not None]
+    maes=[item["mae"] for item in results if item.get("mae") is not None]
+    mfes=[item["mfe"] for item in results if item.get("mfe") is not None]
     return {
         "version": INTELLIGENCE_VERSION, "market": market, "symbol": symbol,
         "samples": len(results), "tp": tp, "sl": sl,
         "unresolved": sum(item["outcome"] == "UNRESOLVED" for item in results),
         "not_filled": sum(item["outcome"] == "NOT_FILLED" for item in results),
-        "hit_rate": round(tp / max(1, tp + sl), 4), "results": results,
+        "hit_rate": round(tp / max(1, tp + sl), 4),
+        "expectancy_r": round(sum(resolved_r)/len(resolved_r),4) if resolved_r else None,
+        "avg_mae": round(sum(maes)/len(maes),6) if maes else None,
+        "avg_mfe": round(sum(mfes)/len(mfes),6) if mfes else None,
+        "results": results,
     }
+
+
+def walk_forward_backtest(market,symbol,rows,detect_fn,plan_fn,train_bars=300,test_bars=100,step=100):
+    """Rolling out-of-sample evaluation with strict train/test boundaries."""
+    rows=_closed_rows(rows)
+    windows=[]
+    if len(rows)<train_bars+test_bars:
+        return {"windows":[],"samples":0}
+    start=0
+    while start+train_bars+test_bars<=len(rows):
+        train=rows[start:start+train_bars]
+        test=rows[start+train_bars:start+train_bars+test_bars]
+        evaluation=backtest_event_setups(market,symbol,train+test,detect_fn,plan_fn,max_checkpoints=min(50,len(test)))
+        windows.append({"train_end":train[-1].get("end",train[-1].get("start")),
+                        "test_start":test[0].get("start"),
+                        "test_end":test[-1].get("end",test[-1].get("start")),
+                        "evaluation":evaluation})
+        start+=max(1,int(step))
+    vals=[w["evaluation"]["expectancy_r"] for w in windows if w["evaluation"].get("expectancy_r") is not None]
+    return {"version":INTELLIGENCE_VERSION,"market":market,"symbol":symbol,
+            "windows":windows,"samples":sum(w["evaluation"].get("samples",0) for w in windows),
+            "expectancy_r":round(sum(vals)/len(vals),4) if vals else None}
 
 
 def edge_summary(records):
