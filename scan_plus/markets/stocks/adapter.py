@@ -10,6 +10,7 @@ from scan_plus.core.session_levels import session_high_low
 from scan_plus.markets.stocks.bybit_xstocks import BybitXStocksLoader
 from scan_plus.markets.stocks.session_gap import classify_gap, gap_fill_progress
 from scan_plus.markets.stocks.candidate import build_stock_candidate
+from scan_plus.markets.stocks.execution import build_stock_execution_plan
 from scan_plus.core.mtf_state import build_mtf_state
 from scan_plus.core.data_contract import normalize_candles
 
@@ -113,6 +114,15 @@ class StocksMarketAdapter(MarketAdapter):
                 underlying.get("previous_close"),
                 ticker.get("last_price"),
             )
+        candidate = build_stock_candidate(
+            frames=frames, gap=gap, underlying=underlying,
+            ticker=ticker, session=latest_session,
+        )
+        limit_plan = build_stock_execution_plan(
+            candidate=candidate, frames=frames, price=ticker.get("last_price")
+        )
+        candidate = dict(candidate)
+        candidate["limit_plan"] = limit_plan if limit_plan.get("status")=="PLAN" else None
         return {
             "market": self.market, "symbol": symbol, "status": "OK",
             "profile": profile, "ticker": ticker, "underlying": underlying,
@@ -120,10 +130,7 @@ class StocksMarketAdapter(MarketAdapter):
             "gap_classification": classify_gap(gap),
             "gap_fill": fill,
             "underlying_sessions": latest_session,
-            "candidate": build_stock_candidate(
-                frames=frames, gap=gap, underlying=underlying,
-                ticker=ticker, session=latest_session,
-            ),
+            "candidate": candidate,
             "priority": resolve_priorities(
                 "stocks", symbol,
                 "gap" if classify_gap(gap).get("state") in ("gap_up","gap_down") else "continuation"
