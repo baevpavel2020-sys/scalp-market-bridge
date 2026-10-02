@@ -131,24 +131,61 @@ class MultiMarketOrchestrator:
             market, symbol = expanded[0]
             return [self.registry.safe_scan(market, symbol)]
 
-        # Provider calls are independent per instrument. Parallelize them with a
-        # bounded pool to reduce wall-clock time without creating unbounded load.
-        workers=min(8,len(expanded))
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures={pool.submit(self.registry.safe_scan,market,symbol):(market,symbol)
-                      for market,symbol in expanded}
-            completed={}
-            for future in as_completed(futures):
-                market,symbol=futures[future]
-                key=(market,symbol)
-                try:
-                    completed[key]=future.result()
-                except Exception as exc:
-                    completed[key]={"status":"DATA_ERROR","market":market,"symbol":symbol,
-                                    "error":f"{type(exc).__name__}: {exc}"}
-        # Preserve request order after parallel execution. This makes logs,
-        # snapshots and regression tests deterministic without sacrificing latency.
-        return [completed[(market,symbol)] for market,symbol in expanded if (market,symbol) in completed]
+        # Concurrency is isolated by market. This is important for both correctness
+        # and provider hygiene:
+        # - Crypto's legacy DynamicMarketManager has a bounded active-symbol pool.
+        #   Never run more crypto scans concurrently than that pool can retain.
+        # - Yahoo-backed FX/commodity feeds must not be hit by one global burst,
+        #   otherwise unrelated markets can trigger provider-wide 429s.
+        # - No market's provider pressure is allowed to affect another market.
+        MARKET_WORKERS = {
+            "crypto": 6,
+            "stocks": 3,
+            "forex": 2,
+            "commodities": 1,
+        }
+        grouped = {}
+        for market, symbol in expanded:
+            grouped.setdefault(market, []).append((market, symbol))
+
+        completed = {}
+        for market in dict.fromkeys(m for m, _ in expanded):
+            items = grouped.get(market, [])
+            workers = min(MARKET_WORKERS.get(market, 2), len(items))
+            if workers <= 1:
+                for item in items:
+                    try:
+                        completed[item] = self.registry.safe_scan(*item)
+                    except Exception as exc:
+                        completed[item] = {
+                            "status": "DATA_ERROR", "market": item[0],
+                            "symbol": item[1],
+                            "error": f"{type(exc).__name__}: {exc}",
+                        }
+                continue
+
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {
+                    pool.submit(self.registry.safe_scan, *item): item
+                    for item in items
+                }
+                for future in as_completed(futures):
+                    item = futures[future]
+                    try:
+                        completed[item] = future.result()
+                    except Exception as exc:
+                        completed[item] = {
+                            "status": "DATA_ERROR", "market": item[0],
+                            "symbol": item[1],
+                            "error": f"{type(exc).__name__}: {exc}",
+                        }
+
+        # Preserve original universe order after each market has been scanned.
+        return [
+            completed[(market, symbol)]
+            for market, symbol in expanded
+            if (market, symbol) in completed
+        ]
 
     def scan(self, command):
         parsed=parse_scan_command(command)
