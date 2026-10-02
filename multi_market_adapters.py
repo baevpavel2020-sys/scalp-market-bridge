@@ -126,7 +126,9 @@ class MarketProfileRouter:
                 if not all(math.isfinite(x) for x in (o,h,l,cl)) or h<max(o,cl) or l>min(o,cl) or h<l:
                     continue
                 out.append({"start":int(ts or i),"open":o,"high":h,"low":l,"close":cl,
-                            "volume":float(row.get("volume") or 0),"confirm":True})
+                            "volume":float(row.get("volume") or 0),
+                            "confirm":bool(row.get("confirm",True)),
+                            "end":row.get("end")})
             except (KeyError,TypeError,ValueError,OverflowError):
                 continue
         return out
