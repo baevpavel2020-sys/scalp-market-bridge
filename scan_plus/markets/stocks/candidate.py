@@ -51,7 +51,6 @@ def build_stock_candidate(*, frames, gap, underlying, ticker, session=None):
     if mtf_state["regime"]=="countertrend_correction" or (mtf_state["regime"] in ("context_only","unresolved") and mtf_state.get("context_direction") is not None):
         blockers.append("mtf_execution_not_aligned")
     if not fibo: blockers.append("fibonacci_or_elliott_unavailable")
-    if not underlying_ready: blockers.append("underlying_unavailable")
     # Underlying context is useful for gap/session confirmation, but it is not
     # a hard directional gate: the tradable xStock itself has price structure.
     # Missing underlying data stays visible in evidence and never creates direction.
@@ -67,15 +66,13 @@ def build_stock_candidate(*, frames, gap, underlying, ticker, session=None):
     if blockers:
         status="WATCH"
         reason=",".join(blockers)
-    elif not underlying_ready:
-        status="WATCH"
-        reason="underlying_unavailable"
     elif direction=="unknown":
         status="WATCH"
         reason="structure_direction_unresolved"
     else:
         status="CANDIDATE"
-        reason="multi_block_confirmation_pending_execution"
+        reason=("multi_block_confirmation_underlying_context_unavailable"
+                if not underlying_ready else "multi_block_confirmation_pending_execution")
 
     return {
         "status":status,
