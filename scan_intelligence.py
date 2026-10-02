@@ -159,9 +159,13 @@ def enrich_external_result(result, market):
     out=dict(result); out["regime"]={tf_name:classify_regime(rows) for tf_name,rows in frames.items()}
     out["mtf_matrix"]=mtf_state_matrix(tf); out["performance"]=performance_snapshot(frames)
     out["setup"]=setup; out["opportunity_state"]=("MARKET_READY" if setup.get("tradeable") and setup.get("execution_ready") else "LIMIT_READY" if setup.get("tradeable") else "WATCH")
-    out["alert"]=alert_payload({"symbol":result.get("symbol"),"direction":setup.get("direction"),"setup":{**setup,"opportunity_state":out["opportunity_state"]}})
     out["intelligence_version"]=INTELLIGENCE_VERSION
-    WATCHLIST.upsert({"symbol":result.get("symbol"),"market":market,"direction":setup.get("direction"),"setup":{"opportunity_state":out["opportunity_state"],"limit_plan":setup.get("limit_plan")}})
+    watch=WATCHLIST.upsert({"symbol":result.get("symbol"),"market":market,"direction":setup.get("direction"),"setup":{**setup,"opportunity_state":out["opportunity_state"],"event_basis":setup.get("event_basis") or [],"limit_plan":setup.get("limit_plan")}})
+    out["watchlist"]=watch
+    out["alert"]=alert_payload({"symbol":result.get("symbol"),"direction":setup.get("direction"),"setup":{**setup,"opportunity_state":out["opportunity_state"]}})
+    if watch and not watch.get("state_changed"):
+        out["alert"]["eligible"]=False
+        out["alert"]["reason"]="no_new_setup_state_or_event"
     OUTCOMES.record({"symbol":result.get("symbol"),"market":market,"direction":setup.get("direction"),"setup":{**setup,"opportunity_state":out["opportunity_state"]},"regime":out["regime"],"mtf_matrix":out["mtf_matrix"]})
     return out
 
