@@ -25,7 +25,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 import websocket
 from pump_exhaustion import detect as detect_pump_exhaustion
 from scan_intelligence import enrich_scan, relative_strength
-from risk_engine import exposure_cluster
+from risk_engine import exposure_cluster, exposure_buckets
 
 
 # ============================================================
@@ -7057,9 +7057,11 @@ class ScanJobManager:
                 crypto_rank_map={x["symbol"]:x for x in crypto_rankings}
                 crypto_setups=[x.get("setup") for x in crypto_results if isinstance(x.get("setup"),dict) and x.get("setup",{}).get("tradeable")]
                 crypto_clusters=exposure_cluster([dict(s,market="crypto") for s in crypto_setups])
+                crypto_exposure=exposure_buckets([dict(s,market="crypto") for s in crypto_setups])
                 for item in crypto_results:
                     item["relative_strength"]=crypto_rank_map.get(item.get("symbol"))
                     item["risk_clusters"]=crypto_clusters
+                    item["exposure_buckets"]=crypto_exposure
                 errors=dict(activation_errors); errors.update({f"crypto:{k}":v for k,v in crypto_errors.items()})
                 external={}
                 adapter=ExternalMarketAdapter(); universe=external_universe()
@@ -7079,10 +7081,12 @@ class ScanJobManager:
                     rankings=relative_strength(vals,market_key=market)
                     setups=[v.get("setup") for v in vals if isinstance(v.get("setup"),dict) and v.get("setup",{}).get("tradeable")]
                     clusters=exposure_cluster([dict(s,market=market) for s in setups])
+                    exposure=exposure_buckets([dict(s,market=market) for s in setups])
                     rank_map={x["symbol"]:x for x in rankings}
                     for item in vals:
                         item["relative_strength"]=rank_map.get(item.get("symbol"))
                         item["risk_clusters"]=clusters
+                        item["exposure_buckets"]=exposure
                     external[market]={"status":"PASS","count":len(vals),"results":vals,"relative_strength_ranking":rankings}
                 result={"orchestrator_version":"scan_orchestrator_v3_unified_live","mode":"unified","prescan_used":True,"markets":markets,
                         "crypto":{"selected_symbols":eligible,"activated_symbols":activated,"warmup_seconds":round(warm_elapsed,2),"scan_plus_count":len(crypto_results),"scan_plus_results":crypto_results},
