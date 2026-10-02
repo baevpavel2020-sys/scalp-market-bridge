@@ -60,6 +60,19 @@ class DecisionAggregatorTests(unittest.TestCase):
         self.assertEqual(out["limit_plan"]["state"],"LIMIT_PLAN")
         self.assertEqual(out["limit_plan"]["side"],"BUY_LIMIT")
 
+    def test_top_level_crypto_limit_plan_is_not_hidden_as_watch(self):
+        out=normalize_result({
+            "market":"crypto","symbol":"BTCUSDT",
+            "trade_state":"WAIT_TRIGGER","direction":"bearish",
+            "limit_plan":{
+                "eligible":True,"state":"LIMIT_PLAN","side":"SELL_LIMIT",
+                "entry":100000.0,"stop":101000.0,"targets":{"t1":97000.0},
+                "risk_reward":3.0,
+            },
+        })
+        self.assertEqual(out["status"],"SETUP")
+        self.assertEqual(out["limit_plan"]["side"],"SELL_LIMIT")
+
     def test_ineligible_limit_plan_remains_watch(self):
         out=normalize_result({
             "market":"crypto","symbol":"ETHUSDT",
