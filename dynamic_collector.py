@@ -7066,9 +7066,11 @@ class ScanJobManager:
                         external[market]={"status":"NO_SYMBOLS","results":[]}; continue
                     if market!="stocks" and not adapter.configured:
                         external[market]={"status":"DATA_BLOCK","reason":"TWELVE_DATA_API_KEY_not_configured","symbols":symbols}; continue
-                    workers=min(3,len(symbols))
-                    with ThreadPoolExecutor(max_workers=workers) as pool:
-                        vals=list(pool.map(lambda s:adapter.scan(market,s),symbols))
+                    # External providers are batch-oriented: one request per
+                    # timeframe for the whole market is faster and avoids a request
+                    # storm across 15 symbols x 5 timeframes.
+                    vals_map=adapter.scan_many(market,symbols)
+                    vals=[vals_map[s] for s in symbols if s in vals_map]
                     rankings=relative_strength(vals,market_key=market)
                     rank_map={x["symbol"]:x for x in rankings}
                     for item in vals: item["relative_strength"]=rank_map.get(item.get("symbol"))
