@@ -96,6 +96,7 @@ def build_commodity_execution_plan(*,candidate,frames,price,equity=None,risk_fra
         "risk":{"account_equity":eq,"risk_fraction":rf,"risk_cash":risk_cash,
                 "risk_per_price_unit":risk_per_unit,"units":units,
                 "sizing_status":"READY" if units is not None else "ACCOUNT_CONTEXT_REQUIRED"},
+        "rr":rr,
         "commodity_group":group,
         "execution_policy":{
             "submit":False,
