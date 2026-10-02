@@ -1,3 +1,7 @@
+SCAN_ARCHITECTURE_VERSION = "scan_architecture_v2"
+SCAN_PIPELINE = ("market","data_quality","regime_structure","event","evidence","setup","execution")
+OPPORTUNITY_STATES = ("MARKET_READY","LIMIT_READY","WATCH")
+
 import csv
 import concurrent.futures
 import datetime as dt
@@ -6848,6 +6852,7 @@ class ScanOrchestrator:
         return {
             "symbol": scan.get("symbol"),
             "manipulation": scan.get("manipulation") or {"status":"NO_DATA","signal":"NONE"},
+            "architecture": {"version":SCAN_ARCHITECTURE_VERSION,"pipeline":list(SCAN_PIPELINE),"opportunity_states":list(OPPORTUNITY_STATES)},
             "engine_version": scan.get("engine_version"),
             "price": scan.get("price"),
             "setup_state": scan.get("setup_state"),
