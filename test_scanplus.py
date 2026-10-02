@@ -398,6 +398,14 @@ class TestScanPlus(unittest.TestCase):
             "volume": 100,
         } for i in range(120)]
         clean, err = OnDemandPreScanService._validate_provider_rows(good, "5")
+        self.assertIsNone(err)
+        self.assertEqual(len(clean), 120)
+        stale = [dict(x) for x in good]
+        stale_base = int(time.time() * 1000) - (3 * 60 * 60 * 1000)
+        for i, row in enumerate(stale):
+            row["start"] = stale_base + i * 300_000
+            row["end"] = row["start"] + 299_999
+        clean, err = OnDemandPreScanService._validate_provider_rows(stale, "5")
         self.assertEqual(err, "stale_history")
         self.assertEqual(clean, [])
         bad = dict(good[0])
