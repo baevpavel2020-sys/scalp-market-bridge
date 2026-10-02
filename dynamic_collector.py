@@ -7302,6 +7302,10 @@ class ScanJobManager:
                     if len(eligible)>=top_n: break
                 activated,activation_errors,warm_elapsed=cls._activate_and_warm_auto(jid,eligible)
                 crypto_results,crypto_errors=cls._scan_symbols_progressive(jid,activated)
+                crypto_rankings=relative_strength(crypto_results,market_key="crypto")
+                crypto_rank_map={x["symbol"]:x for x in crypto_rankings}
+                for item in crypto_results:
+                    item["relative_strength"]=crypto_rank_map.get(item.get("symbol"))
                 errors=dict(activation_errors); errors.update({f"crypto:{k}":v for k,v in crypto_errors.items()})
                 external={}
                 adapter=ExternalMarketAdapter(); universe=external_universe()
@@ -7322,7 +7326,7 @@ class ScanJobManager:
                         item["relative_strength"]=rank_map.get(item.get("symbol"))
                     external[market]={"status":"PASS","count":len(vals),"results":vals,"relative_strength_ranking":rankings}
                 result={"orchestrator_version":"scan_orchestrator_v3_unified_live","mode":"unified","prescan_used":True,"markets":markets,
-                        "crypto":{"selected_symbols":eligible,"activated_symbols":activated,"warmup_seconds":round(warm_elapsed,2),"scan_plus_count":len(crypto_results),"scan_plus_results":crypto_results},
+                        "crypto":{"selected_symbols":eligible,"activated_symbols":activated,"warmup_seconds":round(warm_elapsed,2),"scan_plus_count":len(crypto_results),"scan_plus_results":crypto_results,"relative_strength_ranking":crypto_rankings},
                         "external":external,"prescan":{"status":prescan.get("status"),"engine_version":prescan.get("engine_version"),"scan_plus_candidates":prescan.get("scan_plus_candidates") or [],"diagnostics":prescan.get("diagnostics") or {}},
                         "errors":errors,"elapsed_ms":round((time.time()-started_unified)*1000.0,2)}
             else:
