@@ -19,6 +19,22 @@ class BybitXStocksLoader:
         self.timeout=float(timeout)
         self.session=session or requests.Session()
 
+    def default_symbols(self, limit=15):
+        result=self._get("/v5/market/tickers",{"category":"spot"})
+        ranked=[]
+        for item in result.get("list") or []:
+            token=str(item.get("symbol") or "").upper()
+            if not token.endswith("XUSDT"):
+                continue
+            underlying=token[:-5]
+            try:
+                turnover=float(item.get("turnover24h") or item.get("volume24h") or 0)
+            except (TypeError,ValueError):
+                turnover=0.0
+            ranked.append((turnover,underlying))
+        ranked.sort(reverse=True)
+        return [symbol for _,symbol in ranked[:int(limit)]]
+
     def token_symbol(self, symbol):
         key=str(symbol).upper().replace("USDT","")
         if key.endswith("X"): key=key[:-1]
