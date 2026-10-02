@@ -5525,7 +5525,6 @@ class OnDemandPreScanService:
     PRESCAN_CACHE_DIR = os.environ.get("PRESCAN_CACHE_DIR", "/tmp/scalp-market-bridge/prescan")
     HISTORY_WORKERS = 6
     HISTORY_GLOBAL_TIMEOUT = 16.0
-    JOB_PRESCAN_TIMEOUT = max(20.0, min(60.0, float(os.environ.get("SCAN_PRESCAN_TIMEOUT", "45"))))
     _cache_lock = threading.RLock()
     _history_cache = {}
     _provider_route_cache = {}
@@ -6752,6 +6751,7 @@ class ScanJobManager:
     AUTO_WARMUP_SECONDS = max(30, min(90, int(os.environ.get("SCAN_AUTO_WARMUP_SECONDS", "40"))))
     AUTO_WARMUP_MAX_SECONDS = max(AUTO_WARMUP_SECONDS, min(180, int(os.environ.get("SCAN_AUTO_WARMUP_MAX_SECONDS", "120"))))
     AUTO_WARMUP_POLL_SECONDS = max(1, min(10, int(os.environ.get("SCAN_AUTO_WARMUP_POLL_SECONDS", "2"))))
+    JOB_PRESCAN_TIMEOUT = max(20.0, min(60.0, float(os.environ.get("SCAN_PRESCAN_TIMEOUT", "45"))))
     _lock = threading.RLock()
     _jobs = {}
     _executor = concurrent.futures.ThreadPoolExecutor(
