@@ -4,7 +4,7 @@ from scan_architecture import MIN_RR, market_block_policy
 from limit_engine import generate_candidates
 from scenario_engine import build_scenarios, EventLifecycle
 from risk_engine import execution_cost, mae_mfe, exposure_cluster
-from scan_intelligence import classify_regime, relative_strength, WatchlistStore, alert_payload, enrich_scan, performance_snapshot, backtest_event_setups
+from scan_intelligence import classify_regime, relative_strength, WatchlistStore, alert_payload, enrich_scan, performance_snapshot, backtest_event_setups, walk_forward_backtest
 class TestScanPlus(unittest.TestCase):
 
     def test_market_policy_does_not_enable_crypto_flow_elsewhere(self):
@@ -57,6 +57,23 @@ class TestScanPlus(unittest.TestCase):
         out=enrich_scan({"symbol":"SAFE","market":"crypto","timeframes":{},"setup":{}})
         self.assertIn("scenario",out)
         self.assertIn("execution_cost",out)
+
+
+    def test_event_only_cannot_create_trade(self):
+        rows=[{"start":i,"open":100,"high":101,"low":99,"close":100,"volume":100,"confirm":True} for i in range(40)]
+        event={"ready":True,"reference":{"atr":1.0},"events":[{"event":"failed_breakout","direction":"bearish","confidence":"high","level":102}]}
+        plan=build_setup_plan("forex","EUR/USD",rows,event)
+        self.assertFalse(plan["tradeable"])
+        self.assertTrue(plan["wait_for_confirmation"])
+
+    def test_walk_forward_has_strict_windows(self):
+        rows=[{"start":i,"open":100+i*0.01,"high":101+i*0.01,"low":99+i*0.01,"close":100+i*0.01,"volume":100,"confirm":True} for i in range(160)]
+        event={"ready":True,"reference":{"atr":1.0},"events":[]}
+        def detect(*args): return event
+        def plan(*args): return {"tradeable":False}
+        out=walk_forward_backtest("crypto","TESTUSDT",rows,detect,plan,train_bars=100,test_bars=30,step=30)
+        self.assertTrue(out["windows"])
+        self.assertEqual(out["windows"][0]["test_start"],rows[100]["start"])
 
     def test_context_events_survive(self):
         out=_dedupe_events([{"event":"session_context"},{"event":"inventory_event"}])
