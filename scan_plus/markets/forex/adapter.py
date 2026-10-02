@@ -20,7 +20,7 @@ class ForexMarketAdapter(MarketAdapter):
     market = "forex"
 
     def __init__(self, loader=None, engine=None):
-        self.loader = loader or StooqFXLoader()
+        self.loader = loader or YahooFXLoader()
         self.engine = engine or AnalyticalEngine(CanonicalPricePatternBackend())
 
     def profile(self, symbol=None):
