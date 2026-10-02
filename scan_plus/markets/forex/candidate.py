@@ -4,6 +4,7 @@ Session liquidity is contextual evidence. Structure, Elliott and Fibonacci remai
 primary directional gate; a session sweep alone never creates a trade candidate.
 """
 from typing import Mapping
+from scan_plus.core.mtf_state import build_mtf_state
 
 
 def _structure_state(frames):
