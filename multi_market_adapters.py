@@ -71,7 +71,7 @@ def bybit_xstock_candles(symbol,interval="15",limit=500):
 
 MARKET_PROFILES = {
     "crypto": {"session_model":"24_7","volume_model":"exchange_volume","oi":True,"funding":True,"liquidations":True,"orderbook":True,"cvd":True,"execution":"exchange_perpetual_or_spot","special_events":["pump_exhaustion","short_squeeze","long_liquidation_cascade","liquidity_sweep"]},
-    "stocks": {"session_model":"exchange_session","volume_model":"exchange_volume","oi":False,"funding":False,"liquidations":False,"orderbook":True,"cvd":False,"execution":"bybit_xstock_spot","special_events":["gap","opening_range","session_liquidity","failed_breakout"]},
+    "stocks": {"session_model":"secondary_market_24_7","volume_model":"exchange_volume","oi":False,"funding":False,"liquidations":False,"orderbook":True,"cvd":False,"execution":"bybit_xstock_spot","special_events":["gap","opening_range","session_liquidity","failed_breakout"]},
     "forex": {"session_model":"asia_london_newyork","volume_model":"tick_or_provider_volume","oi":False,"funding":False,"liquidations":False,"orderbook":False,"cvd":False,"execution":"external_fx_broker_required","special_events":["session_liquidity","london_breakout","ny_reversal","failed_breakout"]},
     "commodities": {"session_model":"instrument_session","volume_model":"provider_volume","oi":False,"funding":False,"liquidations":False,"orderbook":False,"cvd":False,"execution":"external_commodity_broker_required","special_events":["session_liquidity","inventory_event","contract_rollover","failed_breakout"]},
 }
