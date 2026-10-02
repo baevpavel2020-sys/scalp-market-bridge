@@ -125,7 +125,7 @@ class CommoditiesMarketAdapter(MarketAdapter):
         )
         latest_close=(frames.get("5m") or {}).get("latest_close")
         limit_plan=build_commodity_execution_plan(
-            candidate=candidate, frames=frames, price=latest_close
+            candidate=candidate, frames=frames, price=latest_close, equity=None, risk_fraction=None
         ) if latest_close is not None else {"status":"WAIT","reason":"latest_price_unavailable"}
         candidate=dict(candidate)
         candidate["limit_plan"]=limit_plan if limit_plan.get("status")=="PLAN" else None
