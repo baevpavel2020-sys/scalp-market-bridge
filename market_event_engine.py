@@ -17,6 +17,8 @@ def _dedupe_events(events):
     return list(groups.values())
 from datetime import datetime,timezone
 from scan_architecture import MIN_RR, market_block_policy
+from limit_engine import generate_candidates, choose_candidate
+from scenario_engine import scenario_snapshot
 try:
  from zoneinfo import ZoneInfo
 except ImportError:
@@ -101,89 +103,45 @@ def _shared_direction(analysis_core):
     return None, "uncertain"
 
 
-def _shared_limit_geometry(market, symbol, analysis_core):
+def _shared_limit_geometry(market, symbol, analysis_core, events=None):
     analysis=(analysis_core or {}).get("analysis") or {}
-    frame15=analysis.get("15m") or {}
-    price=float(frame15.get("last_confirmed_close") or 0)
-    if price<=0:
-        return None
     direction,state=_shared_direction(analysis_core)
+    scenarios=scenario_snapshot(analysis_core,events or [])
     if direction not in ("bullish","bearish") or state!="confirmed":
         return None
-
-    def levels(tf, side):
-        aliases={"D":"1D","240":"4h","60":"1h","15":"15m","5":"5m","1":"1m"}
-        key=aliases.get(tf,tf)
-        r=((analysis.get(key) or {}).get("regime_levels") or {})
-        return [float(x) for x in (r.get(side) or []) if isinstance(x,(int,float)) and math.isfinite(float(x))]
-
-    # Structural location is the entry source. Events remain confirmation/trigger,
-    # never an alternative direction authority.
-    if direction=="bullish":
-        supports=sorted([x for x in levels("5", "supports")+levels("15", "supports")+levels("60", "supports") if x < price], reverse=True)
-        resistances=sorted([x for x in levels("15", "resistances")+levels("60", "resistances")+levels("240", "resistances") if x > price])
-        entry=supports[0] if supports else None
-        lower=[x for x in supports[1:] if x < entry] if entry is not None else []
-        stop_level=lower[0] if lower else None
-        target=resistances[0] if resistances else None
-    else:
-        resistances=sorted([x for x in levels("5", "resistances")+levels("15", "resistances")+levels("60", "resistances") if x > price])
-        supports=sorted([x for x in levels("15", "supports")+levels("60", "supports")+levels("240", "supports") if x < price], reverse=True)
-        entry=resistances[0] if resistances else None
-        upper=[x for x in resistances[1:] if x > entry] if entry is not None else []
-        stop_level=upper[0] if upper else None
-        target=supports[0] if supports else None
-
-    atr=((analysis.get("15m") or {}).get("technical") or {}).get("atr14")
-    atr=float(atr) if atr else None
-    if entry is None:
+    candidates=generate_candidates(market,symbol,analysis_core,direction,max_candidates=3)
+    candidate=choose_candidate(candidates)
+    if not candidate:
         return None
-    buffer=(0.20*atr) if atr else abs(price-entry)*0.15
-    if direction=="bullish":
-        stop=(stop_level-buffer) if stop_level is not None else entry-buffer
-    else:
-        stop=(stop_level+buffer) if stop_level is not None else entry+buffer
-    risk=abs(entry-stop)
-    if risk<=0:
-        return None
-
-    if target is None:
-        return None
-    reward=abs(target-entry)
-    rr=reward/risk
-    if rr < MIN_RR:
-        return None
-    side="BUY_LIMIT" if direction=="bullish" else "SELL_LIMIT"
-    zone=max(buffer*0.25, abs(entry)*0.0002)
-    if direction=="bullish":
-        entry_zone=[entry-zone,entry+zone]
-    else:
-        entry_zone=[entry-zone,entry+zone]
-    return {
+    plan={
         "market":market,"symbol":symbol,"direction":direction,
         "execution_ready":False,"execution_mode":"conditional_limit",
         "tradeable":True,"ready":True,
-        "trigger":{"type":"structural_retest","level":round(entry,10),
+        "scenario":scenarios,
+        "limit_candidates":candidates,
+        "trigger":{"type":"structural_retest","level":round(candidate["entry"],10),
                    "condition":"price_retests_structural_level_and_confirms_rejection"},
         "limit_plan":{
-            "eligible":True,"state":"LIMIT_PLAN","side":side,
-            "entry":round(entry,10),"entry_zone":[round(min(entry_zone),10),round(max(entry_zone),10)],
-            "stop":round(stop,10),"take_profit":round(target,10),
-            "rr":round(rr,3),"minimum_rr":MIN_RR,
+            "eligible":True,"state":"LIMIT_PLAN",
+            "side":"BUY_LIMIT" if direction=="bullish" else "SELL_LIMIT",
+            "entry":round(candidate["entry"],10),
+            "entry_zone":[round(min(candidate["entry_zone"]),10),round(max(candidate["entry_zone"]),10)],
+            "stop":round(candidate["stop"],10),"take_profit":round(candidate["take_profit"],10),
+            "rr":round(candidate["rr"],3),"minimum_rr":MIN_RR,
             "rr_basis":"limit_entry_to_stop_and_take_profit",
-            "risk_distance":round(risk,10),
-            "entry_basis":{"source":"shared_structure","timeframe":"5m/15m/1h"},
+            "risk_distance":round(candidate["risk_distance"],10),
+            "entry_basis":{"source":candidate["source"],"timeframe":candidate["timeframe"]},
             "place_now":False,
             "requires_before_fill":["direction_confirmation","structural_retest","market_data_ready"],
             "cancel_if":["direction_invalidated","structural_invalidation","target_or_scale_invalid"],
         },
-        "event_basis":[],
-        "notes":[
-            "Shared analytical core supplies direction and structural geometry.",
-            "Market-specific event engine only adds contextual confirmation.",
+        "event_basis":[],"notes":[
+            "Multi-source LIMIT engine selects structural candidates.",
+            "Market-specific events are confirmation, never direction authority.",
             "No broker order is sent."
         ],
     }
+    return plan
 
 
 def build_setup_plan(market,symbol,rows,result,analysis_core=None):
@@ -192,12 +150,13 @@ def build_setup_plan(market,symbol,rows,result,analysis_core=None):
 
     # Prefer the shared analytical core. This makes xStocks/Forex/Commodities use
     # the same structural discipline as crypto without importing crypto-only flow.
-    shared=_shared_limit_geometry(market,symbol,analysis_core)
+    shared=_shared_limit_geometry(market,symbol,analysis_core,result.get("events") or [])
     if shared:
         directional=[e for e in result.get("events",[]) if e.get("direction")==shared["direction"]]
         priority=market_block_policy(market).get("event_priority") or []
         directional.sort(key=lambda e: priority.index(e.get("event")) if e.get("event") in priority else len(priority))
         shared["event_basis"]=directional[:4]
+        shared["scenario"]["event_support"]=directional[:4]
         return shared
 
     # Conservative fallback when the shared MTF core is not ready.
