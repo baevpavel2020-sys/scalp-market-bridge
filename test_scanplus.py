@@ -21,5 +21,12 @@ class TestScanPlus(unittest.TestCase):
         self.assertGreaterEqual(plan["limit_plan"]["rr"], MIN_RR)
         self.assertEqual(plan["limit_plan"]["minimum_rr"], 2.0)
 
+    def test_health_contract(self):
+        from app import app
+        with app.test_client() as client:
+            response=client.get("/health")
+            self.assertEqual(response.status_code,200)
+            self.assertEqual(response.get_json()["status"],"healthy")
+
 if __name__=="__main__":
     unittest.main()
