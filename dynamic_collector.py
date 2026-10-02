@@ -7055,7 +7055,11 @@ class ScanJobManager:
                 crypto_results,crypto_errors=cls._scan_symbols_progressive(jid,activated)
                 crypto_rankings=relative_strength(crypto_results,market_key="crypto")
                 crypto_rank_map={x["symbol"]:x for x in crypto_rankings}
-                for item in crypto_results: item["relative_strength"]=crypto_rank_map.get(item.get("symbol"))
+                crypto_setups=[x.get("setup") for x in crypto_results if isinstance(x.get("setup"),dict) and x.get("setup",{}).get("tradeable")]
+                crypto_clusters=exposure_cluster([dict(s,market="crypto") for s in crypto_setups])
+                for item in crypto_results:
+                    item["relative_strength"]=crypto_rank_map.get(item.get("symbol"))
+                    item["risk_clusters"]=crypto_clusters
                 errors=dict(activation_errors); errors.update({f"crypto:{k}":v for k,v in crypto_errors.items()})
                 external={}
                 adapter=ExternalMarketAdapter(); universe=external_universe()
