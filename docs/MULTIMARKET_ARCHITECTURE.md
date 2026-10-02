@@ -434,3 +434,23 @@ Immediate audit fixes:
 - Added regression tests for cash-risk sizing, WATCH blocking, and confirmation-timeframe enforcement.
 
 Commodity cycle status: CLOSED after implementation + audit.
+
+
+## Final Multi-Scan integration — step 1 + audit
+
+Implemented:
+- Unified command routing now supports plain `Скан`, market-scoped commands, and exact-symbol commands.
+- Plain `Скан` expands market-native universes instead of returning PRESCAN_ONLY.
+- Default native universe limits: Crypto 30, Stocks 15, Forex 9, Commodities 5.
+- Crypto universe is sourced from its existing PreScan candidate ranking; Stocks are ranked from Bybit xStock 24h turnover; Forex and Commodities use explicit native symbol sets until their providers expose dynamic ranking.
+- Added an explicit `default_symbols()` adapter contract and default registry wiring.
+- Market failures remain isolated through `safe_scan()`.
+- Exact commands such as `Скан EURUSD` and `Скан NVDA` resolve to their dedicated adapters.
+
+Immediate audit fixes:
+- Stocks adapter still contained a stale `LegacyCryptoBackend` reference; replaced with `CanonicalPricePatternBackend`.
+- Stocks candidate initially allowed Structure on one timeframe and Fibonacci on another; fixed to require same-timeframe Fibonacci + Elliott confirmation.
+- Market profiles contained unsupported context priorities (Forex relative strength/indicators; XAU active-session assumptions); removed or aligned them with implemented evidence boundaries.
+- Commodity provider remains explicitly injectable; no fake default feed is introduced.
+
+CI note: the repository's regression workflow exists, but this connector session does not expose a workflow-dispatch operation, and no CI status was returned for the latest commits. Therefore no claim of a green full CI run is made here.
