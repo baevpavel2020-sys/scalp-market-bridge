@@ -47,14 +47,27 @@ def bybit_xstocks_top15():
         _XSTOCKS_CACHE["expires"]=now+_XSTOCKS_CACHE_TTL
     return top
 
+def _interval_ms(interval):
+    return {"1m":60000,"5m":300000,"15m":900000,"1h":3600000,"4h":14400000,"1D":86400000,
+            "1":"60000","5":"300000","15":"900000","60":"3600000","240":"14400000","D":"86400000"}.get(str(interval),900000)
+
+def _with_close_state(row, interval):
+    start=int(row["start"])
+    end=start+_interval_ms(interval)
+    return {**row,"end":end,"confirm":bool(end<=int(time.time()*1000))}
+
 def bybit_xstock_candles(symbol,interval="15",limit=500):
     data=_bybit_get("/v5/market/kline",{"category":"spot","symbol":symbol,"interval":interval,"limit":min(int(limit),1000)})
     out=[]
     for row in reversed(data.get("result",{}).get("list",[]) or []):
-        try: out.append({"start":int(row[0]),"open":float(row[1]),"high":float(row[2]),"low":float(row[3]),"close":float(row[4]),"volume":float(row[5]),"turnover":float(row[6]),"confirm":True,"source":"bybit_xstocks"})
+        try:
+            out.append(_with_close_state({
+                "start":int(row[0]),"open":float(row[1]),"high":float(row[2]),
+                "low":float(row[3]),"close":float(row[4]),"volume":float(row[5]),
+                "turnover":float(row[6]),"source":"bybit_xstocks"
+            }, interval))
         except (IndexError,TypeError,ValueError): pass
     return out
-
 
 MARKET_PROFILES = {
     "crypto": {"session_model":"24_7","volume_model":"exchange_volume","oi":True,"funding":True,"liquidations":True,"orderbook":True,"cvd":True,"execution":"exchange_perpetual_or_spot","special_events":["pump_exhaustion","short_squeeze","long_liquidation_cascade","liquidity_sweep"]},
@@ -168,13 +181,13 @@ class ExternalMarketAdapter:
             try:
                 raw_dt=str(x["datetime"]).replace("Z","+00:00")
                 parsed=datetime.fromisoformat(raw_dt)
-                out.append({"start":int(parsed.timestamp()*1000),"datetime":x["datetime"],"open":float(x["open"]),"high":float(x["high"]),"low":float(x["low"]),"close":float(x["close"]),"volume":float(x.get("volume") or 0),"source":"twelve_data"})
+                out.append({"start":int(parsed.timestamp()*1000),"datetime":x["datetime"],"open":float(x["open"]),"high":float(x["high"]),"low":float(x["low"]),"close":float(x["close"]),"volume":float(x.get("volume") or 0),"source":"twelve_data"}, interval)
             except (KeyError,TypeError,ValueError): pass
         return out
     def quote(self,symbol): return self._get("/quote",{"symbol":symbol})
 
     @staticmethod
-    def _parse_values(values):
+    def _parse_values(values, interval):
         out=[]
         for x in values or []:
             try:
@@ -202,13 +215,13 @@ class ExternalMarketAdapter:
         # responses for multi-symbol batch requests. Normalize both forms.
         if isinstance(data.get("values"),list):
             key=str((data.get("meta") or {}).get("symbol") or symbols[0])
-            return {key:self._parse_values(data.get("values"))}
+            return {key:self._parse_values(data.get("values"),interval)}
         result={}
         for key,payload in (data.items() if isinstance(data,dict) else []):
             if not isinstance(payload,dict) or key in ("status","message"):
                 continue
             if isinstance(payload.get("values"),list):
-                result[str(key)]=self._parse_values(payload.get("values"))
+                result[str(key)]=self._parse_values(payload.get("values"),interval)
         return result
 
     def quotes_batch(self,symbols):
