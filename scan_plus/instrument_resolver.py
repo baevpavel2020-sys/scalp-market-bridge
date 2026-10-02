@@ -6,6 +6,8 @@ EXPLICIT_SYMBOL_MARKETS = {
     "USDCHF":"forex","NZDUSD":"forex","EURGBP":"forex","EURJPY":"forex",
     "XAUUSD":"commodities","XAGUSD":"commodities","WTI":"commodities","BRENT":"commodities","COCOA":"commodities",
     "NVDA":"stocks","AAPL":"stocks","MSFT":"stocks","AMZN":"stocks","META":"stocks","TSLA":"stocks","GOOGL":"stocks",
+    "NVDAXUSDT":"stocks","AAPLXUSDT":"stocks","MSFTXUSDT":"stocks","TSLAXUSDT":"stocks","METAXUSDT":"stocks",
+    "GOOGLXUSDT":"stocks","AMZNXUSDT":"stocks","COINXUSDT":"stocks","HOODXUSDT":"stocks","CRCLXUSDT":"stocks","MSTRXUSDT":"stocks",
 }
 
 def normalize_symbol(symbol):
