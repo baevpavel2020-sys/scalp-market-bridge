@@ -1,3 +1,5 @@
+from scan_architecture import MIN_RR
+
 SCAN_ARCHITECTURE_VERSION = "scan_architecture_v2"
 SCAN_PIPELINE = ("market","data_quality","regime_structure","event","evidence","setup","execution")
 OPPORTUNITY_STATES = ("MARKET_READY","LIMIT_READY","WATCH")
@@ -3944,7 +3946,7 @@ class DynamicMarketManager:
             "price_order_valid":price_order_valid,
             "risk_distance_valid":risk_distance_valid,
             "reward_distance_valid":reward_distance_valid,
-            "rr_min_1_5":rr is not None and rr>=1.5,
+            "rr_min_2_0":rr is not None and rr>=MIN_RR,
             "execution_not_opposed":execution_dir in ("neutral",direction),
             "lower_tf_not_opposed":lower_tf_not_opposed,
             "flow_not_opposed":not opposed_flow,
@@ -4394,7 +4396,7 @@ class DynamicMarketManager:
                 and not any(r in market_reasons for r in ("invalidation_missing","target_missing","price_order_invalid"))
             )
             if lp_required:
-                min_rr=2.0
+                min_rr=MIN_RR
                 # Exact entry boundary required to preserve min_rr with the SAME stop/T1.
                 if direction=="bullish":
                     rr_boundary=(t1 + min_rr*stop)/(1.0+min_rr)
@@ -4502,7 +4504,7 @@ class DynamicMarketManager:
             "targets":{
                 "t1":t1,"t1_source":None if not target1 else f"{target1[2]}_{target1[1]}","t1_timeframe":None if not target1 else target1[1],
                 "t2":t2,"t2_source":None if not target2 else f"{target2[2]}_{target2[1]}","t2_timeframe":None if not target2 else target2[1],
-                "rr_basis":"scan_price_to_stop_and_t1","rule":"nearest_valid_scenario_target_same_intraday_scale_first"
+                "rr_basis":"scan_price_to_stop_and_t1","minimum_rr":MIN_RR,"rule":"nearest_valid_scenario_target_same_intraday_scale_first"
             },
             "risk_reward":None if rr is None else round(rr,3),"risk_distance":risk,"reward_distance":reward,
             "trade_scale":{"stop_pct":None if stop_pct is None else round(stop_pct,4),"target_pct":None if target_pct is None else round(target_pct,4),"stop_atr":None if stop_atr is None else round(stop_atr,3),"valid":scale_ok,"reason":scale_reason,"execution_atr":atr,"invalidation_timeframe":inv_tf},
@@ -4519,7 +4521,7 @@ class DynamicMarketManager:
             "trigger_confirmed":trigger_ok,
             "trade_style":mtf.get("trade_style"),
             "execution_regime":execution.get("execution_regime"),"dislocated_execution_timeframes":dislocated,
-            "required":{"direction_confirmed":bool(direction!="neutral" and (mtf.get("direction") or {}).get("state")=="confirmed"),"transport_ready":bool(execution.get("ready")),"trade_data_ready":bool(execution.get("trade_data_ready")),"price_order_valid":order_ok,"rr_min_1_5":rr is not None and rr>=1.5,"trade_scale_valid":scale_ok,"setup_aligned":setup_state=="aligned","trigger_confirmed":trigger_ok,"flow_not_opposed":not flow_opposed,"execution_not_opposed":execution_ok,"no_upstream_hard_invalidation":not bool(hard_invalidations)}
+            "required":{"direction_confirmed":bool(direction!="neutral" and (mtf.get("direction") or {}).get("state")=="confirmed"),"transport_ready":bool(execution.get("ready")),"trade_data_ready":bool(execution.get("trade_data_ready")),"price_order_valid":order_ok,"rr_min_2_0":rr is not None and rr>=MIN_RR,"trade_scale_valid":scale_ok,"setup_aligned":setup_state=="aligned","trigger_confirmed":trigger_ok,"flow_not_opposed":not flow_opposed,"execution_not_opposed":execution_ok,"no_upstream_hard_invalidation":not bool(hard_invalidations)}
         }
 
     def realtime_readiness(self, symbol):
