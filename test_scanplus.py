@@ -93,6 +93,10 @@ class TestScanPlus(unittest.TestCase):
         for market in ("stocks","forex","commodities"):
             self.assertFalse(market_block_policy(market)["flow"])
             self.assertFalse(market_block_policy(market)["manipulation"])
+    def test_xstocks_is_24_7_secondary_market(self):
+        from multi_market_adapters import market_profile
+        self.assertEqual(market_profile("stocks")["session_model"], "secondary_market_24_7")
+
     def test_market_policies_have_distinct_event_priority(self):
         from scan_architecture import market_block_policy
         self.assertEqual(market_block_policy("stocks")["event_priority"][0], "gap")
