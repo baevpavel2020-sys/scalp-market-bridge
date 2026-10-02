@@ -84,6 +84,9 @@ def detect(linear,spot=None,analysis=None,now=None):
  efficiency=None if d5 in (None,0) or p5 is None else p5/abs(d5)
  diag.update({"pump":pump,"exhaustion":exhaustion,"absorption":absorption,
               "failed_acceptance":failed_acceptance,"aggression_efficiency":efficiency})
+ # Second-wave context: renewed 1m aggression after a 5m exhaustion signature.
+ second_wave=bool(pump and exhaustion and d1 is not None and d1>0 and d1>=d5*.45)
+ diag["second_wave"]=second_wave
 
  if pump:
   score=2+int(driver=="perp")*2+int(oi5 is not None and oi5>=1)+int(funding is not None and funding>=.0005)+int(absorption)+int(exhaustion)
@@ -106,6 +109,8 @@ def detect(linear,spot=None,analysis=None,now=None):
  pump_ev=next((e for e in events if e["type"]=="PUMP_EXHAUSTION"),None)
  signal="NONE"; execution="NONE"
  if pump_ev:
+  pump_ev["second_wave"]=second_wave
+  pump_ev["time_stop"]={"seconds":900,"expires_if_unconfirmed":True}
   if pump_ev["stage"]=="CONFIRMED": signal="REVERSAL_EVENT_CONFIRMED"; execution="ELIGIBLE_FOR_SCENARIO_ENGINE"
   else: signal="SHORT_CANDIDATE"; execution="NO_SHORT_UNTIL_CAUSAL_CONFIRMATION"
  status="CONFIRMED" if confirmed else "DEVELOPING" if events else "NO_EVENT"
