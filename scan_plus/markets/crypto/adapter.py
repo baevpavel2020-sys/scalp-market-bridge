@@ -47,6 +47,12 @@ class CryptoMarketAdapter(MarketAdapter):
         legacy = self._manager.scan(symbol)
         result = dict(legacy)
 
+        # The legacy engine predates the Scan+ market contract and may omit
+        # identity fields. The adapter itself is the authoritative boundary:
+        # never reject valid crypto data merely because legacy omitted metadata.
+        result["market"] = self.market
+        result["symbol"] = key = str(legacy.get("symbol") or symbol).upper()
+
         # Evaluate adaptive abnormality BEFORE the event decision, using prior
         # observations only. This keeps the current move out of its own baseline.
         key = str(legacy.get("symbol") or symbol).upper()
