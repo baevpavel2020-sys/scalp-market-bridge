@@ -1,6 +1,7 @@
 import concurrent.futures
 import os
 import requests
+import threading
 from flask import Flask, jsonify, request
 
 from collector import collector
@@ -11,6 +12,43 @@ from market_event_engine import detect_events, build_setup_plan
 from scan_intelligence import WATCHLIST, backtest_event_setups, walk_forward_backtest, edge_discovery
 
 app = Flask(__name__)
+
+
+def _boot_scan_from_render_trigger():
+    """Start exactly one unified Scan when Render env trigger changes.
+    This is the native control-plane bridge used by the assistant; it does not
+    expose or require any privileged HTTP endpoint.
+    """
+    trigger_id = os.environ.get("SCAN_TRIGGER_ID", "").strip()
+    if not trigger_id:
+        return
+    if getattr(app, "_boot_scan_trigger_id", None) == trigger_id:
+        return
+    app._boot_scan_trigger_id = trigger_id
+
+    def _run():
+        try:
+            job = start_scan_unified_job(
+                top_n=5,
+                shortlist=30,
+                markets=["crypto", "stocks", "forex", "commodities"],
+            )
+            print(
+                "SCAN_TRIGGER_STARTED "
+                + str({"trigger_id": trigger_id, "job_id": job.get("job_id")}),
+                flush=True,
+            )
+        except Exception as exc:
+            print(
+                "SCAN_TRIGGER_FAILED "
+                + str({"trigger_id": trigger_id, "error": f"{type(exc).__name__}: {exc}"}),
+                flush=True,
+            )
+
+    threading.Thread(target=_run, name="scan-trigger", daemon=True).start()
+
+
+_boot_scan_from_render_trigger()
 
 
 def ensure_market_collectors():
