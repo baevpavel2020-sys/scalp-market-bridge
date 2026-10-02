@@ -48,3 +48,14 @@ def exposure_cluster(setups,correlations=None,threshold=0.70):
         clusters.append({"market":a.get("market"),"direction":a.get("direction"),
                          "symbols":[x.get("symbol") for x in cluster],"size":len(cluster)})
     return clusters
+
+def exposure_buckets(setups):
+    """Conservative gross-exposure buckets without pretending assets are correlated."""
+    groups={}
+    for setup in setups or []:
+        key=(setup.get("market"),setup.get("direction"))
+        bucket=groups.setdefault(key,{"market":key[0],"direction":key[1],"symbols":[],"size":0})
+        if setup.get("symbol") not in bucket["symbols"]:
+            bucket["symbols"].append(setup.get("symbol"))
+            bucket["size"]+=1
+    return list(groups.values())
