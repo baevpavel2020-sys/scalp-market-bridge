@@ -15,13 +15,14 @@ def _structure_state(frames):
     return "unknown",None
 
 
-def _shared_ready(frames):
-    for tf in ("15m","1h","4h"):
-        analysis=(frames.get(tf) or {}).get("analysis") or {}
-        fib=analysis.get("fibonacci") or {}
-        ell=analysis.get("elliott") or {}
-        if fib.get("ready") is True and ell.get("ready") is True:
-            return True,tf
+def _shared_ready(frames, structure_tf):
+    if structure_tf is None:
+        return False,None
+    analysis=(frames.get(structure_tf) or {}).get("analysis") or {}
+    fib=analysis.get("fibonacci") or {}
+    ell=analysis.get("elliott") or {}
+    if fib.get("ready") is True and ell.get("ready") is True:
+        return True,structure_tf
     return False,None
 
 
@@ -38,7 +39,7 @@ def _sweeps(frames):
 
 def build_forex_candidate(*, frames, active_sessions=None, overlap=False):
     direction,structure_tf=_structure_state(frames)
-    shared_ready,confirmation_tf=_shared_ready(frames)
+    shared_ready,confirmation_tf=_shared_ready(frames,structure_tf)
     sweeps=_sweeps(frames)
 
     bullish_sweep=any(state=="low_sweep" and tf==confirmation_tf for tf,_,state in sweeps)
