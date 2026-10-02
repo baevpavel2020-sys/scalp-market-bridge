@@ -566,3 +566,27 @@ Audit fixes:
 - Explicit structural transition now overrides derived direction/raw confluence.
 - Removed the stale Stooq default reference from the Forex adapter after the Yahoo provider migration.
 - Added regression tests for the final MTF gate.
+
+
+## Additional hardening audit — 2026-10-02
+
+Found and fixed during post-MTF hardening:
+- Commodity default registry passed an object provider into a wrapper that only accepted callables; adapter now accepts both provider objects exposing `candles()` and callable fetchers.
+- Forex had no `default_symbols()`, so the unified default Scan silently produced `NO_UNIVERSE` for Forex; added a deterministic 9-pair native universe.
+- Bybit xStock resolver classified explicit symbols such as `NVDAXUSDT` as crypto; added explicit xStock token resolution.
+- Unknown but valid Bybit xStock underlyings now map to `<UNDERLYING>XUSDT` instead of falling back to an invalid underlying symbol.
+- Session-level extraction without an explicit cutoff could include the currently forming session; it now derives the cutoff from the newest supplied candle and only uses completed sessions.
+- An existing session regression test was inconsistent with the completed-session contract; corrected it.
+- MTF state extraction now supports both flat test frames and real adapter frames containing `analysis.structure`.
+- Yahoo 4H aggregation now sorts provider candles before bucketing, preventing out-of-order provider data from corrupting OHLC aggregation.
+
+New regression coverage:
+- provider-object boundary
+- completed-session safety
+- Forex default universe
+- xStock resolution/mapping
+- MTF gate
+- flat/real MTF frame contracts
+
+Current branch head: `b643894c0a0b342787532013db63a1059bd6f632`.
+GitHub reports no commit status checks for this branch head, so no green CI result is claimed.
