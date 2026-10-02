@@ -62,6 +62,65 @@ def session_context(market, now_epoch=None):
     else: session="24_7"
     return {"market":market,"session":session,"utc_hour":round(hour,2),"profile":market_profile(market)}
 
+class MarketProfileRouter:
+    """Routes external-market data into the shared technical core without
+    importing crypto-only flow metrics or execution assumptions."""
+    VERSION="market_profile_router_v1"
+
+    @staticmethod
+    def _rows_by_tf(frames):
+        return {
+            tf:list(rows or [])
+            for tf,rows in (frames or {}).items()
+            if isinstance(rows,list)
+        }
+
+    @staticmethod
+    def _normalize(rows):
+        out=[]
+        for i,row in enumerate(rows or []):
+            try:
+                ts=row.get("start")
+                if ts is None and row.get("datetime"):
+                    import datetime as dt
+                    raw=str(row["datetime"]).replace("Z","+00:00")
+                    parsed=dt.datetime.fromisoformat(raw)
+                    ts=int(parsed.timestamp()*1000)
+                o,h,l,cl=[float(row[k]) for k in ("open","high","low","close")]
+                if not all(math.isfinite(x) for x in (o,h,l,cl)) or h<max(o,cl) or l>min(o,cl) or h<l:
+                    continue
+                out.append({"start":int(ts or i),"open":o,"high":h,"low":l,"close":cl,
+                            "volume":float(row.get("volume") or 0),"confirm":True})
+            except (KeyError,TypeError,ValueError,OverflowError):
+                continue
+        return out
+
+    @classmethod
+    def analyze(cls, market, symbol, frames):
+        """Technical analysis only. No market-specific execution decision is fabricated."""
+        from dynamic_collector import MarketStream
+        normalized={tf:cls._normalize(rows) for tf,rows in cls._rows_by_tf(frames).items()}
+        analyzer=MarketStream.__new__(MarketStream)
+        analysis={}
+        for tf,rows in normalized.items():
+            analysis[tf]=analyzer._analysis_bundle(rows) if rows else {"ready":False}
+        profile=market_profile(market)
+        return {
+            "router_version":cls.VERSION,
+            "market":str(market).lower(),"symbol":symbol,
+            "profile":profile,"session_context":session_context(market),
+            "analysis":analysis,
+            "execution_ready":False,
+            "execution_reason":profile.get("execution","external_execution_not_configured"),
+            "flow_policy":{
+                "use_oi":bool(profile.get("oi")),
+                "use_funding":bool(profile.get("funding")),
+                "use_liquidations":bool(profile.get("liquidations")),
+                "use_orderbook":bool(profile.get("orderbook")),
+                "use_cvd":bool(profile.get("cvd")),
+            },
+        }
+
 class ExternalMarketAdapter:
     VERSION="external_market_adapter_v1"
     def __init__(self,api_key=None):
