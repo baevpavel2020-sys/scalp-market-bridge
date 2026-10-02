@@ -2,7 +2,7 @@ name: ScanPlus Phase 1 Tests
 
 on:
   push:
-    branches: ["audit/phase1-production-fixes"]
+    branches: ["audit/phase1-production-fixes", "phase2/historical-seed"]
   pull_request:
     branches: ["scan-plus-multimarket", "main"]
 
