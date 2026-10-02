@@ -6647,7 +6647,14 @@ class ScanOrchestrator:
             "setup_state": scan.get("setup_state"),
             "trigger_state": scan.get("trigger_state"),
             "trade_state": scan.get("trade_state"),
-            "direction": scan.get("direction"),
+            # Public direction must be a simple value for consumers, while
+            # preserving the complete MTF direction object for diagnostics.
+            "direction": (
+                (scan.get("direction") or {}).get("direction")
+                if isinstance(scan.get("direction"), dict)
+                else scan.get("direction")
+            ) or ((scan.get("setup") or {}).get("direction")),
+            "direction_detail": scan.get("direction"),
             "context": scan.get("context"),
             "trade_style": scan.get("trade_style"),
             "block_class": scan.get("block_class"),
