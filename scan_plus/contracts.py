@@ -19,6 +19,10 @@ class MarketAdapter(ABC):
     def prescan(self, **kwargs) -> Mapping[str, Any]:
         raise NotImplementedError
 
+    def default_symbols(self, limit: int = 30):
+        """Return market-native symbols for an unqualified multi-scan, if supported."""
+        return []
+
     @abstractmethod
     def scan(self, symbol: str) -> Mapping[str, Any]:
         raise NotImplementedError
