@@ -69,6 +69,19 @@ class StocksMarketAdapter(MarketAdapter):
         profile = self.profile(symbol)
         underlying = self._underlying(symbol)
         frames = {}
+        daily = self.loader.klines(symbol, interval="D", limit=240)
+        daily_rows, daily_quality = normalize_candles(
+            daily["candles"], symbol=symbol, interval="D", closed_only=True
+        )
+        frames["1d"] = {
+            "bars": len(daily_rows),
+            "data_quality": daily_quality,
+            "latest_timestamp_ms": max(
+                [r.get("timestamp_ms") for r in daily_rows if r.get("timestamp_ms") is not None],
+                default=None,
+            ),
+            "analysis": self.engine.analyze_profiled(daily_rows, profile.get("scan") or []),
+        }
         for label, interval in (("5m","5"),("15m","15"),("1h","60"),("4h","240")):
             data = self.loader.klines(symbol, interval=interval, limit=240)
             rows = data["candles"]
