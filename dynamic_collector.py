@@ -3476,10 +3476,10 @@ class DynamicMarketManager:
             broken_level=None
             structural_gap=None
             if price is not None and structural_low is not None and price < structural_low:
-                mode="price_discovery_down"; effective_direction="bearish"; broken_level=structural_low
+                mode="price_discovery_down"; broken_level=structural_low
                 structural_gap=structural_low-price
             elif price is not None and structural_high is not None and price > structural_high:
-                mode="price_discovery_up"; effective_direction="bullish"; broken_level=structural_high
+                mode="price_discovery_up"; broken_level=structural_high
                 structural_gap=price-structural_high
             elif price is not None and structural_low is not None and structural_high is not None:
                 structural_gap=0.0
@@ -3495,7 +3495,13 @@ class DynamicMarketManager:
                     elif mode=="price_discovery_up":
                         projections=[round(structural_high+width*r,10) for r in ratios]
             result[tf]={
-                "mode":mode,"effective_direction":effective_direction,
+                "mode":mode,
+                "effective_direction":effective_direction,
+                "price_discovery_direction": (
+                    "bearish" if mode=="price_discovery_down" else
+                    "bullish" if mode=="price_discovery_up" else None
+                ),
+                "direction_confirmation":"confirmed" if mode=="inside_structure" else "pending_structure_confirmation",
                 "structural_low":structural_low,"structural_high":structural_high,
                 "broken_level":broken_level,"last_confirmed_close":last_close,
                 "price_gap_atr":None if gap_atr is None else round(gap_atr,4),
@@ -3518,7 +3524,11 @@ class DynamicMarketManager:
             c=a.get("confluence",{})
             raw_direction=c.get("direction","neutral")
             lc=live.get(tf,{})
-            direction=lc.get("effective_direction",raw_direction)
+            # Price discovery is an event, not a direction override. Preserve the
+            # confirmed timeframe direction until its own structure confirms a break.
+            direction=raw_direction
+            if lc.get("mode")!="inside_structure" and state in ("unknown","range","range_or_transition","transition"):
+                direction="neutral"
             state=a.get("structure",{}).get("state","unknown")
             # A one-vote momentum edge must not flip an established opposite structure.
             # External live structure breaks are still allowed to override immediately.
@@ -3537,6 +3547,8 @@ class DynamicMarketManager:
                 "direction":direction,
                 "raw_direction":raw_direction,
                 "live_mode":lc.get("mode"),
+                "price_discovery_direction":lc.get("price_discovery_direction"),
+                "direction_confirmation":lc.get("direction_confirmation"),
                 "price_gap_atr":lc.get("price_gap_atr"),
                 "elliott":(a.get("elliott",{}).get("primary") or {}).get("type"),
                 "elliott_ambiguous":a.get("elliott",{}).get("ambiguous"),
