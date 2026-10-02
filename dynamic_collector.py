@@ -3473,17 +3473,27 @@ class DynamicMarketManager:
             structural_high=max(prices) if prices else None
 
             mode="inside_structure"
-            effective_direction=(a.get("confluence") or {}).get("direction","neutral")
+            raw_direction=(a.get("confluence") or {}).get("direction","neutral")
+            effective_direction=raw_direction
+            pending_direction=None
             broken_level=None
             structural_gap=None
             if price is not None and structural_low is not None and price < structural_low:
-                mode="price_discovery_down"; effective_direction="bearish"; broken_level=structural_low
+                mode="price_discovery_down"; pending_direction="bearish"; broken_level=structural_low
                 structural_gap=structural_low-price
             elif price is not None and structural_high is not None and price > structural_high:
-                mode="price_discovery_up"; effective_direction="bullish"; broken_level=structural_high
+                mode="price_discovery_up"; pending_direction="bullish"; broken_level=structural_high
                 structural_gap=price-structural_high
             elif price is not None and structural_low is not None and structural_high is not None:
                 structural_gap=0.0
+            last_event=structure.get("last_event") or {}
+            event_dir=last_event.get("direction")
+            event_type=last_event.get("type")
+            event_confirmed=bool(last_event.get("confirmed") or last_event.get("valid") or event_type in ("BOS","CHoCH"))
+            if pending_direction and event_confirmed and event_dir==pending_direction:
+                effective_direction=pending_direction
+            elif pending_direction:
+                effective_direction="transition" if raw_direction in ("bullish","bearish") else "neutral"
 
             gap_atr=(structural_gap/atr) if structural_gap is not None and atr else None
             projections=[]
@@ -3496,7 +3506,8 @@ class DynamicMarketManager:
                     elif mode=="price_discovery_up":
                         projections=[round(structural_high+width*r,10) for r in ratios]
             result[tf]={
-                "mode":mode,"effective_direction":effective_direction,
+                "mode":mode,"raw_direction":raw_direction,"effective_direction":effective_direction,
+                "pending_direction":pending_direction,
                 "structural_low":structural_low,"structural_high":structural_high,
                 "broken_level":broken_level,"last_confirmed_close":last_close,
                 "price_gap_atr":None if gap_atr is None else round(gap_atr,4),
@@ -4373,7 +4384,6 @@ class DynamicMarketManager:
             lp_required=bool(
                 direction in ("bullish","bearish")
                 and (mtf.get("direction") or {}).get("state")=="confirmed"
-                and execution.get("trade_data_ready")
                 and stop is not None and t1 is not None
                 and order_ok and scale_ok
                 and not hard_invalidations
@@ -4495,6 +4505,11 @@ class DynamicMarketManager:
             "smc_scenario":{"5m":smc5,"1m":smc1},"hard_invalidations":hard_invalidations,"block_class":block_class,"block_reasons":reasons,"retryable":retry,
             "setup_state":setup_state,"trigger_state":trigger_state,
             "limit_plan":limit_plan,
+            "opportunity_state":(
+                "MARKET_READY" if state=="SETUP"
+                else "LIMIT_READY" if limit_plan.get("eligible")
+                else "WATCH"
+            ),
             "trigger_direction_aligned":bool(trigger_state=="aligned"),
             "trigger_confirmed":trigger_ok,
             "trade_style":mtf.get("trade_style"),
@@ -6854,6 +6869,7 @@ class ScanOrchestrator:
                 "targets": setup.get("targets"),
                 "risk_reward": setup.get("risk_reward"),
                 "limit_plan": setup.get("limit_plan") or {"eligible":False,"state":"NO_LIMIT_PLAN"},
+                "opportunity_state": setup.get("opportunity_state") or ("MARKET_READY" if setup.get("status")=="SETUP" else "LIMIT_READY" if (setup.get("limit_plan") or {}).get("eligible") else "WATCH"),
                 "failed_requirements": setup.get("failed_requirements") or [],
             },
         }
