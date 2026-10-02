@@ -119,7 +119,7 @@ class StocksMarketAdapter(MarketAdapter):
             ticker=ticker, session=latest_session,
         )
         limit_plan = build_stock_execution_plan(
-            candidate=candidate, frames=frames, price=ticker.get("last_price")
+            candidate=candidate, frames=frames, price=ticker.get("last_price"), equity=None, risk_fraction=None
         )
         candidate = dict(candidate)
         candidate["limit_plan"] = limit_plan if limit_plan.get("status")=="PLAN" else None
