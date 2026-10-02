@@ -5,6 +5,7 @@ averages directions into a probability and never promotes a lower-timeframe conf
 to a confirmed reversal without structural confirmation.
 """
 from typing import Mapping
+import time
 
 TF_ORDER=("1d","4h","1h","15m","5m","1m")
 BULL={"bullish","uptrend"}
@@ -45,9 +46,24 @@ def _state(frame):
     return "unknown"
 
 
+
+def _frame_fresh(frame):
+    if not isinstance(frame,Mapping):
+        return False
+    quality=frame.get('data_quality') or {}
+    if quality and quality.get('closed_only') and quality.get('last_closed') is not True:
+        return False
+    latest=frame.get('latest_timestamp_ms') or quality.get('last_timestamp_ms')
+    if latest is None:
+        return True
+    try:
+        return int(latest) <= int(time.time()*1000)
+    except (TypeError,ValueError):
+        return False
+
 def build_mtf_state(frames):
     normalized={str(k).lower():v for k,v in (frames or {}).items()}
-    states={tf:_state(normalized[tf]) for tf in TF_ORDER if tf in normalized}
+    states={tf:(_state(normalized[tf]) if _frame_fresh(normalized[tf]) else 'transition') for tf in TF_ORDER if tf in normalized}
 
     htf=[tf for tf in ("1d","4h") if states.get(tf) in ("bullish","bearish")]
     mtf=[tf for tf in ("4h","1h") if states.get(tf) in ("bullish","bearish")]
