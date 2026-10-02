@@ -21,3 +21,17 @@ class OperatorViewTests(unittest.TestCase):
         self.assertEqual(out['shortlist'],[])
 
 if __name__=='__main__': unittest.main()
+
+    
+class LimitPlanOperatorViewTests(unittest.TestCase):
+    def test_limit_plan_is_visible_in_shortlist(self):
+        decision={"count":1,"error_count":0,"results":[{
+            "market":"crypto","symbol":"ETHUSDT","status":"SETUP",
+            "direction":"bullish","situation":"continuation",
+            "reason":["trigger_not_confirmed"],
+            "priority":{},"mtf_gate_blocked":False,"mtf_state":None,
+            "limit_plan":{"eligible":True,"state":"LIMIT_PLAN","side":"BUY_LIMIT","entry":2500},
+        }],"errors":[]}
+        view=build_operator_view(decision)
+        self.assertEqual(view["summary"]["candidates"],1)
+        self.assertTrue(view["shortlist"][0]["limit_plan"]["eligible"])
