@@ -471,3 +471,20 @@ Immediate audit:
 
 Current pipeline:
 Market adapters → native candidate → Decision Aggregator → operator-facing attention list.
+
+
+## Final Multi-Scan integration — step 3 + audit
+
+Implemented:
+- Added compact operator view with separate Candidate shortlist, Watchlist, summary and isolated errors.
+- Candidate technical details can be expanded from the shortlist source without changing candidate logic.
+- Unified Scan now returns both the raw result set and the compact operator view for backward compatibility.
+- Added regression tests for truncation and empty-result safety.
+
+Immediate audit:
+- Attention ordering initially used the maximum market-specific block weight as a hidden cross-market ranking signal. This was removed: status class is the only cross-market attention class; market-specific priorities are preserved as evidence/focus, not converted into a universal score.
+- Operator shortlist limits are sanitized to non-negative integers.
+- No probability, expected return or winner selection is produced.
+
+Final Multi-Scan pipeline:
+Market-specific provider → market adapter → market-specific candidate → cross-market normalization → compact operator view.
