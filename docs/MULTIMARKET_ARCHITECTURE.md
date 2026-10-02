@@ -515,3 +515,21 @@ Architectural invariants rechecked:
 
 Validation limitation:
 - The repository has regression tests and a CI workflow, but this GitHub connector session does not expose a workflow-dispatch/run operation and no fresh CI status was available for the latest branch state. Therefore this audit is a code/contract audit plus added regression coverage, not a claimed green CI run.
+
+
+## Real-data readiness pass
+
+Before live runtime validation, the provider contract audit exposed two integration blockers:
+- Forex Scan+ requested 5m/15m/1h/4h, while its default Stooq loader explicitly rejected intraday intervals. Replaced the default with a public Yahoo chart loader; 4h is built by deterministic aggregation of hourly candles.
+- Commodities had no default provider and therefore plain Multi-Scan could return NO_UNIVERSE for the entire commodity branch. Added explicit Yahoo futures mappings: XAUUSD→GC=F, XAGUSD→SI=F, WTI→CL=F, BRENT→BZ=F, COCOA→CC=F.
+
+Performance:
+- Unified instrument scans are now bounded-parallel (up to 8 workers) instead of serial.
+- Decision ordering has a deterministic symbol tie-breaker so concurrency cannot randomize the shortlist.
+
+Runtime surface:
+- Added `/scan-plus?command=скан` endpoint to exercise the unified orchestrator on the deployed service.
+- Added provider regression tests with mocked HTTP responses.
+
+Live validation limitation:
+- The GitHub connector can read workflow/status data but this session has no workflow-dispatch operation, and the public Yahoo chart endpoint was not directly fetchable through the web fetcher. Therefore provider wiring is implemented and regression-covered, but no claim of a successful live Render run is made until the deployed endpoint is actually exercised.
