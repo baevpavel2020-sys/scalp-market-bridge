@@ -8,5 +8,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: python -m py_compile app.py dynamic_collector.py multi_market_adapters.py market_event_engine.py pump_exhaustion.py test_scanplus.py
+      - run: python -m py_compile app.py dynamic_collector.py multi_market_adapters.py market_event_engine.py pump_exhaustion.py scan_intelligence.py test_scanplus.py
       - run: python -m unittest -v test_scanplus.py
