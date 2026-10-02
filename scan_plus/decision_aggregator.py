@@ -44,11 +44,10 @@ def normalize_result(result: Mapping[str, Any]) -> Mapping[str, Any]:
     ordered = priority.get("ordered") if isinstance(priority, Mapping) else []
     top_weight = max((float(v) for v in (weights or {}).values()), default=0.0)
 
-    # Attention rank is intentionally deterministic and non-predictive:
-    # candidate state first, then market-specific priority emphasis, then market order.
+    # Attention rank only separates state classes. It must not turn the number of
+    # enabled blocks or a market-specific weight into a cross-market quality score.
     attention_rank = (
         STATUS_ORDER[status],
-        round(top_weight, 3),
         -MARKET_ORDER.get(market, 99),
     )
 
@@ -61,6 +60,7 @@ def normalize_result(result: Mapping[str, Any]) -> Mapping[str, Any]:
         "reason": candidate.get("reason"),
         "priority": {
             "top_weight": top_weight,
+            "focus": list(ordered[:3] if isinstance(ordered, list) else []),
             "ordered": list(ordered or []),
         },
         "attention_rank": attention_rank,
