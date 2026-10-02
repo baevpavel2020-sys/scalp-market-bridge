@@ -384,6 +384,11 @@ class TestScanPlus(unittest.TestCase):
             ScanJobManager._jobs.clear()
             ScanJobManager._jobs.update(original)
 
+    def test_stage11_scan_event_is_machine_readable(self):
+        from dynamic_collector import _scan_log
+        # Smoke test: helper must exist and accept lifecycle payloads without raising.
+        _scan_log("TEST_EVENT", job_id="test-job", mode="unified", result={"ok": True})
+
     def test_stage11_scan_check_is_read_only_and_uses_latest_unified_job(self):
         from dynamic_collector import ScanJobManager
         from app import app
