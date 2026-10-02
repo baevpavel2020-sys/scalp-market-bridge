@@ -531,3 +531,31 @@ class TestScanPlus(unittest.TestCase):
 
 if __name__=="__main__":
     unittest.main()
+
+    def test_v4_block1_symbol_normalization(self):
+        from data_contracts import normalize_instrument
+        self.assertEqual(normalize_instrument("forex","EURUSD")["instrument_id"],"forex:EUR/USD")
+        self.assertEqual(normalize_instrument("commodities","GOLD")["instrument_id"],"commodities:XAU/USD")
+        self.assertEqual(normalize_instrument("crypto","BTC/USDT")["instrument_id"],"crypto:BTCUSDT")
+
+    def test_v4_block1_data_quality_distinguishes_fail_and_degraded(self):
+        from data_contracts import frame_quality
+        import time
+        now=int(time.time()*1000)
+        frames={}
+        tf_ms={"1D":86400000,"4h":14400000,"1h":3600000,"15m":900000,"5m":300000}
+        for tf,step in tf_ms.items():
+            frames[tf]=[{"start":now-step*(50-i),"open":100,"high":101,"low":99,"close":100,"confirm":True,"source":"test"} for i in range(50)]
+        good=frame_quality(frames,now_ms=now)
+        self.assertEqual(good["state"],"PASS")
+        self.assertEqual(good["hard_failures"],[])
+        missing={**frames,"4h":frames["4h"][:10]}
+        self.assertEqual(frame_quality(missing,now_ms=now)["state"],"FAIL")
+        stale={tf:[{**r,"start":r["start"]-(10*tf_ms[tf])} for r in rows] for tf,rows in frames.items()}
+        self.assertEqual(frame_quality(stale,now_ms=now)["state"],"DEGRADED")
+
+    def test_v4_block1_provenance_is_per_timeframe(self):
+        from data_contracts import provenance
+        out=provenance({"5m":[{"source":"bybit"},{"source":"bybit"},{"source":"yahoo"}]},"bybit","fallback")
+        self.assertEqual(out["sources_by_timeframe"]["5m"]["bybit"],2)
+        self.assertEqual(out["fallback_reason"],"fallback")
