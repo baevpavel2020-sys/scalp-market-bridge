@@ -488,3 +488,30 @@ Immediate audit:
 
 Final Multi-Scan pipeline:
 Market-specific provider → market adapter → market-specific candidate → cross-market normalization → compact operator view.
+
+
+## Final end-to-end audit — completed
+
+Audit path:
+Provider → Adapter → Profile → Priority → Candidate → Execution boundary → Multi-Scan → Decision Aggregator → Operator View.
+
+Findings fixed:
+1. FX session ranges were only timestamp-cut off, which could still select the currently forming London/NY session. Session range extraction now accepts only sessions whose scheduled end is already before the scan timestamp.
+2. FX profile contained an unsupported `relative_strength` priority request; removed.
+3. XAUUSD/Forex/stock instrument profiles contained unsupported generic session/liquidity priority names; aligned profiles with evidence blocks actually implemented by their adapters.
+4. Stock NVDA profile requested `session_liquidity` while the stock adapter exposes regular-session levels/active session context instead; replaced with the implemented `session` context request.
+5. Added regression coverage for incomplete versus completed FX session ranges.
+
+Architectural invariants rechecked:
+- Market-specific providers never mutate the shared analytical core.
+- Structure/Fibonacci/Elliott confirmation does not leak across confirmation timeframes in Stocks, Forex or Commodities.
+- Commodity macro/inventory/event context is provider-gated and non-directional.
+- Crypto remains legacy-authoritative; the multi-market layer normalizes rather than rewrites its decision.
+- Decision Aggregator does not create a universal trade score or cross-market direction vote.
+- Operator View is presentation-only.
+- Execution planners are non-submitting analysis boundaries.
+- One unified scan result batch is reused by aggregation; no duplicate full scan.
+- Provider failures remain isolated per market/instrument.
+
+Validation limitation:
+- The repository has regression tests and a CI workflow, but this GitHub connector session does not expose a workflow-dispatch/run operation and no fresh CI status was available for the latest branch state. Therefore this audit is a code/contract audit plus added regression coverage, not a claimed green CI run.
