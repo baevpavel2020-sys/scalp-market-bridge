@@ -18,7 +18,7 @@ class StocksMarketAdapter(MarketAdapter):
     def __init__(self, loader=None, underlying_provider=None, engine=None):
         self.loader = loader or BybitXStocksLoader()
         self.underlying_provider = underlying_provider
-        self.engine = engine or AnalyticalEngine(LegacyCryptoBackend())
+        self.engine = engine or AnalyticalEngine(CanonicalPricePatternBackend())
 
     def profile(self, symbol=None):
         return get_profile(self.market, symbol)
