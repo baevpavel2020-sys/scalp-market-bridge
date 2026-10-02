@@ -7,6 +7,7 @@ import re
 
 from scan_plus.market_registry import MarketRegistry
 from scan_plus.instrument_resolver import normalize_symbol, resolve_market
+from scan_plus.decision_aggregator import aggregate_results
 
 ALIASES = {
     "crypto": "crypto", "крипта": "crypto",
@@ -106,4 +107,5 @@ class MultiMarketOrchestrator:
             "parsed":parsed,
             "requests":requests,
             "results":self.scan_many(requests),
+            "decision":aggregate_results(self.scan_many(requests)),
         }
