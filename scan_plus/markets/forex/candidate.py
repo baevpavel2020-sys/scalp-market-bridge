@@ -49,7 +49,7 @@ def build_forex_candidate(*, frames, active_sessions=None, overlap=False):
 
     blockers=[]
     if direction=="unknown": blockers.append("structure_direction_unresolved")
-    if mtf_state["regime"] in ("countertrend_correction","context_only","unresolved"):
+    if mtf_state["regime"]=="countertrend_correction" or (mtf_state["regime"] in ("context_only","unresolved") and mtf_state.get("context_direction") is not None):
         blockers.append("mtf_execution_not_aligned")
     if not shared_ready: blockers.append("fibonacci_or_elliott_unavailable")
 
