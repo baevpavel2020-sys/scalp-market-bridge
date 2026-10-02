@@ -13,6 +13,8 @@ XSTOCK_MAP={"NVDA":"NVDAXUSDT","AAPL":"AAPLXUSDT","MSFT":"MSFTXUSDT","TSLA":"TSL
             "META":"METAXUSDT","GOOGL":"GOOGLXUSDT","AMZN":"AMZNXUSDT","COIN":"COINXUSDT",
             "HOOD":"HOODXUSDT","CRCL":"CRCLXUSDT","MSTR":"MSTRXUSDT"}
 
+FALLBACK_XSTOCK_UNIVERSE=tuple(XSTOCK_MAP.keys())
+
 class BybitXStocksLoader:
     def __init__(self, base_url="https://api.bybit.com", timeout=8, session=None):
         self.base_url=base_url.rstrip("/")
@@ -20,7 +22,13 @@ class BybitXStocksLoader:
         self.session=session or requests.Session()
 
     def default_symbols(self, limit=15):
-        result=self._get("/v5/market/tickers",{"category":"spot"})
+        limit=max(0,int(limit))
+        if limit == 0:
+            return []
+        try:
+            result=self._get("/v5/market/tickers",{"category":"spot"})
+        except (requests.RequestException, RuntimeError, ValueError):
+            return list(FALLBACK_XSTOCK_UNIVERSE[:limit])
         ranked=[]
         for item in result.get("list") or []:
             token=str(item.get("symbol") or "").upper()
@@ -33,7 +41,13 @@ class BybitXStocksLoader:
                 turnover=0.0
             ranked.append((turnover,underlying))
         ranked.sort(reverse=True)
-        return [symbol for _,symbol in ranked[:int(limit)]]
+        live=[symbol for _,symbol in ranked]
+        for symbol in FALLBACK_XSTOCK_UNIVERSE:
+            if len(live) >= limit:
+                break
+            if symbol not in live:
+                live.append(symbol)
+        return live[:limit]
 
     def token_symbol(self, symbol):
         key=str(symbol).upper().replace("USDT","")
