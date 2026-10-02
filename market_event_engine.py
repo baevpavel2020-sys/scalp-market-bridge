@@ -162,29 +162,20 @@ def build_setup_plan(market,symbol,rows,result,analysis_core=None):
         shared["scenario"]["event_support"]=directional[:4]
         return shared
 
-    # Conservative fallback when the shared MTF core is not ready.
-    atr=float(result["reference"]["atr"]); c=rows[-1]
-    ds=[e for e in result["events"] if e.get("confidence")=="high" and e.get("direction") in ("bullish","bearish")]
-    priority=market_block_policy(market).get("event_priority") or []
-    ds.sort(key=lambda e: priority.index(e.get("event")) if e.get("event") in priority else len(priority))
-    if not ds:
-        return {"ready":True,"tradeable":False,"reason":"no_confirmed_direction_or_high_confidence_event"}
-    e=next((x for x in ds if x["event"] in ("failed_breakout","failed_breakdown")),ds[0])
-    direction=e["direction"]; entry=float(e.get("level",c["close"]))
-    if direction=="bearish":
-        stop=max(c["high"],entry+.15*atr); risk=stop-entry; target=entry-MIN_RR*risk
-    else:
-        stop=min(c["low"],entry-.15*atr); risk=entry-stop; target=entry+MIN_RR*risk
-    if risk<=0:return {"ready":True,"tradeable":False,"reason":"invalid_geometry"}
+    # Event-only evidence cannot manufacture a trade when the authoritative
+    # MTF structure is unavailable.
     return {
-        "ready":True,"tradeable":True,"execution_ready":False,
-        "execution_mode":"conditional_limit_or_trigger","market":market,"symbol":symbol,
-        "direction":direction,
-        "trigger":{"type":"retest","level":round(entry,10),"condition":"price_retests_level_and_confirms_rejection"},
-        "limit_plan":{"eligible":True,"entry":round(entry,10),"stop":round(stop,10),"take_profit":round(target,10),
-                      "rr":MIN_RR,"minimum_rr":MIN_RR,"rr_basis":"limit_entry_to_stop_and_take_profit",
-                      "risk_distance":round(risk,10)},
-        "event_basis":[e],
-        "notes":["Closed-candle structural level only.","No broker order is sent.","OI/funding/liquidation/CVD/orderbook are never inferred."]
+        "ready":True,
+        "tradeable":False,
+        "execution_ready":False,
+        "execution_mode":"watch",
+        "market":market,
+        "symbol":symbol,
+        "direction":None,
+        "wait_for_confirmation":True,
+        "reason":"shared_mtf_structure_not_ready",
+        "event_basis":result.get("events") or [],
+        "scenario":{"primary":{"type":"NO_TRADE","state":"WAIT","authority":"INSUFFICIENT_STRUCTURE"}},
+        "notes":["Event-only evidence cannot override authoritative MTF structure.",
+                 "Wait for confirmed structure before creating a LIMIT plan."],
     }
-
