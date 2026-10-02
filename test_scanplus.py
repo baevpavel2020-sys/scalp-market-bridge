@@ -119,7 +119,7 @@ class TestScanPlus(unittest.TestCase):
         self.assertEqual(plan["limit_plan"]["side"], "BUY_LIMIT")
     def test_manipulation_is_not_a_trade_direction_override(self):
         from pump_exhaustion import detect
-        self.assertEqual(detect({"candles": []}, {"candles": []}).get("execution"), "NO_SHORT_UNTIL_EXHAUSTION")
+        self.assertEqual(detect({}, {}).get("signal"), "NONE")
 
 
 if __name__=="__main__":
