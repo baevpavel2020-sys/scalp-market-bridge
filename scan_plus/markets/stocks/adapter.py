@@ -32,7 +32,9 @@ class StocksMarketAdapter(MarketAdapter):
     def _underlying(self, symbol):
         if self.underlying_provider is None:
             return None
-        return self.underlying_provider.normalize(symbol, self.underlying_provider.quote(symbol))
+        quote=self.underlying_provider.quote(symbol)
+        normalize=getattr(self.underlying_provider,"normalize",None)
+        return normalize(symbol,quote) if callable(normalize) else quote
 
     @staticmethod
     def _gap_context(underlying):
