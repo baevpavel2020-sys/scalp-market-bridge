@@ -59,7 +59,7 @@ class FakeCommodityLoader:
     def candles(self, symbol, **kwargs):
         interval=str(kwargs.get("interval","60"))
         step={"5":300000,"15":900000,"60":3600000,"240":14400000,"D":86400000}[interval]
-        return {"candles":[{"timestamp_ms":i*step,"open":100,"high":101,"low":99,"close":100,"volume":100}] * 240}
+        return {"candles":[{"timestamp_ms":i*step,"open":100,"high":101,"low":99,"close":100,"volume":100} for i in range(240)]}
 
 
 class Phase1ProductionAuditTests(unittest.TestCase):
@@ -86,7 +86,7 @@ class Phase1ProductionAuditTests(unittest.TestCase):
     def test_stock_execution_exposes_conditional_limit_without_account_context(self):
         candidate={"status":"CANDIDATE","direction":"bullish"}
         frames={"15m":frame("uptrend")}
-        plan=build_stock_execution_plan(candidate=candidate,frames=frames,price=100)
+        plan=build_stock_execution_plan(candidate=candidate,frames=frames,price=100,equity=None,risk_fraction=None)
         self.assertEqual(plan["status"],"PLAN")
         self.assertTrue(plan["eligible"])
         self.assertEqual(plan["entry"]["type"],"LIMIT")
@@ -107,7 +107,7 @@ class Phase1ProductionAuditTests(unittest.TestCase):
         candidate={"status":"CANDIDATE","direction":"bullish"}
         frames={"15m":frame("uptrend")}
         plan=build_forex_execution_plan(
-            candidate=candidate,frames=frames,price=150,symbol="USDJPY"
+            candidate=candidate,frames=frames,price=150,equity=None,risk_fraction=None,symbol="USDJPY"
         )
         self.assertEqual(plan["status"],"PLAN")
         self.assertTrue(plan["eligible"])
@@ -116,7 +116,7 @@ class Phase1ProductionAuditTests(unittest.TestCase):
     def test_commodity_execution_exposes_conditional_limit(self):
         candidate={"status":"CANDIDATE","direction":"bullish","group":"metals","confirmation_timeframe":"15m"}
         frames={"15m":frame("uptrend")}
-        plan=build_commodity_execution_plan(candidate=candidate,frames=frames,price=100)
+        plan=build_commodity_execution_plan(candidate=candidate,frames=frames,price=100,equity=None,risk_fraction=None)
         self.assertEqual(plan["status"],"PLAN")
         self.assertTrue(plan["eligible"])
         self.assertEqual(plan["entry"]["type"],"LIMIT")
