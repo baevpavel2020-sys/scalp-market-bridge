@@ -384,6 +384,28 @@ class TestScanPlus(unittest.TestCase):
             ScanJobManager._jobs.clear()
             ScanJobManager._jobs.update(original)
 
+    def test_stage11_scan_check_is_read_only_and_uses_latest_unified_job(self):
+        from dynamic_collector import ScanJobManager
+        from app import app
+        original = dict(ScanJobManager._jobs)
+        try:
+            ScanJobManager._jobs.clear()
+            jid = ScanJobManager._new_job(
+                "unified",
+                {"top_n": 5, "shortlist": 30, "markets": ["crypto","stocks","forex","commodities"]},
+            )
+            client = app.test_client()
+            response = client.get("/scan-check")
+            self.assertEqual(response.status_code, 200)
+            payload = response.get_json()
+            self.assertTrue(payload["active"])
+            self.assertEqual(payload["job"]["job_id"], jid)
+            self.assertEqual(payload["job"]["mode"], "unified")
+            self.assertEqual(len(ScanJobManager._jobs), 1)
+        finally:
+            ScanJobManager._jobs.clear()
+            ScanJobManager._jobs.update(original)
+
     def test_stage11_canonical_scan_command_is_nonblocking(self):
         from app import app
         client = app.test_client()
