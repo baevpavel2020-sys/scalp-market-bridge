@@ -92,7 +92,8 @@ class AnalyticalEngine:
         """Run shared blocks only and explicitly return market-context requests."""
         shared, context=self.split_priorities(priorities)
         result=self.analyze(rows,requested=shared)
-        result["_context_blocks_requested"]=context
+        if context:
+            result["_context_blocks_requested"]=context
         return result
 
     @staticmethod
