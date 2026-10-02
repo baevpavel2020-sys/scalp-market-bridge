@@ -575,12 +575,19 @@ def edge_summary(records):
         regime = record.get("regime")
         regime_state = regime.get("state") if isinstance(regime, dict) else "unknown"
         key = (record.get("market", "unknown"), record.get("direction", "unknown"), regime_state)
-        bucket = groups.setdefault(key, {"samples": 0, "tp": 0, "sl": 0})
+        bucket = groups.setdefault(key, {"samples": 0, "tp": 0, "sl": 0, "r_sum": 0.0, "mae_sum": 0.0, "mfe_sum": 0.0, "mae_n": 0, "mfe_n": 0})
         bucket["samples"] += 1
         bucket["tp"] += record.get("outcome") == "TP"
         bucket["sl"] += record.get("outcome") == "SL"
+        if record.get("realized_r") is not None: bucket["r_sum"] += float(record["realized_r"])
+        if record.get("mae") is not None: bucket["mae_sum"] += float(record["mae"]); bucket["mae_n"] += 1
+        if record.get("mfe") is not None: bucket["mfe_sum"] += float(record["mfe"]); bucket["mfe_n"] += 1
     for bucket in groups.values():
         bucket["hit_rate"] = round(bucket["tp"] / max(1, bucket["tp"] + bucket["sl"]), 4)
+        bucket["expectancy_r"] = round(bucket["r_sum"] / max(1, bucket["samples"]), 4)
+        bucket["avg_mae"] = round(bucket["mae_sum"] / bucket["mae_n"], 6) if bucket["mae_n"] else None
+        bucket["avg_mfe"] = round(bucket["mfe_sum"] / bucket["mfe_n"], 6) if bucket["mfe_n"] else None
+        bucket.pop("r_sum",None); bucket.pop("mae_sum",None); bucket.pop("mfe_sum",None); bucket.pop("mae_n",None); bucket.pop("mfe_n",None)
     return {
         "samples": len(resolved),
         "tp": sum(r.get("outcome") == "TP" for r in resolved),
