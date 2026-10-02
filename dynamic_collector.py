@@ -4613,7 +4613,7 @@ class DynamicMarketManager:
                 **setup,
                 "failed_requirements":failed,
             },
-            "manipulation": detect_pump_exhaustion(linear, full.get("spot",{}))
+            "manipulation": detect_pump_exhaustion(linear, full.get("spot",{}), analysis)
         }
         result["_frames"]={tf:list(rows) for tf,rows in (linear.get("candles") or {}).items()}
         return enrich_scan(result, market="crypto")
