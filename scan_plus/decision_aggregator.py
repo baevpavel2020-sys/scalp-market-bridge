@@ -52,6 +52,7 @@ def normalize_result(result: Mapping[str, Any]) -> Mapping[str, Any]:
         str(result.get("symbol") or candidate.get("symbol") or "").upper(),
     )
 
+    mtf = result.get("mtf_state")
     return {
         "market": market,
         "symbol": str(result.get("symbol") or candidate.get("symbol") or "").upper(),
@@ -59,6 +60,7 @@ def normalize_result(result: Mapping[str, Any]) -> Mapping[str, Any]:
         "direction": str(candidate.get("direction") or "unknown").lower(),
         "situation": candidate.get("situation"),
         "reason": candidate.get("reason"),
+        "mtf_state": mtf,
         "priority": {
             "top_weight": top_weight,
             "focus": list(ordered[:3] if isinstance(ordered, list) else []),
