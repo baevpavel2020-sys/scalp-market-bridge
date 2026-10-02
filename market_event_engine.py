@@ -18,13 +18,14 @@ def _dedupe_events(events):
 from datetime import datetime,timezone
 from scan_architecture import MIN_RR, market_block_policy
 from limit_engine import generate_candidates, choose_candidate
-from scenario_engine import scenario_snapshot
+from scenario_engine import scenario_snapshot, EventLifecycle
 try:
  from zoneinfo import ZoneInfo
 except ImportError:
  ZoneInfo=None
 
-VERSION="multimarket_event_engine_v1"
+VERSION="multimarket_event_engine_v2"
+EVENT_LIFECYCLE=EventLifecycle()
 
 def _atr(r,n=14):
  if len(r)<2:return None
@@ -81,7 +82,9 @@ def detect_events(market,symbol,rows):
   ev += [{"event":"instrument_session_context","confidence":"context"},{"event":"inventory_event","confidence":"unavailable","status":"fundamental_calendar_not_connected"},{"event":"contract_rollover","confidence":"unavailable","status":"contract_calendar_not_connected"}]
  elif market=="stocks":ev.append({"event":"xstock_24_7_context","confidence":"context"})
  ev=_dedupe_events(ev)
- return {"ready":True,"engine_version":VERSION,"market":market,"symbol":symbol,"events":ev,"session":sess,"reference":{"atr":atr,"range_high":hi,"range_low":lo}}
+ for event in ev:
+  event["market"]=market; event["symbol"]=symbol; event["lifecycle"]=EVENT_LIFECYCLE.update(event,confirmed=True)["state"]
+ return {"ready":True,"engine_version":VERSION,"market":market,"symbol":symbol,"events":ev,"session":sess,"reference":{"atr":atr,"range_high":hi,"range_low":lo},"event_lifecycle":EVENT_LIFECYCLE.snapshot()}
 
 def _shared_direction(analysis_core):
     analysis=(analysis_core or {}).get("analysis") or {}
