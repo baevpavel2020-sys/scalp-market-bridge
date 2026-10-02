@@ -38,7 +38,7 @@ class BybitXStocksLoader:
     def token_symbol(self, symbol):
         key=str(symbol).upper().replace("USDT","")
         if key.endswith("X"): key=key[:-1]
-        return XSTOCK_MAP.get(key, str(symbol).upper())
+        return XSTOCK_MAP.get(key, f"{key}XUSDT")
 
     def _get(self,path,params):
         response=self.session.get(self.base_url+path,params=params,timeout=self.timeout)
