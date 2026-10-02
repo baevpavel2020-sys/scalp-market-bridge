@@ -12,6 +12,7 @@ from scan_plus.markets.crypto.event_adapter import observe_crypto_events
 from scan_plus.core.rolling_baseline import RollingMoveBaseline
 from scan_plus.markets.crypto.shadow_recorder import ShadowRecorder
 from scan_plus.markets.crypto.event_memory import CausalEventMemory
+from scan_plus.core.mtf_state import build_mtf_state
 
 
 class CryptoMarketAdapter(MarketAdapter):
@@ -109,6 +110,9 @@ class CryptoMarketAdapter(MarketAdapter):
             }
 
         result["event_engine"] = event_engine
+        # MTF state is additive telemetry: the legacy Crypto decision remains authoritative.
+        legacy_frames = ((legacy.get("context") or {}).get("frames") or {})
+        result["mtf_state"] = build_mtf_state(legacy_frames)
         # Record the exact point-in-time evidence used by shadow mode. Recording
         # failure must never break the live scanner.
         try:
