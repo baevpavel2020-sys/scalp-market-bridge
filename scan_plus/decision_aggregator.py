@@ -17,17 +17,28 @@ def _candidate(result: Mapping[str, Any]) -> Mapping[str, Any]:
     # Crypto remains legacy-authoritative: adapt its existing decision fields
     # without changing the underlying Crypto strategy.
     status = result.get("trade_state") or result.get("setup_state")
-    if status in ("READY", "SETUP", "CANDIDATE"):
+    setup = result.get("setup") if isinstance(result.get("setup"), Mapping) else {}
+    limit_plan = setup.get("limit_plan") if isinstance(setup.get("limit_plan"), Mapping) else None
+
+    # A valid conditional LIMIT_PLAN is an execution-ready setup even when the
+    # market trigger has not fired yet. It never bypasses the plan's own
+    # before-fill requirements; Operator View must surface it instead of hiding
+    # it as a generic WATCH.
+    if limit_plan and limit_plan.get("eligible") is True:
+        normalized = "SETUP"
+    elif status in ("READY", "SETUP", "CANDIDATE"):
         normalized = "CANDIDATE" if status != "SETUP" else "SETUP"
     elif status in ("BLOCKED", "NO_TRADE"):
         normalized = "NO_TRADE"
     else:
         normalized = "WATCH"
+
     return {
         "status": normalized,
         "direction": result.get("direction") or "unknown",
         "situation": result.get("trade_style") or result.get("context") or "continuation",
         "reason": result.get("block_reasons") or [],
+        "limit_plan": dict(limit_plan) if limit_plan else None,
         "legacy": True,
     }
 
@@ -86,6 +97,8 @@ def normalize_result(result: Mapping[str, Any]) -> Mapping[str, Any]:
             "candidate": dict(candidate),
             "engine_version": result.get("engine_version"),
         },
+        # Execution plan is presentation data, never a cross-market score.
+        "limit_plan": candidate.get("limit_plan") if isinstance(candidate.get("limit_plan"), Mapping) else None,
     }
 
 
