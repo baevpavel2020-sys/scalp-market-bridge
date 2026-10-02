@@ -27,6 +27,17 @@ class CryptoMarketAdapter(MarketAdapter):
     def profile(self, symbol=None):
         return get_profile(self.market, symbol)
 
+    def default_symbols(self, limit=30):
+        prescan=self._prescan_runner(top_n=int(limit),shortlist=max(int(limit),30))
+        out=[]
+        for item in prescan.get("candidates") or prescan.get("scan_plus_candidates") or []:
+            symbol=item.get("symbol") if isinstance(item,Mapping) else None
+            if symbol and symbol not in out:
+                out.append(str(symbol).upper())
+            if len(out)>=int(limit):
+                break
+        return out
+
     def prescan(self, **kwargs) -> Mapping[str, Any]:
         return self._prescan_runner(**kwargs)
 
