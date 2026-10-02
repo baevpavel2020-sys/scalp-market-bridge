@@ -5,6 +5,7 @@ unknown/missing data never becomes a bullish or bearish vote.
 """
 from typing import Mapping
 from scan_plus.markets.stocks.session_gap import classify_gap
+from scan_plus.core.mtf_state import build_mtf_state
 
 
 def _structure_state(frames):
