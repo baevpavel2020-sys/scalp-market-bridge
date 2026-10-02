@@ -19,6 +19,11 @@ BYBIT_URLS = [
 ]
 
 
+@app.get("/health")
+def health():
+    # Render health probe: no market/API calls and no locks.
+    return jsonify({"service":"scalp-market-bridge","status":"healthy","version":"health_v1"}), 200
+
 @app.get("/")
 def home():
     return jsonify({"service": "scalp-market-bridge", "status": "online"})
