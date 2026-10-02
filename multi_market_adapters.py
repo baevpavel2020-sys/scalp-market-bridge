@@ -176,14 +176,7 @@ class ExternalMarketAdapter:
         return data
     def candles(self,symbol,interval,outputsize=500):
         data=self._get("/time_series",{"symbol":symbol,"interval":TF[interval],"outputsize":min(int(outputsize),5000),"order":"ASC","timezone":"UTC"})
-        out=[]
-        for x in data.get("values",[]) or []:
-            try:
-                raw_dt=str(x["datetime"]).replace("Z","+00:00")
-                parsed=datetime.fromisoformat(raw_dt)
-                out.append({"start":int(parsed.timestamp()*1000),"datetime":x["datetime"],"open":float(x["open"]),"high":float(x["high"]),"low":float(x["low"]),"close":float(x["close"]),"volume":float(x.get("volume") or 0),"source":"twelve_data"}, interval)
-            except (KeyError,TypeError,ValueError): pass
-        return out
+        return self._parse_values(data.get("values",[]) or [], interval)
     def quote(self,symbol): return self._get("/quote",{"symbol":symbol})
 
     @staticmethod
