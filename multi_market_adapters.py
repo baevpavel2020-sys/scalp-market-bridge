@@ -6,6 +6,7 @@ This layer is analysis-only until a broker/execution connector is explicitly add
 import concurrent.futures
 import json, math, os, threading, time, urllib.parse, urllib.request
 from market_event_engine import detect_events, build_setup_plan
+from scan_intelligence import enrich_external_result
 from datetime import datetime, timezone
 try:
     from zoneinfo import ZoneInfo
@@ -192,7 +193,8 @@ class ExternalMarketAdapter:
         events={tf:detect_events(market,symbol,rows) for tf,rows in event_frames.items()}
         setup={tf:build_setup_plan(market,symbol,rows,events[tf]) for tf,rows in event_frames.items()}
         analysis_core=MarketProfileRouter.analyze(market,symbol,frames)
-        return {"market":market,"symbol":symbol,"adapter_version":self.VERSION,"provider":provider,"configured":configured,"analysis_ready":ready,"execution_ready":False,"execution_reason":"external_market_execution_connector_not_configured","frames":frames,"quote":quote,"analysis_core":analysis_core,"events":events,"setup_plans":setup,"errors":errors,"capabilities":{"ohlcv":True,"realtime_quote":True,"orderbook":False,"open_interest":False,"funding":False,"spot_cvd":False},"market_profile":market_profile(market),"session_context":session_context(market),"data_quality":{"state":"READY" if ready else "PARTIAL","missing_timeframes":[tf for tf in ("1D","4h","1h","15m","5m") if len(frames.get(tf,[]))<50]}}
+        result={"market":market,"symbol":symbol,"adapter_version":self.VERSION,"provider":provider,"configured":configured,"analysis_ready":ready,"execution_ready":False,"execution_reason":"external_market_execution_connector_not_configured","frames":frames,"quote":quote,"analysis_core":analysis_core,"events":events,"setup_plans":setup,"errors":errors,"capabilities":{"ohlcv":True,"realtime_quote":True,"orderbook":False,"open_interest":False,"funding":False,"spot_cvd":False},"market_profile":market_profile(market),"session_context":session_context(market),"data_quality":{"state":"READY" if ready else "PARTIAL","missing_timeframes":[tf for tf in ("1D","4h","1h","15m","5m") if len(frames.get(tf,[]))<50]}}
+        return enrich_external_result(result,market)
 def external_universe():
     try: stocks=bybit_xstocks_top15()
     except Exception: stocks=list(DEFAULT_STOCKS)
