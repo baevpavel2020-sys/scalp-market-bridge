@@ -1,1 +1,1 @@
-"""Shared analytical core. No market transport assumptions."""\n
+"""Shared analytical core. No market transport assumptions."""
