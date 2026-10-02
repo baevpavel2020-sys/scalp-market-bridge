@@ -24,6 +24,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 
 import websocket
 from pump_exhaustion import detect as detect_pump_exhaustion
+from scan_intelligence import enrich_scan, WATCHLIST, relative_strength
 
 
 # ============================================================
@@ -4808,6 +4809,16 @@ class DynamicMarketManager:
             },
             "manipulation": detect_pump_exhaustion(linear, full.get("spot",{}))
         }
+        result["_frames"]={tf:list(rows) for tf,rows in (linear.get("candles") or {}).items()}
+        result["regime"]={"composite":__import__("scan_intelligence").classify_regime_from_analysis(result.get("timeframes") or {})}
+        result["mtf_matrix"]=__import__("scan_intelligence").mtf_state_matrix(result.get("timeframes") or {})
+        result["intelligence_version"]="intelligence_v1"
+        result["alert"]=__import__("scan_intelligence").alert_payload(result)
+        watch=WATCHLIST.upsert(result)
+        result["watchlist"]=watch
+        if watch and watch.get("state_changed"):
+            __import__("scan_intelligence").OUTCOMES.record(result)
+        return result
 
     def replay_no_lookahead(self, candles_by_tf, checkpoints=None):
         """Deterministic prefix replay for regression tests.
@@ -7293,6 +7304,9 @@ class ScanJobManager:
                     if len(eligible)>=top_n: break
                 activated,activation_errors,warm_elapsed=cls._activate_and_warm_auto(jid,eligible)
                 crypto_results,crypto_errors=cls._scan_symbols_progressive(jid,activated)
+                crypto_rankings=relative_strength(crypto_results,market_key="crypto")
+                crypto_rank_map={x["symbol"]:x for x in crypto_rankings}
+                for item in crypto_results: item["relative_strength"]=crypto_rank_map.get(item.get("symbol"))
                 errors=dict(activation_errors); errors.update({f"crypto:{k}":v for k,v in crypto_errors.items()})
                 external={}
                 adapter=ExternalMarketAdapter(); universe=external_universe()
@@ -7307,7 +7321,10 @@ class ScanJobManager:
                     workers=min(3,len(symbols))
                     with ThreadPoolExecutor(max_workers=workers) as pool:
                         vals=list(pool.map(lambda s:adapter.scan(market,s),symbols))
-                    external[market]={"status":"PASS","count":len(vals),"results":vals}
+                    rankings=relative_strength(vals,market_key=market)
+                    rank_map={x["symbol"]:x for x in rankings}
+                    for item in vals: item["relative_strength"]=rank_map.get(item.get("symbol"))
+                    external[market]={"status":"PASS","count":len(vals),"results":vals,"relative_strength_ranking":rankings}
                 result={"orchestrator_version":"scan_orchestrator_v3_unified_live","mode":"unified","prescan_used":True,"markets":markets,
                         "crypto":{"selected_symbols":eligible,"activated_symbols":activated,"warmup_seconds":round(warm_elapsed,2),"scan_plus_count":len(crypto_results),"scan_plus_results":crypto_results},
                         "external":external,"prescan":{"status":prescan.get("status"),"engine_version":prescan.get("engine_version"),"scan_plus_candidates":prescan.get("scan_plus_candidates") or [],"diagnostics":prescan.get("diagnostics") or {}},
