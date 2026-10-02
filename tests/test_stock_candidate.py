@@ -6,7 +6,7 @@ def frame(state="bullish", fib=True):
     return {
         "analysis":{
             "structure":{"state":state},
-            "fibonacci":{"ready":fib}
+            "fibonacci":{"ready":fib},"elliott":{"ready":True}
         }
     }
 
