@@ -25,6 +25,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 import websocket
 from pump_exhaustion import detect as detect_pump_exhaustion
 from scan_intelligence import enrich_scan, relative_strength
+from risk_engine import exposure_cluster, exposure_buckets
 
 
 # ============================================================
@@ -2281,9 +2282,23 @@ class MarketStream:
         legacy=self._confluence_engine_v2(technical,ctx,fib,elliott,harmonics,divergences,liquidity,smc)
         confluence={**legacy,"decision_authority":False,"deprecated_vote_model":True,"evidence_graph":evidence}
         ready=bool(technical.get("ready") and ctx.get("ready"))
+        now_ms=int(time.time()*1000)
+        last_start=rows[-1].get("start") if rows else None
+        last_end=rows[-1].get("end") if rows else None
+        age_seconds=None
+        try:
+            age_seconds=max(0.0,(now_ms-int(last_end if last_end is not None else last_start))/1000.0)
+        except (TypeError,ValueError):
+            pass
+        freshness_state="UNKNOWN"
+        if age_seconds is not None:
+            freshness_state="FRESH" if age_seconds<=120 else "STALE" if age_seconds>900 else "AGING"
+        freshness={"state":freshness_state,"age_seconds":age_seconds,
+                   "last_confirmed_start":last_start,"last_confirmed_end":last_end}
         return {"ready":ready,"engine_version":"scan_plus_v3_9_limit_plan","closed_candles":len(rows),
-                "excluded_open_candles":max(0,len(raw_rows)-len(rows)),"last_confirmed_start":rows[-1].get("start") if rows else None,
+                "excluded_open_candles":max(0,len(raw_rows)-len(rows)),"last_confirmed_start":last_start,
                 "last_confirmed_close":rows[-1].get("close") if rows else None,
+                "signal_freshness":freshness,
                 "pipeline":["technical","structure","fibonacci","elliott","harmonics","divergences","liquidity","smart_money","freshness","evidence_graph"],
                 "technical":technical,"structure":structure,"fibonacci":fib,"elliott":elliott,"harmonics":harmonics,"divergences":divergences,
                 "liquidity":liquidity,"smart_money":smc,"regime_levels":regime,"evidence_graph":evidence,"confluence":confluence}
@@ -7054,7 +7069,13 @@ class ScanJobManager:
                 crypto_results,crypto_errors=cls._scan_symbols_progressive(jid,activated)
                 crypto_rankings=relative_strength(crypto_results,market_key="crypto")
                 crypto_rank_map={x["symbol"]:x for x in crypto_rankings}
-                for item in crypto_results: item["relative_strength"]=crypto_rank_map.get(item.get("symbol"))
+                crypto_setups=[x.get("setup") for x in crypto_results if isinstance(x.get("setup"),dict) and x.get("setup",{}).get("tradeable")]
+                crypto_clusters=exposure_cluster([dict(s,market="crypto") for s in crypto_setups])
+                crypto_exposure=exposure_buckets([dict(s,market="crypto") for s in crypto_setups])
+                for item in crypto_results:
+                    item["relative_strength"]=crypto_rank_map.get(item.get("symbol"))
+                    item["risk_clusters"]=crypto_clusters
+                    item["exposure_buckets"]=crypto_exposure
                 errors=dict(activation_errors); errors.update({f"crypto:{k}":v for k,v in crypto_errors.items()})
                 external={}
                 adapter=ExternalMarketAdapter(); universe=external_universe()
@@ -7066,12 +7087,20 @@ class ScanJobManager:
                         external[market]={"status":"NO_SYMBOLS","results":[]}; continue
                     if market!="stocks" and not adapter.configured:
                         external[market]={"status":"DATA_BLOCK","reason":"TWELVE_DATA_API_KEY_not_configured","symbols":symbols}; continue
-                    workers=min(3,len(symbols))
-                    with ThreadPoolExecutor(max_workers=workers) as pool:
-                        vals=list(pool.map(lambda s:adapter.scan(market,s),symbols))
+                    # External providers are batch-oriented: one request per
+                    # timeframe for the whole market is faster and avoids a request
+                    # storm across 15 symbols x 5 timeframes.
+                    vals_map=adapter.scan_many(market,symbols)
+                    vals=[vals_map[s] for s in symbols if s in vals_map]
                     rankings=relative_strength(vals,market_key=market)
+                    setups=[v.get("setup") for v in vals if isinstance(v.get("setup"),dict) and v.get("setup",{}).get("tradeable")]
+                    clusters=exposure_cluster([dict(s,market=market) for s in setups])
+                    exposure=exposure_buckets([dict(s,market=market) for s in setups])
                     rank_map={x["symbol"]:x for x in rankings}
-                    for item in vals: item["relative_strength"]=rank_map.get(item.get("symbol"))
+                    for item in vals:
+                        item["relative_strength"]=rank_map.get(item.get("symbol"))
+                        item["risk_clusters"]=clusters
+                        item["exposure_buckets"]=exposure
                     external[market]={"status":"PASS","count":len(vals),"results":vals,"relative_strength_ranking":rankings}
                 result={"orchestrator_version":"scan_orchestrator_v3_unified_live","mode":"unified","prescan_used":True,"markets":markets,
                         "crypto":{"selected_symbols":eligible,"activated_symbols":activated,"warmup_seconds":round(warm_elapsed,2),"scan_plus_count":len(crypto_results),"scan_plus_results":crypto_results},

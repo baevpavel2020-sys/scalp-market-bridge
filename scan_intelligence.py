@@ -224,6 +224,8 @@ def alert_payload(scan):
         "target": target,
         "rr": setup.get("risk_reward") or limit_plan.get("risk_reward") or limit_plan.get("rr"),
         "reason": "setup_state_changed",
+        "scenario": (setup.get("scenario") or {}).get("primary"),
+        "limit_candidates": setup.get("limit_candidates") or [],
     }
 
 
@@ -263,6 +265,8 @@ class WatchlistStore:
                 or (setup.get("limit_plan") or {}).get("risk_reward")
                 or (setup.get("limit_plan") or {}).get("rr"),
                 "fingerprint": fingerprint,
+                "scenario": (setup.get("scenario") or {}).get("primary"),
+                "limit_candidates": setup.get("limit_candidates") or [],
                 "updated_at": time.time(),
                 "state_changed": changed,
             }
@@ -343,6 +347,31 @@ WATCHLIST = WatchlistStore()
 OUTCOMES = OutcomeLogger()
 
 
+def data_provenance(frames):
+    now=time.time()
+    out={}
+    for tf,rows in (frames or {}).items():
+        closed=[r for r in rows if r.get("confirm",True) is not False]
+        last=closed[-1] if closed else None
+        ts=(last or {}).get("end",(last or {}).get("start"))
+        age=None
+        try: age=max(0.0,now-float(ts)/1000.0)
+        except (TypeError,ValueError): pass
+        out[tf]={"provider":(last or {}).get("source","unknown"),"closed":bool(last),
+                 "age_seconds":round(age,2) if age is not None else None,
+                 "quality":"HIGH" if age is not None and age<120 else "MEDIUM" if age is not None else "UNKNOWN"}
+    return out
+
+def _setup_cost(setup,market):
+    lp=(setup or {}).get("limit_plan") or {}
+    if not all(k in lp for k in ("entry","stop","take_profit")):
+        return {"ready":False,"reason":"incomplete_setup"}
+    return execution_cost(market,lp["entry"],lp["stop"],lp["take_profit"],
+                          spread=(setup or {}).get("spread"),
+                          slippage_bps=(setup or {}).get("slippage_bps",0.0),
+                          commission_bps=(setup or {}).get("commission_bps",0.0),
+                          funding_bps=(setup or {}).get("funding_bps",0.0))
+
 def enrich_external_result(result, market):
     frames = result.get("frames") or {}
     analysis = result.get("analysis_core", {}).get("analysis") or {}
@@ -370,8 +399,12 @@ def enrich_external_result(result, market):
     )
     out = dict(result)
     out["regime"] = {tf_name: classify_regime(rows) for tf_name, rows in frames.items()}
+    out["analysis_policy"] = market_block_policy(market)
     out["mtf_matrix"] = mtf_state_matrix(tf)
     out["performance"] = performance_snapshot(frames)
+    out["data_provenance"] = data_provenance(frames)
+    out["scenario"] = setup.get("scenario") or {"primary":{"type":"NO_TRADE","state":"UNKNOWN"}}
+    out["execution_cost"] = _setup_cost(setup,market)
     out["setup"] = {**setup, "opportunity_state": opportunity_state}
     out["opportunity_state"] = opportunity_state
     out["intelligence_version"] = INTELLIGENCE_VERSION
@@ -398,10 +431,14 @@ def enrich_scan(scan, market="crypto"):
         }
     if not out.get("regime"):
         out["regime"] = {"composite": classify_regime_from_analysis(out.get("timeframes") or {})}
+    out["analysis_policy"] = market_block_policy(market)
     out["mtf_matrix"] = mtf_state_matrix(out.get("timeframes") or {})
     out["performance"] = performance_snapshot(frames)
-    out["intelligence_version"] = INTELLIGENCE_VERSION
+    out["data_provenance"] = data_provenance(frames)
     out["setup"] = dict(out.get("setup") or {})
+    out["scenario"] = out["setup"].get("scenario") or scenario_snapshot({"analysis":out.get("timeframes") or {}}, out["setup"].get("event_basis") or [])
+    out["execution_cost"] = _setup_cost(out["setup"],market)
+    out["intelligence_version"] = INTELLIGENCE_VERSION
     out["opportunity_state"] = out["setup"].get("opportunity_state") or "WATCH"
     out["setup"]["opportunity_state"] = out["opportunity_state"]
     watch = WATCHLIST.upsert(out)
@@ -477,24 +514,60 @@ def backtest_event_setups(market, symbol, rows, detect_fn, plan_fn, max_checkpoi
                 break
         if filled_at is None:
             outcome = "NOT_FILLED"
+        stat_start=filled_at if filled_at is not None else checkpoint+1
+        stat_end=(resolved_at+1) if resolved_at is not None else len(rows)
+        excursion=mae_mfe(direction,entry,rows[stat_start:stat_end])
+        realized_r=(float(limit_plan.get("rr") or 0.0) if outcome=="TP" else -1.0 if outcome=="SL" else None)
         results.append({
             "checkpoint": rows[checkpoint].get("end", rows[checkpoint].get("start", checkpoint)),
             "entry": entry, "stop": stop, "target": target,
             "rr": limit_plan.get("rr") or limit_plan.get("risk_reward"),
             "outcome": outcome,
+            "realized_r": realized_r,
+            "mae": excursion.get("mae"),
+            "mfe": excursion.get("mfe"),
             "filled_at_bar": None if filled_at is None else filled_at - checkpoint,
             "bars_to_resolution": None if resolved_at is None else resolved_at - checkpoint,
         })
     resolved = [item for item in results if item["outcome"] in ("TP", "SL")]
     tp = sum(item["outcome"] == "TP" for item in resolved)
     sl = sum(item["outcome"] == "SL" for item in resolved)
+    resolved_r=[item["realized_r"] for item in results if item.get("realized_r") is not None]
+    maes=[item["mae"] for item in results if item.get("mae") is not None]
+    mfes=[item["mfe"] for item in results if item.get("mfe") is not None]
     return {
         "version": INTELLIGENCE_VERSION, "market": market, "symbol": symbol,
         "samples": len(results), "tp": tp, "sl": sl,
         "unresolved": sum(item["outcome"] == "UNRESOLVED" for item in results),
         "not_filled": sum(item["outcome"] == "NOT_FILLED" for item in results),
-        "hit_rate": round(tp / max(1, tp + sl), 4), "results": results,
+        "hit_rate": round(tp / max(1, tp + sl), 4),
+        "expectancy_r": round(sum(resolved_r)/len(resolved_r),4) if resolved_r else None,
+        "avg_mae": round(sum(maes)/len(maes),6) if maes else None,
+        "avg_mfe": round(sum(mfes)/len(mfes),6) if mfes else None,
+        "results": results,
     }
+
+
+def walk_forward_backtest(market,symbol,rows,detect_fn,plan_fn,train_bars=300,test_bars=100,step=100):
+    """Rolling out-of-sample evaluation with strict train/test boundaries."""
+    rows=_closed_rows(rows)
+    windows=[]
+    if len(rows)<train_bars+test_bars:
+        return {"windows":[],"samples":0}
+    start=0
+    while start+train_bars+test_bars<=len(rows):
+        train=rows[start:start+train_bars]
+        test=rows[start+train_bars:start+train_bars+test_bars]
+        evaluation=backtest_event_setups(market,symbol,train+test,detect_fn,plan_fn,max_checkpoints=min(50,len(test)))
+        windows.append({"train_end":train[-1].get("end",train[-1].get("start")),
+                        "test_start":test[0].get("start"),
+                        "test_end":test[-1].get("end",test[-1].get("start")),
+                        "evaluation":evaluation})
+        start+=max(1,int(step))
+    vals=[w["evaluation"]["expectancy_r"] for w in windows if w["evaluation"].get("expectancy_r") is not None]
+    return {"version":INTELLIGENCE_VERSION,"market":market,"symbol":symbol,
+            "windows":windows,"samples":sum(w["evaluation"].get("samples",0) for w in windows),
+            "expectancy_r":round(sum(vals)/len(vals),4) if vals else None}
 
 
 def edge_summary(records):
@@ -506,12 +579,19 @@ def edge_summary(records):
         regime = record.get("regime")
         regime_state = regime.get("state") if isinstance(regime, dict) else "unknown"
         key = (record.get("market", "unknown"), record.get("direction", "unknown"), regime_state)
-        bucket = groups.setdefault(key, {"samples": 0, "tp": 0, "sl": 0})
+        bucket = groups.setdefault(key, {"samples": 0, "tp": 0, "sl": 0, "r_sum": 0.0, "mae_sum": 0.0, "mfe_sum": 0.0, "mae_n": 0, "mfe_n": 0})
         bucket["samples"] += 1
         bucket["tp"] += record.get("outcome") == "TP"
         bucket["sl"] += record.get("outcome") == "SL"
+        if record.get("realized_r") is not None: bucket["r_sum"] += float(record["realized_r"])
+        if record.get("mae") is not None: bucket["mae_sum"] += float(record["mae"]); bucket["mae_n"] += 1
+        if record.get("mfe") is not None: bucket["mfe_sum"] += float(record["mfe"]); bucket["mfe_n"] += 1
     for bucket in groups.values():
         bucket["hit_rate"] = round(bucket["tp"] / max(1, bucket["tp"] + bucket["sl"]), 4)
+        bucket["expectancy_r"] = round(bucket["r_sum"] / max(1, bucket["samples"]), 4)
+        bucket["avg_mae"] = round(bucket["mae_sum"] / bucket["mae_n"], 6) if bucket["mae_n"] else None
+        bucket["avg_mfe"] = round(bucket["mfe_sum"] / bucket["mfe_n"], 6) if bucket["mfe_n"] else None
+        bucket.pop("r_sum",None); bucket.pop("mae_sum",None); bucket.pop("mfe_sum",None); bucket.pop("mae_n",None); bucket.pop("mfe_n",None)
     return {
         "samples": len(resolved),
         "tp": sum(r.get("outcome") == "TP" for r in resolved),

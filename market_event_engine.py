@@ -3,7 +3,7 @@ import math,time
 
 def _dedupe_events(events):
     groups={}
-    priority={"failed_breakout":4,"failed_breakdown":4,"gap":3,"range_expansion":2,"volume_expansion":1}
+    priority={"failed_breakout":4,"failed_breakdown":4,"daily_failed_high":4,"daily_failed_low":4,"gap":3,"range_expansion":2,"volume_expansion":1}
     for e in events or []:
         d=e.get("direction"); level=e.get("level")
         key=(e.get("event"),d,level) if d is None and level is None else (d,level)
@@ -16,13 +16,16 @@ def _dedupe_events(events):
             cur.setdefault("confirmations",[]).append(e.get("event"))
     return list(groups.values())
 from datetime import datetime,timezone
-from scan_architecture import MIN_RR
+from scan_architecture import MIN_RR, market_block_policy
+from limit_engine import generate_candidates, choose_candidate
+from scenario_engine import scenario_snapshot, EventLifecycle
 try:
  from zoneinfo import ZoneInfo
 except ImportError:
  ZoneInfo=None
 
-VERSION="multimarket_event_engine_v1"
+VERSION="multimarket_event_engine_v2"
+EVENT_LIFECYCLE=EventLifecycle()
 
 def _atr(r,n=14):
  if len(r)<2:return None
@@ -52,7 +55,7 @@ def _forex_session_levels(rows, target):
  return max(x["high"] for x in d),min(x["low"] for x in d)
 
 def detect_events(market,symbol,rows):
- r=[x for x in rows or [] if all(math.isfinite(float(x.get(k))) for k in ("open","high","low","close"))]
+ r=[x for x in rows or [] if x.get("confirm",True) is not False and all(math.isfinite(float(x.get(k))) for k in ("open","high","low","close"))]
  if len(r)<30:return {"ready":False,"events":[],"reason":"need_at_least_30_valid_closed_candles"}
  atr=_atr(r)
  if not atr or atr<=0:return {"ready":False,"events":[],"reason":"atr_unavailable"}
@@ -76,21 +79,110 @@ def detect_events(market,symbol,rows):
    if sh is not None and c["high"]>sh and c["close"]<sh:ev.append({"event":"session_failed_high","direction":"bearish","confidence":"high","session":prev_session,"level":sh})
    if sl is not None and c["low"]<sl and c["close"]>sl:ev.append({"event":"session_failed_low","direction":"bullish","confidence":"high","session":prev_session,"level":sl})
  elif market=="commodities":
-  ev += [{"event":"instrument_session_context","confidence":"context"},{"event":"inventory_event","confidence":"unavailable","status":"fundamental_calendar_not_connected"},{"event":"contract_rollover","confidence":"unavailable","status":"contract_calendar_not_connected"}]
- elif market=="stocks":ev.append({"event":"xstock_24_7_context","confidence":"context"})
+  ev.append({"event":"instrument_session_context","confidence":"context"})
+ elif market=="stocks":
+  ev.append({"event":"xstock_24_7_context","confidence":"context"})
+  day=datetime.fromtimestamp(int(c.get("start",0))/1000,timezone.utc).date()
+  day_rows=[x for x in r[:-1] if datetime.fromtimestamp(int(x.get("start",0))/1000,timezone.utc).date()==day]
+  if day_rows:
+   dh=max(x["high"] for x in day_rows); dl=min(x["low"] for x in day_rows)
+   if c["high"]>dh and c["close"]<dh:ev.append({"event":"daily_failed_high","direction":"bearish","confidence":"high","level":dh})
+   if c["low"]<dl and c["close"]>dl:ev.append({"event":"daily_failed_low","direction":"bullish","confidence":"high","level":dl})
  ev=_dedupe_events(ev)
- return {"ready":True,"engine_version":VERSION,"market":market,"symbol":symbol,"events":ev,"session":sess,"reference":{"atr":atr,"range_high":hi,"range_low":lo}}
+ for event in ev:
+  event["market"]=market; event["symbol"]=symbol; event["lifecycle"]=EVENT_LIFECYCLE.update(event,confirmed=True)["state"]
+ return {"ready":True,"engine_version":VERSION,"market":market,"symbol":symbol,"events":ev,"session":sess,"reference":{"atr":atr,"range_high":hi,"range_low":lo},"event_lifecycle":EVENT_LIFECYCLE.snapshot(market,symbol),"fundamental_context":{"inventory":"unavailable","rollover":"unavailable"} if market=="commodities" else None}
 
-def build_setup_plan(market,symbol,rows,result):
- if not result.get("ready"):return {"ready":False,"tradeable":False,"reason":"event_engine_not_ready"}
- atr=float(result["reference"]["atr"]); c=rows[-1]
- ds=[e for e in result["events"] if e.get("confidence")=="high" and e.get("direction") in ("bullish","bearish")]
- if not ds:return {"ready":True,"tradeable":False,"reason":"no_high_confidence_directional_event"}
- e=next((x for x in ds if x["event"] in ("failed_breakout","failed_breakdown")),ds[0])
- direction=e["direction"]; entry=float(e.get("level",c["close"]))
- if direction=="bearish":
-  stop=max(c["high"],entry+.15*atr); risk=stop-entry; target=entry-MIN_RR*risk
- else:
-  stop=min(c["low"],entry-.15*atr); risk=entry-stop; target=entry+MIN_RR*risk
- if risk<=0:return {"ready":True,"tradeable":False,"reason":"invalid_geometry"}
- return {"ready":True,"tradeable":True,"execution_ready":False,"execution_mode":"conditional_limit_or_trigger","market":market,"symbol":symbol,"direction":direction,"trigger":{"type":"retest","level":round(entry,10),"condition":"price_retests_level_and_confirms_rejection"},"limit_plan":{"entry":round(entry,10),"stop":round(stop,10),"take_profit":round(target,10),"rr":MIN_RR,"minimum_rr":MIN_RR,"rr_basis":"limit_entry_to_stop_and_take_profit","risk_distance":round(risk,10)},"event_basis":[e],"notes":["Closed-candle structural level only.","No broker order is sent.","OI/funding/liquidation/CVD/orderbook are never inferred."]}
+def _shared_direction(analysis_core):
+    analysis=(analysis_core or {}).get("analysis") or {}
+    def direction(tf):
+        a=analysis.get(tf) or {}
+        if not a.get("ready"):
+            return None
+        state=(a.get("structure") or {}).get("state")
+        if state=="uptrend": return "bullish"
+        if state=="downtrend": return "bearish"
+        return None
+    d1=direction("1h"); d15=direction("15m")
+    if d1 and d15 and d1==d15:
+        return d1, "confirmed"
+    if d1 and not d15:
+        return d1, "provisional"
+    if d15 and not d1:
+        return d15, "provisional"
+    return None, "uncertain"
+
+
+def _shared_limit_geometry(market, symbol, analysis_core, events=None):
+    analysis=(analysis_core or {}).get("analysis") or {}
+    direction,state=_shared_direction(analysis_core)
+    scenarios=scenario_snapshot(analysis_core,events or [])
+    if direction not in ("bullish","bearish") or state!="confirmed":
+        return None
+    candidates=generate_candidates(market,symbol,analysis_core,direction,max_candidates=3)
+    candidate=choose_candidate(candidates)
+    if not candidate:
+        return None
+    plan={
+        "market":market,"symbol":symbol,"direction":direction,
+        "execution_ready":False,"execution_mode":"conditional_limit",
+        "tradeable":True,"ready":True,
+        "scenario":scenarios,
+        "limit_candidates":candidates,
+        "trigger":{"type":"structural_retest","level":round(candidate["entry"],10),
+                   "condition":"price_retests_structural_level_and_confirms_rejection"},
+        "limit_plan":{
+            "eligible":True,"state":"LIMIT_PLAN",
+            "side":"BUY_LIMIT" if direction=="bullish" else "SELL_LIMIT",
+            "entry":round(candidate["entry"],10),
+            "entry_zone":[round(min(candidate["entry_zone"]),10),round(max(candidate["entry_zone"]),10)],
+            "stop":round(candidate["stop"],10),"take_profit":round(candidate["take_profit"],10),
+            "rr":round(candidate["rr"],3),"minimum_rr":MIN_RR,
+            "rr_basis":"limit_entry_to_stop_and_take_profit",
+            "risk_distance":round(candidate["risk_distance"],10),
+            "entry_basis":{"source":candidate["source"],"timeframe":candidate["timeframe"]},
+            "place_now":False,
+            "requires_before_fill":["direction_confirmation","structural_retest","market_data_ready"],
+            "cancel_if":["direction_invalidated","structural_invalidation","target_or_scale_invalid"],
+        },
+        "event_basis":[],"notes":[
+            "Multi-source LIMIT engine selects structural candidates.",
+            "Market-specific events are confirmation, never direction authority.",
+            "No broker order is sent."
+        ],
+    }
+    return plan
+
+
+def build_setup_plan(market,symbol,rows,result,analysis_core=None):
+    if not result.get("ready"):
+        return {"ready":False,"tradeable":False,"reason":"event_engine_not_ready"}
+
+    # Prefer the shared analytical core. This makes xStocks/Forex/Commodities use
+    # the same structural discipline as crypto without importing crypto-only flow.
+    shared=_shared_limit_geometry(market,symbol,analysis_core,result.get("events") or [])
+    if shared:
+        directional=[e for e in result.get("events",[]) if e.get("direction")==shared["direction"]]
+        priority=market_block_policy(market).get("event_priority") or []
+        directional.sort(key=lambda e: priority.index(e.get("event")) if e.get("event") in priority else len(priority))
+        shared["event_basis"]=directional[:4]
+        shared["scenario"]["event_support"]=directional[:4]
+        return shared
+
+    # Event-only evidence cannot manufacture a trade when the authoritative
+    # MTF structure is unavailable.
+    return {
+        "ready":True,
+        "tradeable":False,
+        "execution_ready":False,
+        "execution_mode":"watch",
+        "market":market,
+        "symbol":symbol,
+        "direction":None,
+        "wait_for_confirmation":True,
+        "reason":"shared_mtf_structure_not_ready",
+        "event_basis":result.get("events") or [],
+        "scenario":{"primary":{"type":"NO_TRADE","state":"WAIT","authority":"INSUFFICIENT_STRUCTURE"}},
+        "notes":["Event-only evidence cannot override authoritative MTF structure.",
+                 "Wait for confirmed structure before creating a LIMIT plan."],
+    }
