@@ -77,11 +77,25 @@ def _dedupe(candidates, tolerance):
         else: out.append((v,source,tf))
     return out
 
+def _freshness_ok(analysis):
+    ages=[]
+    for tf in ("1h","15m","5m"):
+        item=analysis.get(tf) or {}
+        fresh=item.get("signal_freshness")
+        if isinstance(fresh,dict):
+            age=_finite(fresh.get("age_seconds"))
+            if age is not None: ages.append(age)
+            if fresh.get("state") in ("STALE","INVALID"): return False
+        elif isinstance(fresh,str) and fresh.upper() in ("STALE","INVALID"):
+            return False
+    return not ages or max(ages)<=900
+
 def generate_candidates(market,symbol,analysis_core,direction,max_candidates=3):
     analysis=_analysis(analysis_core)
     frame=analysis.get("15m") or {}
     price=_finite(frame.get("last_confirmed_close"))
     if price is None or direction not in ("bullish","bearish"): return []
+    if not _freshness_ok(analysis): return []
     atr=_atr(analysis)
     tolerance=max((atr or price*0.001)*0.12,price*0.0001)
     raw=_source_levels(analysis,direction,price)
