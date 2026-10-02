@@ -15,16 +15,18 @@ TRANSITION={"range_or_transition","transition","pending_confirmation","unknown",
 def _state(frame):
     if not isinstance(frame,Mapping):
         return "unknown"
-    structure=str(frame.get("structure") or "").lower()
-    raw=str(frame.get("raw_confluence") or "").lower()
-    direction=str(frame.get("direction") or "").lower()
-    if structure in BULL or direction in BULL:
+    analysis=frame.get("analysis") if isinstance(frame.get("analysis"),Mapping) else frame
+    structure=analysis.get("structure") if isinstance(analysis.get("structure"),Mapping) else {}
+    structure_state=str(structure.get("state") or structure.get("trend") or "").lower()
+    raw=str(analysis.get("raw_confluence") or frame.get("raw_confluence") or "").lower()
+    direction=str(analysis.get("direction") or frame.get("direction") or "").lower()
+    if structure_state in BULL or direction in BULL:
         return "bullish"
-    if structure in BEAR or direction in BEAR:
+    if structure_state in BEAR or direction in BEAR:
         return "bearish"
-    if structure in TRANSITION or direction in TRANSITION:
+    if structure_state in TRANSITION or direction in TRANSITION:
         return "transition"
-    if direction in ("neutral","range","sideways") or structure in ("range","range_or_transition"):
+    if direction in ("neutral","range","sideways") or structure_state in ("range","range_or_transition"):
         return "transition"
     if raw in BULL:
         return "bullish"
