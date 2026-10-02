@@ -6,6 +6,7 @@ than silently substituting daily candles.
 """
 import requests
 import time
+import threading
 
 
 def _aggregate_4h(rows):
@@ -38,6 +39,40 @@ def _aggregate_4h(rows):
         })
     return out
 
+YAHOO_REQUEST_LOCK = threading.Lock()
+YAHOO_LAST_REQUEST = 0.0
+YAHOO_MIN_INTERVAL = 1.25
+YAHOO_HOSTS = ("query1.finance.yahoo.com", "query2.finance.yahoo.com")
+
+def _yahoo_get(base_url, path, params, timeout, headers, session):
+    global YAHOO_LAST_REQUEST
+    with YAHOO_REQUEST_LOCK:
+        default_hosts = base_url.startswith("https://query1.finance.yahoo.com")
+        hosts = YAHOO_HOSTS if default_hosts else (base_url.split("://",1)[-1].split("/",1)[0],)
+        last_error = None
+        for host in hosts:
+            delay = YAHOO_MIN_INTERVAL - (time.monotonic() - YAHOO_LAST_REQUEST)
+            if delay > 0:
+                time.sleep(delay)
+            url = f"https://{host}/v8/finance/chart/{path}" if default_hosts else f"{base_url}/{path}"
+            for attempt in range(4):
+                try:
+                    response=session.get(url,params=params,timeout=timeout,headers=headers)
+                    YAHOO_LAST_REQUEST=time.monotonic()
+                    if response.status_code != 429:
+                        response.raise_for_status()
+                        return response
+                    retry_after=response.headers.get("Retry-After")
+                    time.sleep(float(retry_after) if retry_after else min(2.0**attempt,8.0))
+                except requests.RequestException as exc:
+                    last_error=exc
+                    if attempt >= 3:
+                        break
+                    time.sleep(min(2.0**attempt,8.0))
+        if last_error:
+            raise last_error
+        raise requests.HTTPError("Yahoo Finance rate limit persisted")
+
 class YahooFXLoader:
     SYMBOL_SUFFIX="=X"
     INTERVALS={"5":"5m","15":"15m","60":"60m","240":"1h","d":"1d"}
@@ -52,25 +87,10 @@ class YahooFXLoader:
         pair=str(symbol).upper().replace("/","")
         ticker=pair if pair.endswith("=X") else pair+self.SYMBOL_SUFFIX
         params={"interval":self.INTERVALS[interval],"range":"30d" if interval!="d" else "1y","events":"history"}
-        response = None
-        for attempt in range(4):
-            try:
-                response=self.session.get(
-                    f"{self.base_url}/{ticker}",
-                    params=params,
-                    timeout=self.timeout,
-                    headers={"User-Agent":"scalp-market-bridge/1.0"},
-                )
-                if response.status_code != 429:
-                    break
-                retry_after=response.headers.get("Retry-After")
-                delay=float(retry_after) if retry_after else (1.0 * (2 ** attempt))
-                time.sleep(min(delay, 8.0))
-            except requests.RequestException:
-                if attempt >= 3:
-                    raise
-                time.sleep(min(1.0 * (2 ** attempt), 8.0))
-        response.raise_for_status()
+        response = _yahoo_get(
+            self.base_url, ticker, params=params, timeout=self.timeout,
+            headers={"User-Agent":"scalp-market-bridge/1.0"}, session=self.session,
+        )
         payload=response.json()
         result=(payload.get("chart") or {}).get("result") or []
         if not result:
