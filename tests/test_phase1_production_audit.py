@@ -1,5 +1,9 @@
 import unittest
 
+from scan_plus.markets.stocks.adapter import StocksMarketAdapter
+from scan_plus.markets.forex.adapter import ForexMarketAdapter
+from scan_plus.markets.commodities.adapter import CommoditiesMarketAdapter
+
 from dynamic_collector import DynamicMarketManager
 from scan_plus.markets.stocks.execution import build_stock_execution_plan
 from scan_plus.markets.forex.execution import build_forex_execution_plan
@@ -21,6 +25,41 @@ def frame(state="uptrend"):
         },
         "data_quality": {"closed_only": True, "last_closed": True},
     }
+
+
+
+class FakeEngine:
+    def analyze_profiled(self, rows, profile):
+        return {
+            "structure": {
+                "state": "uptrend",
+                "last_swing_low": {"price": 99.0},
+                "last_swing_high": {"price": 101.0},
+                "degrees": {},
+            },
+            "fibonacci": {"ready": True, "extensions": {"1.618": 104.0}},
+            "elliott": {"ready": True},
+        }
+
+
+class FakeXLoader:
+    def default_symbols(self, limit=15): return ["NVDA"]
+    def ticker(self, symbol): return {"product":"xstock_spot","symbol":"NVDAXUSDT","last_price":100.0,"volume_24h":1000000}
+    def klines(self, symbol, interval="5", limit=240):
+        return {"candles":[{"timestamp_ms":i*300000,"open":99,"high":101,"low":98,"close":100,"volume":100} for i in range(240)]}
+
+
+class FakeFXLoader:
+    def candles(self, symbol="EURUSD", interval="60"):
+        step={"5":300000,"15":900000,"60":3600000,"240":14400000,"d":86400000}[str(interval)]
+        return {"candles":[{"timestamp_ms":i*step,"open":1.1,"high":1.2,"low":1.0,"close":1.15,"volume":0} for i in range(240)]}
+
+
+class FakeCommodityLoader:
+    def candles(self, symbol, **kwargs):
+        interval=str(kwargs.get("interval","60"))
+        step={"5":300000,"15":900000,"60":3600000,"240":14400000,"D":86400000}[interval]
+        return {"candles":[{"timestamp_ms":i*step,"open":100,"high":101,"low":99,"close":100,"volume":100}] * 240}
 
 
 class Phase1ProductionAuditTests(unittest.TestCase):
@@ -82,6 +121,21 @@ class Phase1ProductionAuditTests(unittest.TestCase):
         self.assertTrue(plan["eligible"])
         self.assertEqual(plan["entry"]["type"],"LIMIT")
         self.assertGreaterEqual(plan["rr"],2.0)
+
+
+    def test_xstocks_adapter_has_daily_context(self):
+        out=StocksMarketAdapter(loader=FakeXLoader(),engine=FakeEngine()).scan("NVDA")
+        self.assertIn("1d",out["frames"])
+        self.assertIn("limit_plan",out["candidate"])
+
+    def test_forex_adapter_has_daily_context(self):
+        out=ForexMarketAdapter(loader=FakeFXLoader(),engine=FakeEngine()).scan("EURUSD")
+        self.assertIn("1d",out["frames"])
+
+    def test_commodity_adapter_has_daily_context(self):
+        out=CommoditiesMarketAdapter(loader=FakeCommodityLoader(),engine=FakeEngine()).scan("XAUUSD")
+        self.assertIn("1d",out["frames"])
+        self.assertIn("limit_plan",out["candidate"])
 
     def test_manipulation_accepts_native_liquidation_evidence_as_corrobation(self):
         scan={
