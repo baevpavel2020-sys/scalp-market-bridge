@@ -236,7 +236,7 @@ class ExternalMarketAdapter:
         if not symbols:
             return {}
         if market=="stocks":
-            with concurrent.futures.ThreadPoolExecutor(max_workers=min(5,len(symbols))) as pool:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(3,len(symbols))) as pool:
                 vals=list(pool.map(lambda s:self.scan(market,s),symbols))
             return {v.get("symbol"):v for v in vals}
 
@@ -321,7 +321,7 @@ class ExternalMarketAdapter:
             try: quote=self.quote(symbol)
             except Exception as e: quote={"error":f"{type(e).__name__}:{e}"}
             configured=self.configured
-        ready=all(len(frames.get(tf,[]))>=50 for tf in ("1D","4h","1h","15m","5m"))
+        ready=all(sum(1 for row in frames.get(tf,[]) if row.get("confirm",True))>=50 for tf in ("1D","4h","1h","15m","5m"))
         event_frames={tf:frames[tf] for tf in ("1D","4h","1h","15m","5m") if frames.get(tf)}
         events={tf:detect_events(market,symbol,rows) for tf,rows in event_frames.items()}
         analysis_core=MarketProfileRouter.analyze(market,symbol,frames)
