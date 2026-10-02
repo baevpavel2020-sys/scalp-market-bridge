@@ -8,6 +8,7 @@ offline seed files consumed by dynamic_collector.py.
 from __future__ import annotations
 
 import argparse
+import sys
 import json
 import os
 import time
@@ -15,6 +16,7 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scripts.seed_builder import fetch_candles
 
 BYBIT_BASE = os.environ.get("BYBIT_PUBLIC_API", "https://api.bybit.com")
