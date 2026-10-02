@@ -688,3 +688,15 @@ Fixed:
 - Added regression coverage for the reversal gate and deterministic parallel result ordering.
 
 The optimization rule remains: no performance optimization may weaken provenance, closed-candle, MTF or candidate-gating invariants.
+
+
+## Final regression/conflict audit — 2026-10-02
+
+Found and fixed three cross-layer regressions:
+- The final Aggregator was applying the additive MTF gate to Crypto even though the Crypto adapter contract explicitly says the legacy Crypto decision remains authoritative. Crypto is now exempt from that shared MTF rewrite; its MTF state remains telemetry/evidence until Crypto migration explicitly changes the authority contract.
+- The MTF regression test still encoded the old rule that any 4H/1H disagreement could confirm reversal. The test now requires an explicit CHOCH event, matching the implementation contract.
+- Candle `end` timestamps could be supplied in seconds while `timestamp_ms` was milliseconds; the data contract now normalizes `end` to milliseconds before closed-candle checks.
+- Crypto shadow snapshots using the same `generated_at` millisecond could overwrite one another. Snapshot filenames now include a short unique suffix.
+- Added regression coverage for all four cases.
+
+This pass confirms an important architecture rule: shared infrastructure may validate and observe every market, but it must not silently change the authority model of a market that is still on a legacy backend.
