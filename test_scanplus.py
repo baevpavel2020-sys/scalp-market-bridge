@@ -389,6 +389,21 @@ class TestScanPlus(unittest.TestCase):
         # Smoke test: helper must exist and accept lifecycle payloads without raising.
         _scan_log("TEST_EVENT", job_id="test-job", mode="unified", result={"ok": True})
 
+    def test_stage11_render_trigger_function_is_idempotent_for_same_token(self):
+        import os
+        import app as app_module
+        previous = os.environ.get("SCAN_TRIGGER_ID")
+        try:
+            os.environ["SCAN_TRIGGER_ID"] = "stage11-test-token"
+            app_module.app._boot_scan_trigger_id = "stage11-test-token"
+            app_module._boot_scan_from_render_trigger()
+            self.assertEqual(app_module.app._boot_scan_trigger_id, "stage11-test-token")
+        finally:
+            if previous is None:
+                os.environ.pop("SCAN_TRIGGER_ID", None)
+            else:
+                os.environ["SCAN_TRIGGER_ID"] = previous
+
     def test_stage11_scan_check_is_read_only_and_uses_latest_unified_job(self):
         from dynamic_collector import ScanJobManager
         from app import app
