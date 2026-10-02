@@ -10,6 +10,7 @@ import math
 import os
 import threading
 import time
+from analytical_depth import analytical_depth_snapshot, apply_hard_invalidations
 
 INTELLIGENCE_VERSION = "intelligence_v2"
 WATCHLIST_TTL = 6 * 3600
@@ -408,6 +409,16 @@ def enrich_external_result(result, market):
     out["setup"] = {**setup, "opportunity_state": opportunity_state}
     out["opportunity_state"] = opportunity_state
     out["intelligence_version"] = INTELLIGENCE_VERSION
+    depth_evidence = []
+    for tf_name, item in (analysis or {}).items():
+        for source, key in (("structure","structure"),("elliott","elliott"),("fibonacci","fibonacci"),("harmonics","harmonics"),("divergence","divergence"),("liquidity","liquidity"),("smc","smc"),("flow","flow")):
+            value = item.get(key)
+            if value is not None:
+                depth_evidence.append({"source":source,"kind":key,"value":value,"timeframe":tf_name})
+    depth = analytical_depth_snapshot(out["setup"], analysis, depth_evidence)
+    out["analytical_depth"] = depth
+    out["setup"] = apply_hard_invalidations(out["setup"], depth["hard_invalidations"])
+    out["opportunity_state"] = out["setup"].get("opportunity_state", opportunity_state)
     watch = WATCHLIST.upsert(out)
     out["watchlist"] = watch
     out["alert"] = alert_payload(out)
@@ -441,6 +452,16 @@ def enrich_scan(scan, market="crypto"):
     out["intelligence_version"] = INTELLIGENCE_VERSION
     out["opportunity_state"] = out["setup"].get("opportunity_state") or "WATCH"
     out["setup"]["opportunity_state"] = out["opportunity_state"]
+    depth_evidence = []
+    for tf_name, item in (out.get("timeframes") or {}).items():
+        for source, key in (("structure","structure"),("elliott","elliott"),("fibonacci","fibonacci"),("harmonics","harmonics"),("divergence","divergence"),("liquidity","liquidity"),("smc","smc"),("flow","flow")):
+            value = item.get(key)
+            if value is not None:
+                depth_evidence.append({"source":source,"kind":key,"value":value,"timeframe":tf_name})
+    depth = analytical_depth_snapshot(out["setup"], out.get("timeframes") or {}, depth_evidence)
+    out["analytical_depth"] = depth
+    out["setup"] = apply_hard_invalidations(out["setup"], depth["hard_invalidations"])
+    out["opportunity_state"] = out["setup"].get("opportunity_state", out["opportunity_state"])
     watch = WATCHLIST.upsert(out)
     out["watchlist"] = watch
     out["alert"] = alert_payload(out)
