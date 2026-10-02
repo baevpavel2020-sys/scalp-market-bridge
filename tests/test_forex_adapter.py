@@ -33,7 +33,7 @@ class ForexAdapterTests(unittest.TestCase):
 
     def test_scan_keeps_timeframes_and_fx_context_separate(self):
         out=self.adapter.scan("EURUSD")
-        self.assertEqual(set(out["frames"]),{"5m","15m","1h","4h"})
+        self.assertEqual(set(out["frames"]),{"1d","5m","15m","1h","4h"})
         self.assertTrue(out["execution_context"]["session_sensitive"])
         self.assertTrue(out["execution_context"]["no_crypto_oi_funding_liquidations"])
 
