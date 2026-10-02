@@ -16,7 +16,7 @@ MARKET_PROFILES = {
     },
     "forex": {
         "prescan": ["volatility", "active_session", "session_high_low", "structure", "relative_strength"],
-        "scan": ["structure_mtf", "elliott", "fibonacci", "session_liquidity", "harmonics", "indicators"],
+        "scan": ["structure_mtf", "elliott", "fibonacci", "session_liquidity", "harmonics"],
     },
     "commodities": {
         "prescan": ["volatility", "structure", "liquidity"],
@@ -35,7 +35,7 @@ INSTRUMENT_PROFILES = {
     "EURUSD": {
         "market":"forex","group":"major_fx","product":"spot_fx",
         "prescan":["active_session","volatility","session_high_low","structure","relative_strength"],
-        "scan":["structure_mtf","elliott","session_liquidity","fibonacci","relative_strength","harmonics"],
+        "scan":["structure_mtf","elliott","session_liquidity","fibonacci","harmonics"],
     },
     "GBPUSD": {"market":"forex","group":"major_fx","product":"spot_fx"},
     "USDJPY": {"market":"forex","group":"major_fx","product":"spot_fx"},
