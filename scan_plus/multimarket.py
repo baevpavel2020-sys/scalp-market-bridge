@@ -99,6 +99,20 @@ class MultiMarketOrchestrator:
                     requests.append(key); seen.add(key)
         return requests
 
+    def _safe_scan(self, market, symbol):
+        safe=getattr(self.registry,"safe_scan",None)
+        if callable(safe):
+            return safe(market,symbol)
+        adapter=self.registry.get(market)
+        payload=adapter.scan(symbol)
+        if not isinstance(payload,dict):
+            raise TypeError("market adapter returned non-mapping")
+        if str(payload.get("market") or "").lower()!=str(market).lower():
+            raise ValueError("market contract violation")
+        if str(payload.get("symbol") or "").upper()!=str(symbol).upper():
+            raise ValueError("symbol contract violation")
+        return {"status":"OK","market":market,"symbol":symbol,"result":payload}
+
     def scan_many(self, requests):
         """Expand market-native universes and run isolated full scans."""
         expanded=[]
@@ -129,7 +143,7 @@ class MultiMarketOrchestrator:
             return results
         if len(expanded) == 1:
             market, symbol = expanded[0]
-            return [self.registry.safe_scan(market, symbol)]
+            return [self._safe_scan(market, symbol)]
 
         # Concurrency is isolated by market. This is important for both correctness
         # and provider hygiene:
@@ -155,7 +169,7 @@ class MultiMarketOrchestrator:
             if workers <= 1:
                 for item in items:
                     try:
-                        completed[item] = self.registry.safe_scan(*item)
+                        completed[item] = self._safe_scan(*item)
                     except Exception as exc:
                         completed[item] = {
                             "status": "DATA_ERROR", "market": item[0],
