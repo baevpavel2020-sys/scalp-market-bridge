@@ -52,7 +52,7 @@ def _forex_session_levels(rows, target):
  return max(x["high"] for x in d),min(x["low"] for x in d)
 
 def detect_events(market,symbol,rows):
- r=[x for x in rows or [] if all(math.isfinite(float(x.get(k))) for k in ("open","high","low","close"))]
+ r=[x for x in rows or [] if x.get("confirm",True) is not False and all(math.isfinite(float(x.get(k))) for k in ("open","high","low","close"))]
  if len(r)<30:return {"ready":False,"events":[],"reason":"need_at_least_30_valid_closed_candles"}
  atr=_atr(r)
  if not atr or atr<=0:return {"ready":False,"events":[],"reason":"atr_unavailable"}
