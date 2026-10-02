@@ -467,6 +467,10 @@ def enrich_external_result(result, market):
     out["analytical_depth"] = depth
     out["setup"] = apply_hard_invalidations(out["setup"], depth["hard_invalidations"])
     out["opportunity_state"] = out["setup"].get("opportunity_state", opportunity_state)
+    # Funnel/execution are downstream of hard invalidations. Never leave a stale
+    # READY/TRADE label after analytical depth invalidates the thesis.
+    out["opportunity_funnel"] = opportunity_funnel(out["setup"], result.get("analysis_ready"), result.get("execution_ready"))
+    out["execution_contract"] = execution_contract(market, out["opportunity_funnel"]["stage"] in ("READY","TRADE"), result.get("execution_ready"), result.get("execution_reason"))
     watch = WATCHLIST.upsert(out)
     out["watchlist"] = watch
     out["alert"] = alert_payload(out)
@@ -513,6 +517,8 @@ def enrich_scan(scan, market="crypto"):
     out["analytical_depth"] = depth
     out["setup"] = apply_hard_invalidations(out["setup"], depth["hard_invalidations"])
     out["opportunity_state"] = out["setup"].get("opportunity_state", out["opportunity_state"])
+    out["opportunity_funnel"] = opportunity_funnel(out["setup"], True, (out.get("status") or {}).get("execution_ready"))
+    out["execution_contract"] = execution_contract(market, out["opportunity_funnel"]["stage"] in ("READY","TRADE"), (out.get("status") or {}).get("execution_ready"), None)
     watch = WATCHLIST.upsert(out)
     out["watchlist"] = watch
     out["alert"] = alert_payload(out)
