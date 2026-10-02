@@ -85,6 +85,8 @@ def _shared_direction(analysis_core):
     analysis=(analysis_core or {}).get("analysis") or {}
     def direction(tf):
         a=analysis.get(tf) or {}
+        if not a.get("ready"):
+            return None
         state=(a.get("structure") or {}).get("state")
         if state=="uptrend": return "bullish"
         if state=="downtrend": return "bearish"
