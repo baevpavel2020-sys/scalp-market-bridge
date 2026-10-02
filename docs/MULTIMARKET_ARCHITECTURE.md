@@ -550,3 +550,19 @@ Implemented:
 Audit fixes:
 - Raw confluence initially could override an explicit neutral/range/transition state. Fixed: explicit neutral/transition state wins.
 - Added regression tests for bullish HTF + bearish/neutral LTF, aligned trend, medium-timeframe reversal and unresolved transition.
+
+
+## MTF execution gate — completed
+
+The MTF State Engine is now a real candidate gate, not telemetry only:
+- Forex, Stocks and Commodities candidates require an aligned execution state before reaching CANDIDATE.
+- `countertrend_correction`, `context_only` and `unresolved` are downgraded to WATCH until confirmation.
+- A structurally confirmed medium/higher-timeframe reversal is allowed through the final gate.
+- Decision Aggregator applies the same final boundary rule when an MTF state is present, protecting against future adapters bypassing their local gate.
+- Crypto remains legacy-authoritative; its MTF state is additive and only affects the shared gate when the legacy result actually exposes a usable MTF state.
+
+Audit fixes:
+- MTF state extraction initially read the wrong level of the analytical frame payload; it now reads `analysis.structure` and related fields.
+- Explicit structural transition now overrides derived direction/raw confluence.
+- Removed the stale Stooq default reference from the Forex adapter after the Yahoo provider migration.
+- Added regression tests for the final MTF gate.
