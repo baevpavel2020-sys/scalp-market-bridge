@@ -92,10 +92,11 @@ def alert_payload(scan):
     state=setup.get("opportunity_state")
     if state not in ("MARKET_READY","LIMIT_READY"): return {"eligible":False,"state":state or "WATCH"}
     lp=setup.get("limit_plan") or {}
+    targets=setup.get("targets")
+    target=targets[0] if isinstance(targets,list) and targets else targets.get("target") if isinstance(targets,dict) else lp.get("take_profit")
     return {"eligible":True,"state":state,"symbol":scan.get("symbol"),"direction":setup.get("side") or scan.get("direction"),
             "entry":setup.get("entry") or lp.get("entry"),"stop":setup.get("stop") or lp.get("stop"),
-            "target":(setup.get("targets") or [None])[0] if setup.get("targets") else lp.get("take_profit"),
-            "rr":setup.get("risk_reward") or lp.get("rr"),"reason":"setup_state_changed"}
+            "target":target,"rr":setup.get("risk_reward") or lp.get("rr"),"reason":"setup_state_changed"}
 
 class WatchlistStore:
     def __init__(self,ttl=WATCHLIST_TTL):
@@ -166,7 +167,8 @@ def enrich_external_result(result, market):
     if watch and not watch.get("state_changed"):
         out["alert"]["eligible"]=False
         out["alert"]["reason"]="no_new_setup_state_or_event"
-    OUTCOMES.record({"symbol":result.get("symbol"),"market":market,"direction":setup.get("direction"),"setup":{**setup,"opportunity_state":out["opportunity_state"]},"regime":out["regime"],"mtf_matrix":out["mtf_matrix"]})
+    if watch and watch.get("state_changed"):
+        OUTCOMES.record({"symbol":result.get("symbol"),"market":market,"direction":setup.get("direction"),"setup":{**setup,"opportunity_state":out["opportunity_state"]},"regime":out["regime"],"mtf_matrix":out["mtf_matrix"]})
     return out
 
 def enrich_scan(scan, market="crypto"):
@@ -185,7 +187,8 @@ def enrich_scan(scan, market="crypto"):
     if watch and not watch.get("state_changed"):
         out["alert"]["eligible"]=False
         out["alert"]["reason"]="no_new_setup_state_or_event"
-    OUTCOMES.record(out)
+    if watch and watch.get("state_changed"):
+        OUTCOMES.record(out)
     return out
 
 def backtest_event_setups(market,symbol,rows,detect_fn,plan_fn,max_checkpoints=100):
