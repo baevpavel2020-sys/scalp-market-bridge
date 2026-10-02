@@ -28,6 +28,13 @@ def _session(market,ts):
  if m=="commodities":return "INSTRUMENT_SESSION"
  return "24_7"
 
+def _forex_session_levels(rows, target):
+ d=[]
+ for x in rows:
+  if _session("forex",int(x.get("start",0)))==target:d.append(x)
+ if not d:return None,None
+ return max(x["high"] for x in d),min(x["low"] for x in d)
+
 def detect_events(market,symbol,rows):
  r=[x for x in rows or [] if all(math.isfinite(float(x.get(k))) for k in ("open","high","low","close"))]
  if len(r)<30:return {"ready":False,"events":[],"reason":"need_at_least_30_valid_closed_candles"}
@@ -45,7 +52,13 @@ def detect_events(market,symbol,rows):
  vols=[float(x.get("volume") or 0) for x in base]; av=sum(vols)/len(vols) if vols else 0
  if av and c.get("volume",0)>=2*av:ev.append({"event":"volume_expansion","direction":"bullish" if c["close"]>c["open"] else "bearish","confidence":"context","volume_ratio":round(c["volume"]/av,2)})
  sess=_session(market,int(c.get("start",time.time()*1000)))
- if market=="forex":ev.append({"event":"session_context","session":sess,"confidence":"context"})
+ if market=="forex":
+  ev.append({"event":"session_context","session":sess,"confidence":"context"})
+  if sess in ("LONDON","LONDON_NY_OVERLAP","NEW_YORK"):
+   prev_session="ASIA" if sess=="LONDON" else "LONDON"
+   sh,sl=_forex_session_levels(r[:-1],prev_session)
+   if sh is not None and c["high"]>sh and c["close"]<sh:ev.append({"event":"session_failed_high","direction":"bearish","confidence":"high","session":prev_session,"level":sh})
+   if sl is not None and c["low"]<sl and c["close"]>sl:ev.append({"event":"session_failed_low","direction":"bullish","confidence":"high","session":prev_session,"level":sl})
  elif market=="commodities":
   ev += [{"event":"instrument_session_context","confidence":"context"},{"event":"inventory_event","confidence":"unavailable","status":"fundamental_calendar_not_connected"},{"event":"contract_rollover","confidence":"unavailable","status":"contract_calendar_not_connected"}]
  elif market=="stocks":ev.append({"event":"xstock_24_7_context","confidence":"context"})
