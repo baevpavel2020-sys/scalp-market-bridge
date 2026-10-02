@@ -49,6 +49,7 @@ def _context_available(frames, keys):
 def build_commodity_candidate(*, symbol, group, frames):
     direction,structure_tf=_direction(frames)
     shared_ready,confirmation_tf=_shared_confirmation(frames,structure_tf)
+    mtf_state=build_mtf_state(frames)
     rules=GROUP_RULES.get(str(group or "").lower(),{})
     context=_context_available(
         {confirmation_tf: frames.get(confirmation_tf)} if confirmation_tf else {},
@@ -57,6 +58,8 @@ def build_commodity_candidate(*, symbol, group, frames):
 
     blockers=[]
     if direction=="unknown": blockers.append("structure_direction_unresolved")
+    if mtf_state["regime"] in ("countertrend_correction","context_only","unresolved"):
+        blockers.append("mtf_execution_not_aligned")
     if not shared_ready: blockers.append("fibonacci_or_elliott_unavailable")
 
     # External commodity context is confirmatory, not a hard gate.
@@ -72,6 +75,7 @@ def build_commodity_candidate(*, symbol, group, frames):
         "structure_timeframe":structure_tf,
         "confirmation_timeframe":confirmation_tf,
         "context_available":context,
+        "mtf_state":mtf_state,
         "evidence_policy":{
             "structure_primary":True,
             "elliott_required":True,
