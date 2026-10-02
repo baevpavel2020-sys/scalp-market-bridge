@@ -6538,7 +6538,7 @@ class OnDemandPreScanService:
         started = time.time()
         cls.ensure_warmer()
         symbols = cls._clean_symbols(universe or cls.DEFAULT_UNIVERSE)
-        top_n = max(1, min(int(top_n), 20))
+        top_n = max(1, min(int(top_n), cls.TOP_BY_TURNOVER))
         if not symbols:
             return cls._json_safe({
                 "engine_version": cls.VERSION, "mode": "manual_on_demand", "status": "FAIL",
