@@ -17,6 +17,7 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 
 import websocket
+from pump_exhaustion import detect as detect_pump_exhaustion
 
 
 # ============================================================
@@ -4783,6 +4784,7 @@ class DynamicMarketManager:
                 **setup,
                 "failed_requirements":failed,
             },
+            "manipulation": detect_pump_exhaustion(linear, full.get("spot",{})),
         }
 
     def replay_no_lookahead(self, candles_by_tf, checkpoints=None):
