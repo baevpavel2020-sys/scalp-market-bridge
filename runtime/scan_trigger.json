@@ -1,5 +1,5 @@
 {
   "action": "scan",
-  "reason": "post-deploy persistence/resume verification",
-  "nonce": "2026-10-03T01:33:00+03:00"
+  "reason": "user command Scan",
+  "nonce": "2026-10-02T22:41:51.390Z"
 }
