@@ -343,6 +343,31 @@ WATCHLIST = WatchlistStore()
 OUTCOMES = OutcomeLogger()
 
 
+def data_provenance(frames):
+    now=time.time()
+    out={}
+    for tf,rows in (frames or {}).items():
+        closed=[r for r in rows if r.get("confirm",True) is not False]
+        last=closed[-1] if closed else None
+        ts=(last or {}).get("end",(last or {}).get("start"))
+        age=None
+        try: age=max(0.0,now-float(ts)/1000.0)
+        except (TypeError,ValueError): pass
+        out[tf]={"provider":(last or {}).get("source","unknown"),"closed":bool(last),
+                 "age_seconds":round(age,2) if age is not None else None,
+                 "quality":"HIGH" if age is not None and age<120 else "MEDIUM" if age is not None else "UNKNOWN"}
+    return out
+
+def _setup_cost(setup,market):
+    lp=(setup or {}).get("limit_plan") or {}
+    if not all(k in lp for k in ("entry","stop","take_profit")):
+        return {"ready":False,"reason":"incomplete_setup"}
+    return execution_cost(market,lp["entry"],lp["stop"],lp["take_profit"],
+                          spread=(setup or {}).get("spread"),
+                          slippage_bps=(setup or {}).get("slippage_bps",0.0),
+                          commission_bps=(setup or {}).get("commission_bps",0.0),
+                          funding_bps=(setup or {}).get("funding_bps",0.0))
+
 def enrich_external_result(result, market):
     frames = result.get("frames") or {}
     analysis = result.get("analysis_core", {}).get("analysis") or {}
@@ -373,6 +398,9 @@ def enrich_external_result(result, market):
     out["analysis_policy"] = market_block_policy(market)
     out["mtf_matrix"] = mtf_state_matrix(tf)
     out["performance"] = performance_snapshot(frames)
+    out["data_provenance"] = data_provenance(frames)
+    out["scenario"] = setup.get("scenario") or {"primary":{"type":"NO_TRADE","state":"UNKNOWN"}}
+    out["execution_cost"] = _setup_cost(setup,market)
     out["setup"] = {**setup, "opportunity_state": opportunity_state}
     out["opportunity_state"] = opportunity_state
     out["intelligence_version"] = INTELLIGENCE_VERSION
@@ -402,6 +430,9 @@ def enrich_scan(scan, market="crypto"):
     out["analysis_policy"] = market_block_policy(market)
     out["mtf_matrix"] = mtf_state_matrix(out.get("timeframes") or {})
     out["performance"] = performance_snapshot(frames)
+    out["data_provenance"] = data_provenance(frames)
+    out["scenario"] = out["setup"].get("scenario") or {"primary":{"type":"NO_TRADE","state":"UNKNOWN"}}
+    out["execution_cost"] = _setup_cost(out["setup"],market)
     out["intelligence_version"] = INTELLIGENCE_VERSION
     out["setup"] = dict(out.get("setup") or {})
     out["opportunity_state"] = out["setup"].get("opportunity_state") or "WATCH"
