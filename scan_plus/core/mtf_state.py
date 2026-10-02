@@ -24,6 +24,8 @@ def _state(frame):
         return "bearish"
     if structure in TRANSITION or direction in TRANSITION:
         return "transition"
+    if direction in ("neutral","range","sideways") or structure in ("range","range_or_transition"):
+        return "transition"
     if raw in BULL:
         return "bullish"
     if raw in BEAR:
