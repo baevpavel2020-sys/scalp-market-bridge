@@ -47,6 +47,15 @@ WINDOWS = {
 SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,24}USDT$")
 
 
+def _scan_log(event, **payload):
+    """Emit machine-readable Scan lifecycle records to Render logs."""
+    record = {"event": event, **payload}
+    try:
+        print("SCAN_EVENT " + json.dumps(record, ensure_ascii=False, separators=(",", ":"), default=str), flush=True)
+    except Exception:
+        pass
+
+
 def fnum(value):
     try:
         return float(value)
@@ -6954,6 +6963,7 @@ class ScanJobManager:
             mode = job["mode"]
             payload = dict(job.get("payload") or {})
         cls._patch(jid, state="RUNNING", started_at=time.time())
+        _scan_log("JOB_STARTED", job_id=jid, mode=mode, payload=payload)
         started = time.time()
         try:
             if mode == "batch":
@@ -7103,20 +7113,14 @@ class ScanJobManager:
             else:
                 raise ValueError(f"unsupported job mode: {mode}")
 
-            cls._patch(
-                jid,
-                state="DONE",
-                result=result,
-                error=None,
-                finished_at=time.time(),
-            )
+            finished_at = time.time()
+            cls._patch(jid, state="DONE", result=result, error=None, finished_at=finished_at)
+            _scan_log("JOB_DONE", job_id=jid, mode=mode, finished_at=finished_at, result=result)
         except Exception as exc:
-            cls._patch(
-                jid,
-                state="FAILED",
-                error=f"{type(exc).__name__}: {exc}",
-                finished_at=time.time(),
-            )
+            finished_at = time.time()
+            error = f"{type(exc).__name__}: {exc}"
+            cls._patch(jid, state="FAILED", error=error, finished_at=finished_at)
+            _scan_log("JOB_FAILED", job_id=jid, mode=mode, finished_at=finished_at, error=error)
 
     @classmethod
     def start_batch(cls, symbols):
