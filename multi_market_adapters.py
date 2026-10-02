@@ -35,6 +35,33 @@ def bybit_xstock_candles(symbol,interval="15",limit=500):
         except (IndexError,TypeError,ValueError): pass
     return out
 
+
+MARKET_PROFILES = {
+    "crypto": {"session_model":"24_7","volume_model":"exchange_volume","oi":True,"funding":True,"liquidations":True,"orderbook":True,"cvd":True,"execution":"exchange_perpetual_or_spot","special_events":["pump_exhaustion","short_squeeze","long_liquidation_cascade","liquidity_sweep"]},
+    "stocks": {"session_model":"exchange_session","volume_model":"exchange_volume","oi":False,"funding":False,"liquidations":False,"orderbook":True,"cvd":False,"execution":"bybit_xstock_spot","special_events":["gap","opening_range","session_liquidity","failed_breakout"]},
+    "forex": {"session_model":"asia_london_newyork","volume_model":"tick_or_provider_volume","oi":False,"funding":False,"liquidations":False,"orderbook":False,"cvd":False,"execution":"external_fx_broker_required","special_events":["session_liquidity","london_breakout","ny_reversal","failed_breakout"]},
+    "commodities": {"session_model":"instrument_session","volume_model":"provider_volume","oi":False,"funding":False,"liquidations":False,"orderbook":False,"cvd":False,"execution":"external_commodity_broker_required","special_events":["session_liquidity","inventory_event","contract_rollover","failed_breakout"]},
+}
+
+def market_profile(market):
+    return dict(MARKET_PROFILES.get(str(market).lower(), {}))
+
+def session_context(market, now_epoch=None):
+    import datetime as _dt
+    ts=_dt.datetime.fromtimestamp(now_epoch or __import__("time").time(), _dt.timezone.utc)
+    hour=ts.hour + ts.minute/60.0
+    market=str(market).lower()
+    if market=="forex":
+        if 0 <= hour < 8: session="ASIA"
+        elif 8 <= hour < 13: session="LONDON"
+        elif 13 <= hour < 17: session="LONDON_NY_OVERLAP"
+        elif 17 <= hour < 22: session="NEW_YORK"
+        else: session="ROLLOVER"
+    elif market=="stocks": session="GLOBAL_XSTOCKS_24_7"
+    elif market=="commodities": session="INSTRUMENT_SESSION"
+    else: session="24_7"
+    return {"market":market,"session":session,"utc_hour":round(hour,2),"profile":market_profile(market)}
+
 class ExternalMarketAdapter:
     VERSION="external_market_adapter_v1"
     def __init__(self,api_key=None):
@@ -82,7 +109,7 @@ class ExternalMarketAdapter:
             except Exception as e: quote={"error":f"{type(e).__name__}:{e}"}
             configured=self.configured
         ready=all(len(frames.get(tf,[]))>=50 for tf in ("1D","4h","1h","15m","5m"))
-        return {"market":market,"symbol":symbol,"adapter_version":self.VERSION,"provider":provider,"configured":configured,"analysis_ready":ready,"execution_ready":False,"execution_reason":"external_market_execution_connector_not_configured","frames":frames,"quote":quote,"errors":errors,"capabilities":{"ohlcv":True,"realtime_quote":True,"orderbook":False,"open_interest":False,"funding":False,"spot_cvd":False}}
+        return {"market":market,"symbol":symbol,"adapter_version":self.VERSION,"provider":provider,"configured":configured,"analysis_ready":ready,"execution_ready":False,"execution_reason":"external_market_execution_connector_not_configured","frames":frames,"quote":quote,"errors":errors,"capabilities":{"ohlcv":True,"realtime_quote":True,"orderbook":False,"open_interest":False,"funding":False,"spot_cvd":False},"market_profile":market_profile(market),"session_context":session_context(market)}
 def external_universe():
     try: stocks=bybit_xstocks_top15()
     except Exception: stocks=list(DEFAULT_STOCKS)
