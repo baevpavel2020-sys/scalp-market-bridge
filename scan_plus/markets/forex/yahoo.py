@@ -8,6 +8,7 @@ import requests
 
 
 def _aggregate_4h(rows):
+    rows=sorted(rows,key=lambda x:int(x["timestamp_ms"]))
     out=[]
     bucket=None
     for row in rows:
