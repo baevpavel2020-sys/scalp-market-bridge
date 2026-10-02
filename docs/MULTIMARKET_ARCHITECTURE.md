@@ -646,3 +646,25 @@ The second pass found a separate class of isolation risk: even with correct mark
 
 ### Remaining provider-specific behavior
 4H FX/commodity bars are derived from provider 1H data on explicit UTC four-hour buckets. This is intentional and market-neutral; it must not be interpreted as an exchange-native 4H candle. The derived-bar path remains isolated to the owning adapter/provider and is not shared with Crypto or tokenized Stocks.
+
+
+## Final MTF → Operator View audit — 2026-10-02
+
+End-to-end boundary audited from provider candles through MTF/candidate normalization to Operator View.
+
+### Fixed
+- Synthetic 4H FX/commodity candles are now created only from four contiguous hourly bars. Provider gaps can no longer manufacture a false 4H candle.
+- Final decision normalization now requires a known market and non-empty symbol provenance.
+- Unknown candidate statuses are rejected as DATA_ERROR instead of silently becoming WATCH.
+- Candidate-level DATA_ERROR cannot become WATCH.
+- Operator View preserves `mtf_state` and `mtf_gate_blocked`, so a user can see why a candidate was downgraded.
+- Operator View's `scanned` count now includes data errors; failed instruments are no longer hidden from the scan summary.
+- Regression coverage added for complete/incomplete 4H blocks, malformed final status, missing symbol, invalid market and MTF gate propagation.
+
+### Final invariant
+The final path is now intended to satisfy:
+`provider → data contract → market adapter → closed MTF frames → candidate gate → provenance-checked aggregator → presentation-only Operator View`.
+
+Operator View cannot upgrade a WATCH/NO_TRADE/DATA_ERROR into a candidate; it can only display already-normalized states. It also does not calculate a cross-market trade score or combine evidence between markets.
+
+CI/runtime limitation remains: GitHub exposes no status checks for the current branch head in this environment, so the audit records code-level and regression coverage, not a claimed green deployment run.
