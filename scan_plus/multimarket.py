@@ -180,7 +180,7 @@ class MultiMarketOrchestrator:
 
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 futures = {
-                    pool.submit(self.registry.safe_scan, *item): item
+                    pool.submit(self._safe_scan, *item): item
                     for item in items
                 }
                 for future in as_completed(futures):
