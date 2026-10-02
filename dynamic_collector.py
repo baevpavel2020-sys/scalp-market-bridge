@@ -24,7 +24,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 
 import websocket
 from pump_exhaustion import detect as detect_pump_exhaustion
-from scan_intelligence import enrich_scan, WATCHLIST, relative_strength
+from scan_intelligence import enrich_scan, relative_strength
 
 
 # ============================================================
