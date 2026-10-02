@@ -99,13 +99,12 @@ def _shared_direction(analysis_core):
     return None, "uncertain"
 
 
-def _shared_limit_geometry(market, symbol, frames, analysis_core):
+def _shared_limit_geometry(market, symbol, analysis_core):
     analysis=(analysis_core or {}).get("analysis") or {}
-    frame15=frames.get("15m") or frames.get("15") or []
-    frame5=frames.get("5m") or frames.get("5") or []
-    if not frame15:
+    frame15=analysis.get("15m") or {}
+    price=float(frame15.get("last_confirmed_close") or 0)
+    if price<=0:
         return None
-    price=float(frame15[-1]["close"])
     direction,state=_shared_direction(analysis_core)
     if direction not in ("bullish","bearish") or state!="confirmed":
         return None
