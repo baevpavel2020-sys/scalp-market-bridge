@@ -4362,22 +4362,21 @@ class DynamicMarketManager:
         else:
             state="SETUP"; block_class=None; retry=False
 
-        # ---------- V3.9 conditional LIMIT_PLAN ----------
-        # A limit plan is NOT a market-entry signal and does not bypass trigger/flow gates.
-        # It is offered only for a structurally valid WAIT_TRIGGER with confirmed direction.
-        # The entry must sit on the retracement side of current price, remain before the
-        # structural stop, be supported by an actual 1m/5m/15m level, and still deliver
-        # >= 1.5R to the existing T1 without moving the thesis stop or target.
+        # ---------- V3.11 conditional LIMIT_PLAN ----------
+        # A limit plan is a conditional order proposal, not a market-entry signal.
+        # Offer it for a confirmed structural pullback/setup even when current-price
+        # RR is below 1.5. The proposed fill itself must still provide >=1.5R using
+        # the SAME thesis stop and T1. Never bypass hard invalidation.
         limit_plan={"eligible":False,"state":"NO_LIMIT_PLAN","reason":None}
-        if state=="WAIT_TRIGGER":
+        if state in ("WAIT_TRIGGER","WAIT_PULLBACK","WAIT_SETUP"):
             lp_required=bool(
                 direction in ("bullish","bearish")
                 and (mtf.get("direction") or {}).get("state")=="confirmed"
                 and execution.get("trade_data_ready")
-                and setup_state=="aligned"
                 and stop is not None and t1 is not None
                 and order_ok and scale_ok
                 and not hard_invalidations
+                and not any(r in market_reasons for r in ("invalidation_missing","target_missing","price_order_invalid"))
             )
             if lp_required:
                 min_rr=1.5
@@ -4476,7 +4475,7 @@ class DynamicMarketManager:
                                 "rr_boundary":round(rr_boundary,10)}
             else:
                 limit_plan={"eligible":False,"state":"NO_LIMIT_PLAN",
-                            "reason":"wait_trigger_but_limit_prerequisites_failed"}
+                            "reason":"conditional_limit_prerequisites_failed"}
 
         reasons=data_reasons+market_reasons+exec_reasons
         return {
@@ -4672,6 +4671,7 @@ class DynamicMarketManager:
         mtf=sp.get("mtf",{})
         execution=sp.get("execution",{})
         setup=sp.get("setup",{})
+        data_quality=full.get("data_quality") or {}
 
         tf_summary={}
         for tf in ("D","240","60","15","5","1"):
@@ -4754,6 +4754,7 @@ class DynamicMarketManager:
             "block_class":setup.get("block_class"),
             "block_reasons":setup.get("block_reasons",[]),
             "retryable":setup.get("retryable"),
+            "data_quality":data_quality,
             "timeframes":tf_summary,
             "execution":{
                 "driver":execution.get("driver"),
