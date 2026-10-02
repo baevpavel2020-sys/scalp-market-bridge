@@ -4783,7 +4783,7 @@ class DynamicMarketManager:
             "setup":{
                 **setup,
                 "failed_requirements":failed,
-            },,
+            },
             "manipulation": detect_pump_exhaustion(linear, full.get("spot",{}))
         }
 
