@@ -43,6 +43,32 @@ class DecisionAggregatorTests(unittest.TestCase):
         self.assertTrue(out["policy"]["no_universal_trade_score"])
         self.assertTrue(out["policy"]["no_cross_market_direction_vote"])
 
+    def test_valid_crypto_limit_plan_is_not_hidden_as_watch(self):
+        out=normalize_result({
+            "market":"crypto","symbol":"ETHUSDT",
+            "trade_state":"WAIT_TRIGGER",
+            "direction":"bullish",
+            "block_reasons":["trigger_not_confirmed"],
+            "setup":{"limit_plan":{
+                "eligible":True,"state":"LIMIT_PLAN","side":"BUY_LIMIT",
+                "entry":2500.0,"stop":2450.0,"targets":{"t1":2700.0},
+                "risk_reward":4.0,
+                "requires_before_fill":["trigger_confirmation","flow_not_opposed"],
+            }},
+        })
+        self.assertEqual(out["status"],"SETUP")
+        self.assertEqual(out["limit_plan"]["state"],"LIMIT_PLAN")
+        self.assertEqual(out["limit_plan"]["side"],"BUY_LIMIT")
+
+    def test_ineligible_limit_plan_remains_watch(self):
+        out=normalize_result({
+            "market":"crypto","symbol":"ETHUSDT",
+            "trade_state":"WAIT_TRIGGER",
+            "direction":"bullish",
+            "setup":{"limit_plan":{"eligible":False,"state":"NO_LIMIT_PLAN"}},
+        })
+        self.assertEqual(out["status"],"WATCH")
+
 
 if __name__=="__main__":
     unittest.main()
