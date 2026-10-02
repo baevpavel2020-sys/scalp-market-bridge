@@ -1,5 +1,6 @@
 """Market-specific event engine for Scan+ external markets."""
 import math,time
+from scan_architecture import dedupe_events
 from datetime import datetime,timezone
 try:
  from zoneinfo import ZoneInfo
@@ -62,6 +63,7 @@ def detect_events(market,symbol,rows):
  elif market=="commodities":
   ev += [{"event":"instrument_session_context","confidence":"context"},{"event":"inventory_event","confidence":"unavailable","status":"fundamental_calendar_not_connected"},{"event":"contract_rollover","confidence":"unavailable","status":"contract_calendar_not_connected"}]
  elif market=="stocks":ev.append({"event":"xstock_24_7_context","confidence":"context"})
+ ev=dedupe_events(ev)
  return {"ready":True,"engine_version":VERSION,"market":market,"symbol":symbol,"events":ev,"session":sess,"reference":{"atr":atr,"range_high":hi,"range_low":lo}}
 
 def build_setup_plan(market,symbol,rows,result):
