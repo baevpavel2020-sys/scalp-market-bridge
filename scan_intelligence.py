@@ -16,6 +16,20 @@ def _num(x):
     except (TypeError,ValueError):
         return None
 
+def classify_regime_from_analysis(timeframes):
+    states=[]; dirs=[]
+    for a in (timeframes or {}).values():
+        levels=a.get("levels") or {}
+        if levels.get("volatility_regime"): states.append(str(levels["volatility_regime"]).upper())
+        d=(a.get("confluence") or {}).get("direction")
+        if d in ("bullish","bearish"): dirs.append(d)
+    if "EXPANSION" in states: state="EXPANSION"
+    elif "COMPRESSION" in states: state="COMPRESSION"
+    elif dirs and len(dirs)>=2 and len(set(dirs))==1: state="TREND"
+    elif dirs: state="TRANSITION"
+    else: state="UNKNOWN"
+    return {"state":state,"confidence":round(min(1.0,0.45+0.1*min(len(dirs),5)),3),"source":"analysis_bundles"}
+
 def classify_regime(rows):
     rows=[r for r in rows or [] if all(_num(r.get(k)) is not None for k in ("open","high","low","close"))]
     if len(rows)<30: return {"state":"UNKNOWN","confidence":0.0,"reason":"insufficient_history"}
@@ -130,11 +144,31 @@ class OutcomeLogger:
 WATCHLIST=WatchlistStore()
 OUTCOMES=OutcomeLogger()
 
+def enrich_external_result(result, market):
+    frames=result.get("frames") or {}
+    analysis=result.get("analysis_core",{}).get("analysis") or {}
+    tf={}
+    for tf_name,a in analysis.items():
+        st=a.get("structure") or {}
+        tf[tf_name]={"ready":a.get("ready"),"structure":{"state":st.get("state"),"phase":st.get("phase"),"event":st.get("last_event")},
+                     "confluence":a.get("confluence") or {},"levels":a.get("regime_levels") or {}}
+    setup_plans=result.get("setup_plans") or {}
+    setup=setup_plans.get("15m") or setup_plans.get("1h") or next(iter(setup_plans.values()),{})
+    out=dict(result); out["regime"]={tf_name:classify_regime(rows) for tf_name,rows in frames.items()}
+    out["mtf_matrix"]=mtf_state_matrix(tf); out["performance"]=performance_snapshot(frames)
+    out["setup"]=setup; out["opportunity_state"]=("MARKET_READY" if setup.get("tradeable") and setup.get("execution_ready") else "LIMIT_READY" if setup.get("tradeable") else "WATCH")
+    out["alert"]=alert_payload({"symbol":result.get("symbol"),"direction":setup.get("direction"),"setup":{**setup,"opportunity_state":out["opportunity_state"]}})
+    out["intelligence_version"]=INTELLIGENCE_VERSION
+    WATCHLIST.upsert({"symbol":result.get("symbol"),"market":market,"direction":setup.get("direction"),"setup":{"opportunity_state":out["opportunity_state"],"limit_plan":setup.get("limit_plan")}})
+    OUTCOMES.record({"symbol":result.get("symbol"),"market":market,"direction":setup.get("direction"),"setup":{**setup,"opportunity_state":out["opportunity_state"]},"regime":out["regime"],"mtf_matrix":out["mtf_matrix"]})
+    return out
+
 def enrich_scan(scan, market="crypto"):
     out=dict(scan or {})
     frames=(scan.get("_frames") or {})
     if frames:
         out["regime"]={tf:classify_regime(rows) for tf,rows in frames.items() if tf in ("1D","D","4h","240","1h","60","15m","15","5m","5")}
+    if not out["regime"]: out["regime"]={"composite":classify_regime_from_analysis(out.get("timeframes") or {})}
     out["mtf_matrix"]=mtf_state_matrix(scan.get("timeframes") or {})
     out["performance"]=performance_snapshot(frames)
     out["intelligence_version"]=INTELLIGENCE_VERSION
