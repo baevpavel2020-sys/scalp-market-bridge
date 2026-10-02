@@ -83,7 +83,7 @@ class ForexMarketAdapter(MarketAdapter):
         symbol=str(symbol).upper().replace("/","")
         data=self._load(symbol,kwargs.get("interval","60"))
         rows=self._normalize_rows(data.get("candles"))
-        rows, quality=normalize_candles(rows, symbol=symbol, interval=data.get("interval", kwargs.get("interval","60")))
+        rows, quality=normalize_candles(rows, symbol=symbol, interval=data.get("interval", kwargs.get("interval","60")), closed_only=True)
         return {
             "market":self.market,"symbol":symbol,"status":"OK",
             "profile":self.profile(symbol),
@@ -99,7 +99,7 @@ class ForexMarketAdapter(MarketAdapter):
         for label,interval in (("5m","5"),("15m","15"),("1h","60"),("4h","240")):
             data=self._load(symbol,interval)
             rows=self._normalize_rows(data.get("candles"))
-            rows, quality=normalize_candles(rows, symbol=symbol, interval=data.get("interval",interval))
+            rows, quality=normalize_candles(rows, symbol=symbol, interval=data.get("interval",interval), closed_only=True)
             sessions=self._session_context(rows)
             frames[label]={
                 "bars":len(rows),
