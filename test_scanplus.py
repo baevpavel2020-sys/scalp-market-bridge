@@ -4,6 +4,7 @@ from scan_architecture import MIN_RR, market_block_policy
 from limit_engine import generate_candidates
 from scenario_engine import build_scenarios, EventLifecycle
 from risk_engine import execution_cost, mae_mfe, exposure_cluster
+from dynamic_collector import MarketStream
 from scan_intelligence import classify_regime, relative_strength, WatchlistStore, alert_payload, enrich_scan, performance_snapshot, backtest_event_setups, walk_forward_backtest
 class TestScanPlus(unittest.TestCase):
 
@@ -213,6 +214,19 @@ class TestScanPlus(unittest.TestCase):
     def test_manipulation_is_not_a_trade_direction_override(self):
         from pump_exhaustion import detect
         self.assertEqual(detect({}, {}).get("signal"), "NONE")
+
+    def test_price_discovery_does_not_rewrite_unconfirmed_mtf_direction(self):
+        linear={"analysis":{"15":{"regime_levels":{"atr":1.0},"structure":{
+            "degrees":{"minor":{"last_points":[{"price":100.0}]}},
+            "last_event":{"direction":"bullish","type":"BOS","confirmed":False,"confirmed_by_close":False}
+        },"confluence":{"direction":"bearish"},"technical":{"atr14":1.0,"last_close":99.0}}}}
+        out=MarketStream._live_structure_context_v33(linear,{"price":110.0})
+        self.assertEqual(out["15"]["mode"],"price_discovery_up")
+        self.assertEqual(out["15"]["raw_direction"],"bearish")
+        self.assertEqual(out["15"]["effective_direction"],"transition")
+        linear["analysis"]["15"]["structure"]["last_event"]["confirmed_by_close"]=True
+        confirmed=MarketStream._live_structure_context_v33(linear,{"price":110.0})
+        self.assertEqual(confirmed["15"]["effective_direction"],"bullish")
 
 
 if __name__=="__main__":
