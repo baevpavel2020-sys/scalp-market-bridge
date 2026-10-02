@@ -4550,7 +4550,7 @@ class DynamicMarketManager:
 
         checks = {
             "linear_transport": bool(linear.get("connected")),
-            "linear_capability": linear.get("capability_state", "unknown") not in ("unsupported",),
+            "linear_capability": linear.get("capability_state") in ("subscribed", "active"),
             "realtime_price": execution.get("price") is not None,
             "ticker_fresh": fresh_ticker(),
             "orderbook_ready": bool((linear.get("orderbook") or {}).get("ready")),
@@ -4585,7 +4585,7 @@ class DynamicMarketManager:
         decision_ready = bool(
             analysis_ready
             and realtime_ready
-            and trade_data_ready
+            and execution_ready
             and setup.get("block_class") != "DATA_BLOCK"
         )
 
@@ -4605,6 +4605,7 @@ class DynamicMarketManager:
             "execution_mode": execution.get("execution_mode"),
             "spot_capability_state": spot.get("capability_state", "unknown"),
             "spot_available": spot.get("available"),
+            "spot_capability_resolved": spot.get("capability_state") in ("subscribed", "active", "unsupported"),
             "block_reasons": list(dict.fromkeys(
                 (setup.get("block_reasons") or [])
                 + ([] if analysis_ready else ["analysis_history_not_ready"])
