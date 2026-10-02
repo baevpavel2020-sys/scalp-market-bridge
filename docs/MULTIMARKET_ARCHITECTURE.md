@@ -668,3 +668,8 @@ The final path is now intended to satisfy:
 Operator View cannot upgrade a WATCH/NO_TRADE/DATA_ERROR into a candidate; it can only display already-normalized states. It also does not calculate a cross-market trade score or combine evidence between markets.
 
 CI/runtime limitation remains: GitHub exposes no status checks for the current branch head in this environment, so the audit records code-level and regression coverage, not a claimed green deployment run.
+
+
+## Hostile-input audit
+
+Additional hardening: commodity full scans now exclude forming candles; duplicate explicit and native-universe symbols are deduplicated before concurrent execution; hostile-input regression tests cover empty frames, duplicate symbols and cross-market symbol provenance. The hostile-input invariants are malformed OHLC rejected, forming candles excluded, incomplete 4H rejected, unknown market/symbol/status rejected, DATA_ERROR cannot become WATCH, MTF disagreement is not reversal, empty frames cannot become CANDIDATE, and Operator View cannot rewrite status. No green CI claim is made because the branch exposes no status checks in the current environment.
