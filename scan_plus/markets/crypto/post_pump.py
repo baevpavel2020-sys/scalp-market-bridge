@@ -69,6 +69,21 @@ def detect_post_pump_pipeline(scan: Mapping[str, Any], observables=None, adaptiv
                      min(1.0,max(oi_change or 0,0)/2.0 + max(funding or 0,0)*10),
                      ("oi_expanding","funding_nonnegative") if fragility_confirmed else ())
 
+    # Liquidation cascade is corroborative leverage evidence. It never arms the
+    # strategy by itself and is deliberately excluded from independent-channel count.
+    liq=(o.get("liquidations") or {}).get(name) or {}
+    long_liq=float(liq.get("long_liquidation_volume") or 0.0)
+    short_liq=float(liq.get("short_liquidation_volume") or 0.0)
+    liquidation_observed=bool(liq.get("event_count"))
+    liquidation_confirmed=bool(
+        liquidation_observed and long_liq > short_liq and long_liq > 0
+    )
+    liquidation_cascade=_stage(
+        liquidation_observed, liquidation_confirmed,
+        min(1.0, long_liq/(long_liq+short_liq)) if (long_liq+short_liq)>0 else 0.0,
+        ("long_liquidations_dominant",) if liquidation_confirmed else ()
+    )
+
     # Failed acceptance uses actual liquidity sweep plus inability of execution state to confirm continuation.
     sweep=o["sweep_direction"]=="bearish"
     setup=o["setup"]
@@ -85,10 +100,11 @@ def detect_post_pump_pipeline(scan: Mapping[str, Any], observables=None, adaptiv
         "absorption":absorption,
         "spot_perp_divergence":divergence,
         "leverage_fragility":fragility,
+        "liquidation_cascade":liquidation_cascade,
         "failed_acceptance":failed,
         "limitations":[
             "abnormal_pump_uses_fixed_fallback_until_adaptive_baseline_is_mature",
-            "no_native_liquidation_cluster_feed_yet",
+            "liquidation_feed_is_native_exchange_evidence_but_not_an_independent_confirmation_channel",
             "structure_break_displacement_retest_not_inferred_here",
         ],
     }
