@@ -28,7 +28,7 @@ INSTRUMENT_PROFILES = {
     "NVDA": {
         "market": "stocks", "group": "tech_equity", "product": "bybit_tokenized_stock",
         "prescan": ["underlying_volume", "gaps", "session", "volatility", "levels"],
-        "scan": ["gaps", "fibonacci", "structure_mtf", "underlying_volume", "session_liquidity", "elliott", "harmonics"],
+        "scan": ["gaps", "fibonacci", "structure_mtf", "underlying_volume", "session", "elliott", "harmonics"],
     },
     "AAPL": {"market":"stocks","group":"tech_equity","product":"bybit_tokenized_stock"},
     "MSFT": {"market":"stocks","group":"tech_equity","product":"bybit_tokenized_stock"},
