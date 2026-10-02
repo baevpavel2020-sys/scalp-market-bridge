@@ -26,6 +26,10 @@ class ForexMarketAdapter(MarketAdapter):
     def profile(self, symbol=None):
         return get_profile(self.market, symbol)
 
+    def default_symbols(self, limit=9):
+        universe=("EURUSD","GBPUSD","USDJPY","AUDUSD","USDCAD","USDCHF","NZDUSD","EURJPY","EURGBP")
+        return list(universe[:int(limit)])
+
     @staticmethod
     def _normalize_rows(rows):
         out=[]
