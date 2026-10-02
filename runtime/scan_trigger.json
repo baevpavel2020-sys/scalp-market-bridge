@@ -1,5 +1,5 @@
 {
   "action": "scan",
-  "reason": "user Scan",
-  "nonce": "2026-10-03-user-scan-01"
+  "reason": "user Scan after ranked fallback fix",
+  "nonce": "2026-10-03-ranked-fallback-scan-01"
 }
