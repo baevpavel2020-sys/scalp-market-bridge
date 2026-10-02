@@ -5525,6 +5525,7 @@ class OnDemandPreScanService:
     PRESCAN_CACHE_DIR = os.environ.get("PRESCAN_CACHE_DIR", "/tmp/scalp-market-bridge/prescan")
     HISTORY_WORKERS = 6
     HISTORY_GLOBAL_TIMEOUT = 16.0
+    JOB_PRESCAN_TIMEOUT = max(20.0, min(60.0, float(os.environ.get("SCAN_PRESCAN_TIMEOUT", "45"))))
     _cache_lock = threading.RLock()
     _history_cache = {}
     _provider_route_cache = {}
@@ -6983,7 +6984,25 @@ class ScanJobManager:
                 top_n = max(1, min(int(payload.get("top_n", 6)), ScanOrchestrator.MAX_AUTO_SCAN_PLUS))
                 shortlist = int(payload.get("shortlist", 30))
                 cls._progress(jid, done=0, total=None, current_symbol=None, stage="PRESCAN_START")
-                prescan = run_prescan(top_n=top_n, shortlist=shortlist)
+                prescan_executor = concurrent.futures.ThreadPoolExecutor(
+                    max_workers=1, thread_name_prefix="prescan-job"
+                )
+                prescan_future = prescan_executor.submit(
+                    run_prescan, top_n=top_n, shortlist=shortlist
+                )
+                try:
+                    prescan = prescan_future.result(timeout=cls.JOB_PRESCAN_TIMEOUT)
+                except concurrent.futures.TimeoutError:
+                    prescan_future.cancel()
+                    cls._progress(
+                        jid, done=0, total=None, current_symbol=None,
+                        stage="PRESCAN_TIMEOUT"
+                    )
+                    raise TimeoutError(
+                        f"prescan exceeded {cls.JOB_PRESCAN_TIMEOUT:.0f}s hard timeout"
+                    )
+                finally:
+                    prescan_executor.shutdown(wait=False, cancel_futures=True)
                 cls._progress(
                     jid, done=0, total=None, current_symbol=None,
                     stage="PRESCAN_DONE"
@@ -7112,7 +7131,16 @@ class ScanJobManager:
 
     @classmethod
     def start_auto(cls, top_n=6, shortlist=30):
-        jid = cls._new_job("auto", {"top_n": int(top_n), "shortlist": int(shortlist)})
+        payload = {"top_n": int(top_n), "shortlist": int(shortlist)}
+        with cls._lock:
+            for existing in cls._jobs.values():
+                if (
+                    existing.get("mode") == "auto"
+                    and existing.get("state") in ("QUEUED", "RUNNING")
+                    and existing.get("payload") == payload
+                ):
+                    return cls.status(existing["job_id"])
+            jid = cls._new_job("auto", payload)
         cls._executor.submit(cls._run_job, jid)
         return cls.status(jid)
 
