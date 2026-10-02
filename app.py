@@ -5,7 +5,7 @@ from flask import Flask, jsonify, request
 from collector import collector
 from spot_collector import spot_collector
 from dynamic_collector import (dynamic_manager, run_bybit_prescan_ws_probe, run_prescan, run_scan_auto, run_scan_single, run_scan_batch, start_scan_auto_job, start_scan_batch_job, get_scan_job)
-from multi_market_adapters import ExternalMarketAdapter, ExternalMarketAdapter, external_universe, MarketProfileRouter
+from multi_market_adapters import ExternalMarketAdapter, external_universe, MarketProfileRouter
 
 app = Flask(__name__)
 
