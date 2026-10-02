@@ -4,6 +4,7 @@ Mappings keep the market identity explicit: metals, energy and cocoa futures are
 not treated as crypto/FX instruments.
 """
 import requests
+import time
 
 SYMBOLS={"XAUUSD":"GC=F","XAGUSD":"SI=F","WTI":"CL=F","BRENT":"BZ=F","COCOA":"CC=F"}
 INTERVALS={"5":"5m","15":"15m","60":"60m","240":"1h","d":"1d"}
@@ -51,8 +52,19 @@ class YahooCommodityLoader:
         interval=str(interval).lower()
         if interval not in INTERVALS: raise NotImplementedError(f"unsupported commodity interval: {interval}")
         params={"interval":INTERVALS[interval],"range":"30d","events":"history"}
-        response=self.session.get(f"{self.base_url}/{yahoo_symbol}",params=params,timeout=self.timeout,
-                                  headers={"User-Agent":"scalp-market-bridge/1.0"})
+        response = None
+        for attempt in range(4):
+            response=self.session.get(
+                f"{self.base_url}/{yahoo_symbol}",
+                params=params,
+                timeout=self.timeout,
+                headers={"User-Agent":"scalp-market-bridge/1.0"},
+            )
+            if response.status_code != 429:
+                break
+            retry_after=response.headers.get("Retry-After")
+            delay=float(retry_after) if retry_after else (1.0 * (2 ** attempt))
+            time.sleep(min(delay, 8.0))
         response.raise_for_status()
         payload=response.json()
         result=(payload.get("chart") or {}).get("result") or []
