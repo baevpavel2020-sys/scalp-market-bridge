@@ -12,6 +12,7 @@ from scan_plus.core.analytical_engine import AnalyticalEngine, CanonicalPricePat
 from scan_plus.markets.commodities.loader import CommodityLoader
 from scan_plus.markets.commodities.context import build_commodity_context
 from scan_plus.markets.commodities.candidate import build_commodity_candidate
+from scan_plus.markets.commodities.execution import build_commodity_execution_plan
 from scan_plus.core.data_contract import normalize_candles
 from scan_plus.core.mtf_state import build_mtf_state
 
@@ -75,6 +76,25 @@ class CommoditiesMarketAdapter(MarketAdapter):
         symbol=str(symbol).upper()
         profile=self.profile(symbol)
         frames={}
+        daily=self._load(symbol,"D")
+        daily_rows=self._normalize(daily.get("candles"))
+        daily_rows,daily_quality=normalize_candles(
+            daily_rows,symbol=symbol,interval="D",closed_only=True
+        )
+        frames["1d"]={
+            "bars":len(daily_rows),
+            "data_quality":daily_quality,
+            "provider_error":daily.get("error"),
+            "analysis":self.engine.analyze_profiled(daily_rows,profile.get("scan") or []),
+            "provider_context":{k:v for k,v in daily.items() if k!="candles"},
+            "commodity_context":build_commodity_context(
+                group=profile.get("group"),provider_context=daily
+            ),
+            "latest_timestamp_ms":max(
+                [r.get("timestamp_ms") for r in daily_rows if r.get("timestamp_ms") is not None],
+                default=None,
+            ),
+        }
         for label,interval in (("5m","5"),("15m","15"),("1h","60"),("4h","240")):
             data=self._load(symbol,interval)
             rows=self._normalize(data.get("candles"))
@@ -89,6 +109,7 @@ class CommoditiesMarketAdapter(MarketAdapter):
                     group=profile.get("group"),
                     provider_context=data,
                 ),
+                "latest_close":rows[-1].get("close") if rows else None,
                 "latest_timestamp_ms":max(
                     [r.get("timestamp_ms") for r in rows if r.get("timestamp_ms") is not None],
                     default=None,
@@ -99,14 +120,21 @@ class CommoditiesMarketAdapter(MarketAdapter):
              if f.get("latest_timestamp_ms") is not None],
             default=None,
         )
+        candidate=build_commodity_candidate(
+            symbol=symbol, group=profile.get("group"), frames=frames
+        )
+        latest_close=(frames.get("5m") or {}).get("latest_close")
+        limit_plan=build_commodity_execution_plan(
+            candidate=candidate, frames=frames, price=latest_close, equity=None, risk_fraction=None
+        ) if latest_close is not None else {"status":"WAIT","reason":"latest_price_unavailable"}
+        candidate=dict(candidate)
+        candidate["limit_plan"]=limit_plan if limit_plan.get("status")=="PLAN" else None
         return {
             "market":self.market,"symbol":symbol,"status":"OK","profile":profile,
             "priority":resolve_priorities("commodities",symbol,"continuation"),
             "frames":frames,
             "instrument_group":profile.get("group"),
-            "candidate":build_commodity_candidate(
-                symbol=symbol, group=profile.get("group"), frames=frames
-            ),
+            "candidate":candidate,
             "latest_timestamp_ms":latest,
             "execution_context":{
                 "product":"commodity",

@@ -6,7 +6,7 @@ def frame(state="bullish", fib=True):
     return {
         "analysis":{
             "structure":{"state":state},
-            "fibonacci":{"ready":fib}
+            "fibonacci":{"ready":fib},"elliott":{"ready":True}
         }
     }
 
@@ -34,7 +34,7 @@ class StockCandidateTests(unittest.TestCase):
         self.assertEqual(out["status"],"CANDIDATE")
         self.assertEqual(out["direction"],"bullish")
 
-    def test_missing_underlying_blocks_candidate(self):
+    def test_missing_underlying_does_not_block_valid_structure(self):
         out=build_stock_candidate(
             frames={"15m":frame("bullish")},
             gap={"ready":True,"pct":2.0},
@@ -42,8 +42,8 @@ class StockCandidateTests(unittest.TestCase):
             ticker={"last_price":102},
             session=["regular"],
         )
-        self.assertEqual(out["status"],"WATCH")
-        self.assertIn("underlying_unavailable",out["reason"])
+        self.assertEqual(out["status"],"CANDIDATE")
+        self.assertIn("underlying_context_unavailable",out["reason"])
 
 
 if __name__=="__main__":

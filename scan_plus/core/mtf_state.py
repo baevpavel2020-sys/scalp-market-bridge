@@ -62,7 +62,10 @@ def _frame_fresh(frame):
         return False
 
 def build_mtf_state(frames):
-    normalized={str(k).lower():v for k,v in (frames or {}).items()}
+    aliases={"d":"1d","1d":"1d","day":"1d","240":"4h","4h":"4h","60":"1h","1h":"1h","15":"15m","15m":"15m","5":"5m","5m":"5m","1":"1m","1m":"1m"}
+    normalized={}
+    for key,value in (frames or {}).items():
+        normalized[aliases.get(str(key).lower(),str(key).lower())]=value
     states={tf:(_state(normalized[tf]) if _frame_fresh(normalized[tf]) else 'transition') for tf in TF_ORDER if tf in normalized}
 
     htf=[tf for tf in ("1d","4h") if states.get(tf) in ("bullish","bearish")]

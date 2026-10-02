@@ -29,7 +29,7 @@ class MTFStateTests(unittest.TestCase):
         out=build_mtf_state({
             "D":{"structure":"uptrend"},
             "4h":{"structure":"downtrend"},
-            "1h":{"structure":"downtrend"},
+            "1h":{"structure":{"state":"downtrend","last_event":{"type":"CHOCH","direction":"bearish"}}},
             "15m":{"structure":"downtrend"},
         })
         self.assertEqual(out["context_direction"],"bullish")

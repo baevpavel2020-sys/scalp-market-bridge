@@ -16,7 +16,7 @@ class ForexExecutionTests(unittest.TestCase):
     def test_bullish_plan_uses_cash_risk(self):
         out=build_forex_execution_plan(
             candidate={"status":"CANDIDATE","direction":"bullish"},
-            frames=frames(),price=1.1,equity=10000,risk_fraction=.01)
+            frames=frames(),price=1.1,equity=10000,risk_fraction=.01,symbol="EURUSD")
         self.assertEqual(out["status"],"PLAN")
         self.assertEqual(out["side"],"BUY")
         self.assertAlmostEqual(out["risk"]["risk_cash"],100)

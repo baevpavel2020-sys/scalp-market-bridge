@@ -109,6 +109,8 @@ class MarketStream:
         # timestamp_ms, open_interest
         self.oi_samples = deque()
 
+        self.liquidation_events = deque()
+
         self.bids = {}
         self.asks = {}
 
@@ -300,6 +302,8 @@ class MarketStream:
             f"kline.240.{self.symbol}",
             f"kline.D.{self.symbol}",
         ]
+        if self.market == "linear":
+            topics.insert(1, f"allLiquidation.{self.symbol}")
 
         ws.send(
             json.dumps(
@@ -2384,6 +2388,10 @@ class MarketStream:
                 )
             )
 
+        elif topic.startswith("allLiquidation."):
+
+            self._handle_liquidations(message.get("data", []))
+
         elif topic.startswith("orderbook."):
 
             self._handle_orderbook(
@@ -2759,6 +2767,47 @@ class MarketStream:
         ):
 
             self.oi_samples.popleft()
+
+        while self.liquidation_events and self.liquidation_events[0][0] < cutoff:
+            self.liquidation_events.popleft()
+
+    def _handle_liquidations(self, rows):
+        if self.market != "linear" or not isinstance(rows, list):
+            return
+        now_ms=int(time.time()*1000)
+        with self.lock:
+            for item in rows:
+                try:
+                    ts=int(item.get("T") or item.get("time") or now_ms)
+                    side=str(item.get("S") or item.get("side") or "").title()
+                    price=float(item.get("p") or item.get("price"))
+                    qty=float(item.get("v") or item.get("qty"))
+                except (TypeError,ValueError):
+                    continue
+                if side not in ("Buy","Sell") or price <= 0 or qty <= 0:
+                    continue
+                self.liquidation_events.append((ts,side,price,qty))
+            self._cleanup(now_ms)
+
+    def _liquidation_metrics(self, now_ms):
+        if self.market != "linear":
+            return None
+        result={}
+        for name,duration in WINDOWS.items():
+            cutoff=now_ms-duration
+            rows=[x for x in self.liquidation_events if x[0]>=cutoff]
+            buy=sum(x[3] for x in rows if x[1]=="Buy")
+            sell=sum(x[3] for x in rows if x[1]=="Sell")
+            result[name]={
+                "event_count":len(rows),
+                "buy_liquidation_volume":round(buy,8),
+                "sell_liquidation_volume":round(sell,8),
+                "short_liquidation_volume":round(buy,8),
+                "long_liquidation_volume":round(sell,8),
+                "total_volume":round(buy+sell,8),
+                "ready":bool(rows),
+            }
+        return result
 
     # ========================================================
     # FLOW METRICS
@@ -3269,6 +3318,11 @@ class MarketStream:
                         now_ms
                     ),
 
+                "liquidations":
+                    self._liquidation_metrics(
+                        now_ms
+                    ),
+
                 "funding_rate": (
                     fnum(
                         self.ticker.get(
@@ -3476,10 +3530,10 @@ class DynamicMarketManager:
             broken_level=None
             structural_gap=None
             if price is not None and structural_low is not None and price < structural_low:
-                mode="price_discovery_down"; effective_direction="bearish"; broken_level=structural_low
+                mode="price_discovery_down"; broken_level=structural_low
                 structural_gap=structural_low-price
             elif price is not None and structural_high is not None and price > structural_high:
-                mode="price_discovery_up"; effective_direction="bullish"; broken_level=structural_high
+                mode="price_discovery_up"; broken_level=structural_high
                 structural_gap=price-structural_high
             elif price is not None and structural_low is not None and structural_high is not None:
                 structural_gap=0.0
@@ -3495,7 +3549,13 @@ class DynamicMarketManager:
                     elif mode=="price_discovery_up":
                         projections=[round(structural_high+width*r,10) for r in ratios]
             result[tf]={
-                "mode":mode,"effective_direction":effective_direction,
+                "mode":mode,
+                "effective_direction":effective_direction,
+                "price_discovery_direction": (
+                    "bearish" if mode=="price_discovery_down" else
+                    "bullish" if mode=="price_discovery_up" else None
+                ),
+                "direction_confirmation":"confirmed" if mode=="inside_structure" else "pending_structure_confirmation",
                 "structural_low":structural_low,"structural_high":structural_high,
                 "broken_level":broken_level,"last_confirmed_close":last_close,
                 "price_gap_atr":None if gap_atr is None else round(gap_atr,4),
@@ -3518,7 +3578,11 @@ class DynamicMarketManager:
             c=a.get("confluence",{})
             raw_direction=c.get("direction","neutral")
             lc=live.get(tf,{})
-            direction=lc.get("effective_direction",raw_direction)
+            # Price discovery is an event, not a direction override. Preserve the
+            # confirmed timeframe direction until its own structure confirms a break.
+            direction=raw_direction
+            if lc.get("mode")!="inside_structure" and state in ("unknown","range","range_or_transition","transition"):
+                direction="neutral"
             state=a.get("structure",{}).get("state","unknown")
             # A one-vote momentum edge must not flip an established opposite structure.
             # External live structure breaks are still allowed to override immediately.
@@ -3537,6 +3601,8 @@ class DynamicMarketManager:
                 "direction":direction,
                 "raw_direction":raw_direction,
                 "live_mode":lc.get("mode"),
+                "price_discovery_direction":lc.get("price_discovery_direction"),
+                "direction_confirmation":lc.get("direction_confirmation"),
                 "price_gap_atr":lc.get("price_gap_atr"),
                 "elliott":(a.get("elliott",{}).get("primary") or {}).get("type"),
                 "elliott_ambiguous":a.get("elliott",{}).get("ambiguous"),
@@ -3673,8 +3739,9 @@ class DynamicMarketManager:
         horizon_cap={0:0.0,1:0.55,2:0.75,3:0.90,4:0.97}.get(len(agreeing_ready),0.97)
         overall_conf=min(category_share, strongest, horizon_cap)
 
-        imbalance=book.get("imbalance_50") if book.get("ready") else None
+        liquidation_metrics=linear.get("liquidations") or {}
         pressure="neutral"
+        imbalance=book.get("imbalance_50") if book.get("ready") else None
         if imbalance is not None:
             pressure="bullish" if imbalance>=0.12 else "bearish" if imbalance<=-0.12 else "neutral"
 
@@ -3724,6 +3791,7 @@ class DynamicMarketManager:
             "funding_rate":funding,
             "open_interest_current":oi.get("current"),
             "oi_context":oi_context,
+            "liquidations":liquidation_metrics,
             "driver":{
                 "primary":overall_driver,
                 "confidence":round(overall_conf,4),

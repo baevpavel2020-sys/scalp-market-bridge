@@ -59,7 +59,7 @@ def _yahoo_get(base_url, path, params, timeout, headers, session):
                 try:
                     response=session.get(url,params=params,timeout=timeout,headers=headers)
                     YAHOO_LAST_REQUEST=time.monotonic()
-                    if response.status_code != 429:
+                    if getattr(response,"status_code",200) != 429:
                         response.raise_for_status()
                         return response
                     retry_after=response.headers.get("Retry-After")

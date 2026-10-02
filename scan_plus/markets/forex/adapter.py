@@ -15,6 +15,7 @@ from scan_plus.core.data_contract import normalize_candles
 from scan_plus.markets.forex.yahoo import YahooFXLoader
 from scan_plus.markets.forex.session_liquidity import session_interaction, session_sweep
 from scan_plus.markets.forex.candidate import build_forex_candidate
+from scan_plus.markets.forex.execution import build_forex_execution_plan
 
 
 class ForexMarketAdapter(MarketAdapter):
@@ -96,6 +97,18 @@ class ForexMarketAdapter(MarketAdapter):
         symbol=str(symbol).upper().replace("/","")
         profile=self.profile(symbol)
         frames={}
+        daily=self._load(symbol,"d")
+        daily_rows=self._normalize_rows(daily.get("candles"))
+        daily_rows,daily_quality=normalize_candles(
+            daily_rows,symbol=symbol,interval="d",closed_only=True
+        )
+        frames["1d"]={
+            "bars":len(daily_rows),
+            "data_quality":daily_quality,
+            "provider_error":daily.get("error"),
+            "analysis":self.engine.analyze_profiled(daily_rows,profile.get("scan") or []),
+            "sessions":self._session_context(daily_rows),
+        }
         for label,interval in (("5m","5"),("15m","15"),("1h","60"),("4h","240")):
             data=self._load(symbol,interval)
             rows=self._normalize_rows(data.get("candles"))
@@ -104,6 +117,7 @@ class ForexMarketAdapter(MarketAdapter):
             frames[label]={
                 "bars":len(rows),
                 "data_quality":quality,
+                "latest_close":rows[-1].get("close") if rows else None,
                 "provider_error":data.get("error"),
                 "analysis":self.engine.analyze_profiled(rows,profile.get("scan") or []),
                 "sessions":sessions,
@@ -134,6 +148,17 @@ class ForexMarketAdapter(MarketAdapter):
         active=active_sessions("forex",latest_ts)
         if sweep_exists: situation="session_sweep"
         elif len(active)>=2: situation="session_overlap"
+        candidate=build_forex_candidate(
+            frames=frames,
+            active_sessions=active,
+            overlap=session_overlap("forex",latest_ts),
+        )
+        latest_price=(frames.get("5m") or {}).get("latest_close")
+        limit_plan=build_forex_execution_plan(
+            candidate=candidate, frames=frames, price=latest_price, equity=None, risk_fraction=None, symbol=symbol
+        ) if latest_price is not None else {"status":"WAIT","reason":"latest_price_unavailable"}
+        candidate=dict(candidate)
+        candidate["limit_plan"]=limit_plan if limit_plan.get("status")=="PLAN" else None
         return {
             "market":self.market,"symbol":symbol,"status":"OK",
             "profile":profile,
@@ -141,11 +166,7 @@ class ForexMarketAdapter(MarketAdapter):
             "active_sessions":active,
             "session_overlap":session_overlap("forex",latest_ts),
             "frames":frames,
-            "candidate":build_forex_candidate(
-                frames=frames,
-                active_sessions=active,
-                overlap=session_overlap("forex",latest_ts),
-            ),
+            "candidate":candidate,
             "execution_context":{
                 "product":"spot_fx",
                 "session_sensitive":True,

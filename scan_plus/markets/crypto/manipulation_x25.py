@@ -8,7 +8,15 @@ from typing import Any, Mapping
 def manipulation_x25_state(evidence: Mapping[str, Any]):
     abnormal = bool(evidence.get("abnormal_pump"))
     if not abnormal:
-        return {"state": "INACTIVE", "action": "NO SHORT", "reason": "no_abnormal_pump"}
+        observed_context=any(bool(evidence.get(k)) for k in (
+            "exhaustion","leverage_fragility","failed_acceptance",
+            "healthy_spot_demand","acceptance_above_high",
+        ))
+        return {
+            "state": "WATCH" if observed_context else "INACTIVE",
+            "action": "NO SHORT",
+            "reason": "no_abnormal_pump" if not observed_context else "manipulation_context_without_confirmed_pump",
+        }
 
     healthy_acceptance = (bool(evidence.get("acceptance_above_high")) or
                           bool(evidence.get("healthy_spot_demand")) or

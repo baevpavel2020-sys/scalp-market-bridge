@@ -36,8 +36,8 @@ def _fibo_target(frames, direction, preferred_tf):
     return None,None,None
 
 
-def build_commodity_execution_plan(*,candidate,frames,price,equity,risk_fraction,
-                                   min_rr=1.5,entry_policy="limit_or_retest"):
+def build_commodity_execution_plan(*,candidate,frames,price,equity=None,risk_fraction=None,
+                                   min_rr=2.0,entry_policy="limit_or_retest"):
     if not isinstance(candidate,Mapping) or candidate.get("status")!="CANDIDATE":
         return {"status":"WAIT","reason":"candidate_not_confirmed"}
     direction=candidate.get("direction")
@@ -46,12 +46,14 @@ def build_commodity_execution_plan(*,candidate,frames,price,equity,risk_fraction
     group=str(candidate.get("group") or "").lower()
     if group not in ("metals","energy","softs"):
         return {"status":"WAIT","reason":"unknown_commodity_group"}
-    try:
-        px=float(price); eq=float(equity); rf=float(risk_fraction)
-    except (TypeError,ValueError):
-        return {"status":"WAIT","reason":"invalid_account_or_price"}
-    if px<=0 or eq<=0 or rf<=0 or rf>=1:
-        return {"status":"WAIT","reason":"invalid_account_or_risk"}
+    try: px=float(price)
+    except (TypeError,ValueError): return {"status":"WAIT","reason":"invalid_price"}
+    if px<=0: return {"status":"WAIT","reason":"invalid_price"}
+    eq=rf=None
+    if equity is not None and risk_fraction is not None:
+        try: eq=float(equity); rf=float(risk_fraction)
+        except (TypeError,ValueError): return {"status":"WAIT","reason":"invalid_account_or_risk"}
+        if eq<=0 or rf<=0 or rf>=1: return {"status":"WAIT","reason":"invalid_account_or_risk"}
 
     preferred_tf=candidate.get("confirmation_timeframe")
     if preferred_tf not in frames:
@@ -68,8 +70,8 @@ def build_commodity_execution_plan(*,candidate,frames,price,equity,risk_fraction
     risk_per_unit=abs(px-stop)
     if risk_per_unit<=0:
         return {"status":"WAIT","reason":"zero_price_risk"}
-    risk_cash=eq*rf
-    units=risk_cash/risk_per_unit
+    risk_cash=(eq*rf) if eq is not None and rf is not None else None
+    units=(risk_cash/risk_per_unit) if risk_cash is not None else None
 
     target,target_tf,ratio=_fibo_target(
         {preferred_tf: frames.get(preferred_tf)}, direction, preferred_tf
@@ -86,12 +88,15 @@ def build_commodity_execution_plan(*,candidate,frames,price,equity,risk_fraction
 
     return {
         "status":"PLAN",
+        "eligible":True,
         "side":"BUY" if direction=="bullish" else "SELL",
         "entry":{"type":"LIMIT","reference_price":px,"policy":entry_policy},
         "stop":{"price":stop,"source":"structure","timeframe":stop_tf},
         "target":{"price":target,"source":target_source},
         "risk":{"account_equity":eq,"risk_fraction":rf,"risk_cash":risk_cash,
-                "risk_per_price_unit":risk_per_unit,"units":units},
+                "risk_per_price_unit":risk_per_unit,"units":units,
+                "sizing_status":"READY" if units is not None else "ACCOUNT_CONTEXT_REQUIRED"},
+        "rr":rr,
         "commodity_group":group,
         "execution_policy":{
             "submit":False,

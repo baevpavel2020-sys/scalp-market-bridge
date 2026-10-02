@@ -20,7 +20,7 @@ class MarketContextTests(unittest.TestCase):
         # 08:00 London = 08:00 UTC in January.
         candles=[{"timestamp_ms":int(datetime(2026,1,5,8,0,tzinfo=timezone.utc).timestamp()*1000),
                   "high":101,"low":99}]
-        out=session_high_low(candles,"forex","london")
+        out=session_high_low(candles,"forex","london",before_timestamp_ms=int(datetime(2026,1,5,17,0,tzinfo=timezone.utc).timestamp()*1000))
         self.assertTrue(out["ready"])
         self.assertEqual(out["high"],101)
 

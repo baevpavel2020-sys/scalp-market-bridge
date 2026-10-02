@@ -35,7 +35,7 @@ class MTFGateTests(unittest.TestCase):
     def test_confirmed_reversal_can_pass_final_gate(self):
         mtf=build_mtf_state({
             "1d":{"analysis":{"structure":{"state":"uptrend"}}},
-            "4h":{"analysis":{"structure":{"state":"downtrend","last_event":{"type":"CHOCH","direction":"bearish"}}},
+            "4h":{"analysis":{"structure":{"state":"downtrend","last_event":{"type":"CHOCH","direction":"bearish"}}}},
             "1h":{"analysis":{"structure":{"state":"downtrend"}}},
             "15m":{"analysis":{"structure":{"state":"downtrend"}}},
         })

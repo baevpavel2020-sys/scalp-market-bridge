@@ -29,7 +29,7 @@ def _shared_confirmation(frames, structure_tf):
     )
 
 
-def build_stock_candidate(*, frames, gap, underlying, ticker, session=None):
+def build_stock_candidate(*, frames, gap, underlying, ticker, session=None, symbol=None):
     gap_info=classify_gap(gap or {})
     structure,structure_tf=_structure_state(frames or {})
     fibo,fibo_tf=_shared_confirmation(frames or {},structure_tf)
@@ -48,7 +48,7 @@ def build_stock_candidate(*, frames, gap, underlying, ticker, session=None):
 
     blockers=[]
     if structure=="unknown": blockers.append("structure_unavailable")
-    if mtf_state["regime"] in ("countertrend_correction","context_only","unresolved"):
+    if mtf_state["regime"]=="countertrend_correction" or (mtf_state["regime"] in ("context_only","unresolved") and mtf_state.get("context_direction") is not None):
         blockers.append("mtf_execution_not_aligned")
     if not fibo: blockers.append("fibonacci_or_elliott_unavailable")
     # Underlying context is useful for gap/session confirmation, but it is not
@@ -66,15 +66,13 @@ def build_stock_candidate(*, frames, gap, underlying, ticker, session=None):
     if blockers:
         status="WATCH"
         reason=",".join(blockers)
-    elif not underlying_ready:
-        status="CANDIDATE"
-        reason="structure_plus_shared_confirmation_underlying_context_unavailable"
     elif direction=="unknown":
         status="WATCH"
         reason="structure_direction_unresolved"
     else:
         status="CANDIDATE"
-        reason="multi_block_confirmation_pending_execution"
+        reason=("multi_block_confirmation_underlying_context_unavailable"
+                if not underlying_ready else "multi_block_confirmation_pending_execution")
 
     return {
         "status":status,

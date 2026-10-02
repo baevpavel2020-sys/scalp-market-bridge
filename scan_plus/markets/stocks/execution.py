@@ -26,8 +26,8 @@ def _fibo_targets(frames, direction):
     return None,None
 
 
-def build_stock_execution_plan(*, candidate, frames, price, equity, risk_fraction,
-                               fee_buffer=0.001, min_rr=1.5):
+def build_stock_execution_plan(*, candidate, frames, price, equity=None, risk_fraction=None,
+                               fee_buffer=0.001, min_rr=2.0):
     """Return PLAN or WAIT. Position sizing uses cash-risk, not leverage assumptions."""
     if not isinstance(candidate,Mapping) or candidate.get("status")!="CANDIDATE":
         return {"status":"WAIT","reason":"candidate_not_confirmed"}
@@ -37,12 +37,19 @@ def build_stock_execution_plan(*, candidate, frames, price, equity, risk_fractio
         return {"status":"WAIT","reason":"direction_unresolved"}
 
     try:
-        px=float(price); eq=float(equity); rf=float(risk_fraction)
+        px=float(price)
     except (TypeError,ValueError):
-        return {"status":"WAIT","reason":"invalid_account_or_price"}
-
-    if px <= 0 or eq <= 0 or rf <= 0:
-        return {"status":"WAIT","reason":"invalid_account_or_price"}
+        return {"status":"WAIT","reason":"invalid_price"}
+    if px <= 0:
+        return {"status":"WAIT","reason":"invalid_price"}
+    eq=rf=None
+    if equity is not None and risk_fraction is not None:
+        try:
+            eq=float(equity); rf=float(risk_fraction)
+        except (TypeError,ValueError):
+            return {"status":"WAIT","reason":"invalid_account_or_risk"}
+        if eq <= 0 or rf <= 0 or rf >= 1:
+            return {"status":"WAIT","reason":"invalid_account_or_risk"}
 
     invalidation,inv_tf=_last_structure(frames,direction)
     target,target_tf=_fibo_targets(frames,direction)
@@ -59,8 +66,8 @@ def build_stock_execution_plan(*, candidate, frames, price, equity, risk_fractio
     if risk_per_share <= 0:
         return {"status":"WAIT","reason":"zero_price_risk"}
 
-    risk_cash=eq*rf
-    qty=risk_cash/risk_per_share
+    risk_cash=(eq*rf) if eq is not None and rf is not None else None
+    qty=(risk_cash/risk_per_share) if risk_cash is not None else None
 
     if target is None or (direction=="bullish" and target <= px) or (direction=="bearish" and target >= px):
         # Fall back to a deterministic RR target rather than inventing a market level.
@@ -77,12 +84,14 @@ def build_stock_execution_plan(*, candidate, frames, price, equity, risk_fractio
     side="BUY" if direction=="bullish" else "SELL"
     return {
         "status":"PLAN",
+        "eligible":True,
         "side":side,
         "entry":{"type":"LIMIT","reference_price":px,"price_policy":"candidate_or_retest"},
         "stop":{"price":invalidation,"source":"structure","timeframe":inv_tf},
         "target":{"price":target,"source":target_source},
         "risk":{"account_equity":eq,"risk_fraction":rf,"risk_cash":risk_cash,
-                "risk_per_unit":risk_per_share,"quantity":qty,"fee_buffer":fee_buffer},
+                "risk_per_unit":risk_per_share,"quantity":qty,"fee_buffer":fee_buffer,
+                "sizing_status":"READY" if qty is not None else "ACCOUNT_CONTEXT_REQUIRED"},
         "rr":rr,
         "execution_policy":{
             "submit":False,

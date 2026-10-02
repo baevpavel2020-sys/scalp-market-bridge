@@ -43,7 +43,7 @@ class StocksAdapterTests(unittest.TestCase):
 
     def test_scan_has_independent_timeframes(self):
         out=self.adapter.scan("NVDA")
-        self.assertEqual(set(out["frames"]),{"5m","15m","1h","4h"})
+        self.assertEqual(set(out["frames"]),{"1d","5m","15m","1h","4h"})
         self.assertEqual(out["execution_context"]["product"],"xstock_spot")
         self.assertIn("candidate",out)
         self.assertEqual(out["priority"]["situation"],"gap")
