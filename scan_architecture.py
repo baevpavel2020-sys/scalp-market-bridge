@@ -44,7 +44,9 @@ def dedupe_events(events):
               "liquidity_sweep":3,"range_expansion":2,"gap":2,"volume_expansion":1}
     groups={}
     for event in events or []:
-        key=(event.get("direction"),event.get("level"))
+        direction=event.get("direction")
+        level=event.get("level")
+        key=(event.get("event"),direction,level) if direction is None and level is None else (direction,level)
         if key not in groups:
             groups[key]=dict(event)
         else:
