@@ -244,6 +244,18 @@ class TestScanPlus(unittest.TestCase):
         invalidations=derive_hard_invalidations(setup,{})
         self.assertTrue(any(x["reason"]=="target_liquidity_already_swept" for x in invalidations))
 
+    def test_v38_smc_requires_causal_order_block(self):
+        from analytical_depth import validate_smc_evidence
+        out=validate_smc_evidence({"ob":{"type":"ob","direction":"bullish"}}, "15m")
+        self.assertFalse(out["valid"])
+        self.assertEqual(out["reasons"][0]["type"],"non_causal_ob")
+
+    def test_v38_divergence_unknown_age_is_not_fresh(self):
+        from analytical_depth import validate_divergence
+        out=validate_divergence({"direction":"bullish"})
+        self.assertFalse(out["usable"])
+        self.assertEqual(out["state"],"UNKNOWN_AGE")
+
     def test_price_discovery_does_not_rewrite_unconfirmed_mtf_direction(self):
         linear={"analysis":{"15":{"regime_levels":{"atr":1.0},"structure":{
             "degrees":{"minor":{"last_points":[{"price":100.0}]}},
