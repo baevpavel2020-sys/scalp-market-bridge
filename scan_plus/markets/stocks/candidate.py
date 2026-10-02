@@ -16,18 +16,22 @@ def _structure_state(frames):
     return "unknown",None
 
 
-def _fibo_ready(frames):
-    for tf in ("15m","1h","4h"):
-        fib=((frames.get(tf) or {}).get("analysis") or {}).get("fibonacci")
-        if isinstance(fib,Mapping) and fib.get("ready") is True:
-            return True,tf
-    return False,None
+def _shared_confirmation(frames, structure_tf):
+    if structure_tf is None:
+        return False,None
+    analysis=((frames.get(structure_tf) or {}).get("analysis") or {})
+    fib=analysis.get("fibonacci") or {}
+    ell=analysis.get("elliott") or {}
+    return (
+        fib.get("ready") is True and ell.get("ready") is True,
+        structure_tf if fib.get("ready") is True and ell.get("ready") is True else None,
+    )
 
 
 def build_stock_candidate(*, frames, gap, underlying, ticker, session=None):
     gap_info=classify_gap(gap or {})
     structure,structure_tf=_structure_state(frames or {})
-    fibo,fibo_tf=_fibo_ready(frames or {})
+    fibo,fibo_tf=_shared_confirmation(frames or {},structure_tf)
     underlying_ready=bool(underlying and underlying.get("ready",True))
     price=float((ticker or {}).get("last_price") or 0)
 
@@ -42,7 +46,7 @@ def build_stock_candidate(*, frames, gap, underlying, ticker, session=None):
 
     blockers=[]
     if structure=="unknown": blockers.append("structure_unavailable")
-    if not fibo: blockers.append("fibonacci_unavailable")
+    if not fibo: blockers.append("fibonacci_or_elliott_unavailable")
     if not underlying_ready: blockers.append("underlying_unavailable")
 
     gap_state=gap_info.get("state")
