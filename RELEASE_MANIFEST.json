@@ -1,0 +1,14 @@
+{
+  "release": "scanplus_v3_9_stage7_10",
+  "stages": [7, 8, 9, 10],
+  "status": "candidate",
+  "decision_logic_frozen": true,
+  "network_free_gates": true,
+  "markets": ["crypto", "stocks", "forex", "commodities"],
+  "hard_invalidation_absolute": true,
+  "async_jobs": true,
+  "bounded_job_workers": true,
+  "bounded_job_retention": true,
+  "manual_live_smoke_required": true,
+  "notes": "Production release is accepted only after CI plus live /health and /system/status smoke checks."
+}

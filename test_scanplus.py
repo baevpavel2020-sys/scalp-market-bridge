@@ -321,6 +321,58 @@ class TestScanPlus(unittest.TestCase):
         self.assertGreaterEqual(analysis["technical"]["ema200"],100)
         self.assertIn(analysis["structure"]["state"],("uptrend","range_or_transition","downtrend"))
 
+    def test_stage7_all_market_acceptance_registry(self):
+        from release_gate import run_gates
+        report = run_gates()
+        self.assertTrue(report["passed"], report["failures"])
+        self.assertEqual(tuple(report["markets"]), ("crypto","stocks","forex","commodities"))
+
+    def test_stage8_regression_problem_symbols_do_not_change_market_policy(self):
+        from release_gate import acceptance_report
+        report = acceptance_report()
+        for symbol in ("RVNUSDT","ICPUSDT","INJUSDT","GRASSUSDT","TAOUSDT"):
+            self.assertEqual(report["market_policies"]["crypto"]["flow"], True)
+            self.assertEqual(report["market_policies"]["crypto"]["manipulation"], True)
+
+    def test_stage8_hard_invalidation_remains_absolute(self):
+        from analytical_depth import apply_hard_invalidations
+        setup={"tradeable":True,"execution_ready":True,"opportunity_state":"MARKET_READY"}
+        blocked=apply_hard_invalidations(setup,[{"reason":"structure_break","source":"structure"}])
+        self.assertFalse(blocked["tradeable"])
+        self.assertFalse(blocked["execution_ready"])
+        self.assertEqual(blocked["opportunity_state"],"WATCH")
+
+    def test_stage9_job_pressure_is_bounded(self):
+        from dynamic_collector import ScanJobManager
+        original=dict(ScanJobManager._jobs)
+        try:
+            ScanJobManager._jobs.clear()
+            ids=[ScanJobManager._new_job("stress",{"symbols":[f"X{i}"]}) for i in range(100)]
+            ScanJobManager._cleanup()
+            self.assertLessEqual(len(ScanJobManager._jobs), ScanJobManager.MAX_JOBS)
+            self.assertEqual(len(set(ids)),100)
+        finally:
+            ScanJobManager._jobs.clear()
+            ScanJobManager._jobs.update(original)
+
+    def test_stage9_duplicate_pressure_is_idempotent(self):
+        from dynamic_collector import ScanJobManager
+        original=dict(ScanJobManager._jobs)
+        try:
+            ScanJobManager._jobs.clear()
+            a=ScanJobManager._new_job("stress",{"symbols":["BTCUSDT"]})
+            b=ScanJobManager._new_job("stress",{"symbols":["BTCUSDT"]})
+            self.assertEqual(a,b)
+            self.assertEqual(len(ScanJobManager._jobs),1)
+        finally:
+            ScanJobManager._jobs.clear()
+            ScanJobManager._jobs.update(original)
+
+    def test_stage10_release_contract_is_explicit(self):
+        from release_gate import RELEASE_VERSION, RELEASE_STAGES
+        self.assertEqual(RELEASE_VERSION,"scanplus_v3_9_stage7_10")
+        self.assertEqual(RELEASE_STAGES,(7,8,9,10))
+
     def test_stage5_prescan_status_contract(self):
         from app import app
         with app.test_client() as client:
@@ -334,16 +386,26 @@ class TestScanPlus(unittest.TestCase):
 
     def test_stage5_provider_rows_reject_nan_and_stale_data(self):
         from dynamic_collector import OnDemandPreScanService
+        import time
+        base = int(time.time() * 1000) - (120 * 300_000) - 300_000
         good = [{
-            "start": 1700000000000,
-            "end": 1700000299999,
+            "start": base + i * 300_000,
+            "end": base + i * 300_000 + 299_999,
             "open": 100,
             "high": 101,
             "low": 99,
             "close": 100.5,
             "volume": 100,
-        } for _ in range(120)]
+        } for i in range(120)]
         clean, err = OnDemandPreScanService._validate_provider_rows(good, "5")
+        self.assertIsNone(err)
+        self.assertEqual(len(clean), 120)
+        stale = [dict(x) for x in good]
+        stale_base = int(time.time() * 1000) - (3 * 60 * 60 * 1000) - (120 * 300_000)
+        for i, row in enumerate(stale):
+            row["start"] = stale_base + i * 300_000
+            row["end"] = row["start"] + 299_999
+        clean, err = OnDemandPreScanService._validate_provider_rows(stale, "5")
         self.assertEqual(err, "stale_history")
         self.assertEqual(clean, [])
         bad = dict(good[0])

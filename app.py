@@ -23,6 +23,27 @@ BYBIT_URLS = [
 ]
 
 
+@app.get("/system/status")
+def system_status():
+    """Deterministic runtime contract/status surface; no market calls."""
+    try:
+        from release_gate import run_gates
+        from dynamic_collector import ScanJobManager
+        gate=run_gates()
+        return jsonify({
+            "service":"scalp-market-bridge",
+            "release":gate["release_version"],
+            "release_gates":gate,
+            "job_manager": {
+                "version":ScanJobManager.VERSION,
+                "max_jobs":ScanJobManager.MAX_JOBS,
+                "ttl_seconds":ScanJobManager.JOB_TTL_SECONDS,
+                "workers":getattr(ScanJobManager._executor,"_max_workers",None),
+            },
+        }),200 if gate["passed"] else 503
+    except Exception as exc:
+        return jsonify({"status":"FAIL","error":f"{type(exc).__name__}:{exc}"}),500
+
 @app.get("/health")
 def health():
     # Render health probe: no market/API calls and no locks.
