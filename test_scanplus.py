@@ -1,8 +1,63 @@
 import unittest
 from market_event_engine import _dedupe_events, detect_events, build_setup_plan
-from scan_architecture import MIN_RR
+from scan_architecture import MIN_RR, market_block_policy
+from limit_engine import generate_candidates
+from scenario_engine import build_scenarios, EventLifecycle
+from risk_engine import execution_cost, mae_mfe, exposure_cluster
 from scan_intelligence import classify_regime, relative_strength, WatchlistStore, alert_payload, enrich_scan, performance_snapshot, backtest_event_setups
 class TestScanPlus(unittest.TestCase):
+
+    def test_market_policy_does_not_enable_crypto_flow_elsewhere(self):
+        self.assertTrue(market_block_policy("crypto")["flow"])
+        for market in ("stocks","forex","commodities"):
+            self.assertFalse(market_block_policy(market)["flow"])
+            self.assertFalse(market_block_policy(market)["manipulation"])
+
+    def test_scenario_engine_keeps_reversal_as_alternative(self):
+        core={"analysis":{
+            "1h":{"ready":True,"structure":{"state":"uptrend"}},
+            "15m":{"ready":True,"structure":{"state":"uptrend"}},
+        }}
+        scenarios=build_scenarios(core,[{"event":"failed_breakout","direction":"bearish"}])
+        self.assertEqual(scenarios[0]["type"],"CONTINUATION")
+        self.assertTrue(any(x["type"]=="REVERSAL_CANDIDATE" for x in scenarios))
+
+    def test_event_lifecycle_is_symbol_scoped(self):
+        lifecycle=EventLifecycle()
+        a=lifecycle.update({"market":"crypto","symbol":"BTCUSDT","event":"failed_breakout","direction":"bearish","level":100},confirmed=True)
+        b=lifecycle.update({"market":"crypto","symbol":"ETHUSDT","event":"failed_breakout","direction":"bearish","level":100},confirmed=True)
+        self.assertNotEqual(a["fingerprint"],b["fingerprint"])
+
+    def test_limit_candidates_are_multi_source_and_two_r(self):
+        core={"analysis":{
+            "5m":{"ready":True,"regime_levels":{"supports":[99.0,98.0],"resistances":[105.0]},"technical":{"atr14":1}},
+            "15m":{"ready":True,"last_confirmed_close":100.0,"regime_levels":{"supports":[99.0,97.0],"resistances":[105.0]},"technical":{"atr14":1}},
+            "1h":{"ready":True,"regime_levels":{"supports":[97.0],"resistances":[106.0]}},
+            "4h":{"ready":True,"regime_levels":{"supports":[95.0],"resistances":[110.0]}},
+        }}
+        candidates=generate_candidates("forex","EUR/USD",core,"bullish",3)
+        self.assertTrue(candidates)
+        self.assertTrue(all(x["rr"]>=MIN_RR for x in candidates))
+        self.assertLessEqual(len(candidates),3)
+
+    def test_cost_engine_and_excursion_metrics(self):
+        cost=execution_cost("crypto",100,98,104,spread=0.1,commission_bps=5)
+        self.assertTrue(cost["ready"])
+        self.assertGreater(cost["gross_rr"],2)
+        excursion=mae_mfe("bullish",100,[{"high":105,"low":99},{"high":107,"low":98}])
+        self.assertEqual(excursion["mfe"],7)
+        self.assertEqual(excursion["mae"],2)
+
+    def test_exposure_clusters_same_direction_correlated(self):
+        setups=[{"market":"crypto","symbol":"BTC","direction":"bearish"},{"market":"crypto","symbol":"ETH","direction":"bearish"},{"market":"forex","symbol":"EUR/USD","direction":"bearish"}]
+        clusters=exposure_cluster(setups,{("BTC","ETH"):0.9})
+        self.assertTrue(any(x["size"]==2 for x in clusters))
+
+    def test_enrich_scan_initializes_setup_before_scenario(self):
+        out=enrich_scan({"symbol":"SAFE","market":"crypto","timeframes":{},"setup":{}})
+        self.assertIn("scenario",out)
+        self.assertIn("execution_cost",out)
+
     def test_context_events_survive(self):
         out=_dedupe_events([{"event":"session_context"},{"event":"inventory_event"}])
         self.assertEqual(len(out),2)
