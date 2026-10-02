@@ -178,9 +178,17 @@ class ExternalMarketAdapter:
         if market=="stocks":
             provider="bybit_xstocks"
             tf_intervals={"1D":"D","4h":"240","1h":"60","15m":"15","5m":"5"}
-            for tf,itv in tf_intervals.items():
-                try: frames[tf]=bybit_xstock_candles(symbol,itv)
-                except Exception as e: errors[tf]=f"{type(e).__name__}:{e}"
+            def fetch_xstock(item):
+                tf,itv=item
+                try:
+                    return tf, bybit_xstock_candles(symbol,itv), None
+                except Exception as e:
+                    return tf, [], f"{type(e).__name__}:{e}"
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+                for tf, rows, err in pool.map(fetch_xstock, tuple(tf_intervals.items())):
+                    frames[tf]=rows
+                    if err:
+                        errors[tf]=err
             quote=None
             configured=True
         else:
