@@ -27,6 +27,7 @@ import websocket
 from pump_exhaustion import detect as detect_pump_exhaustion
 from scan_intelligence import enrich_scan, relative_strength
 from risk_engine import exposure_cluster, exposure_buckets
+from context_engine import prescan_context
 
 
 # ============================================================
@@ -6395,7 +6396,7 @@ class OnDemandPreScanService:
             "market": {"last_price": fnum(ticker.get("lastPrice")), "turnover24h": turnover,
                        "open_interest": fnum(ticker.get("openInterest")), "open_interest_value": oi_value,
                        "funding_rate": fnum(ticker.get("fundingRate")), "spread_bps": None if spread_bps is None else round(spread_bps, 4)},
-            "history_sources": sources, "reasons": reasons,
+            "history_sources": sources, "market_context": prescan_context(symbol,histories), "reasons": reasons,
         }
 
     @staticmethod
