@@ -5,6 +5,37 @@ not treated as crypto/FX instruments.
 """
 import requests
 import time
+import threading
+
+YAHOO_REQUEST_LOCK = threading.Lock()
+YAHOO_LAST_REQUEST = 0.0
+YAHOO_MIN_INTERVAL = 1.25
+YAHOO_HOSTS = ("query1.finance.yahoo.com", "query2.finance.yahoo.com")
+
+def _yahoo_get(path, params, timeout, headers):
+    global YAHOO_LAST_REQUEST
+    with YAHOO_REQUEST_LOCK:
+        delay = YAHOO_MIN_INTERVAL - (time.monotonic() - YAHOO_LAST_REQUEST)
+        if delay > 0:
+            time.sleep(delay)
+        last_error = None
+        for host in YAHOO_HOSTS:
+            for attempt in range(4):
+                try:
+                    response = requests.get(f"https://{host}{path}", params=params, timeout=timeout, headers=headers)
+                    YAHOO_LAST_REQUEST = time.monotonic()
+                    if response.status_code != 429:
+                        response.raise_for_status()
+                        return response
+                    retry_after=response.headers.get("Retry-After")
+                    time.sleep(float(retry_after) if retry_after else min(2.0 ** attempt, 8.0))
+                except requests.RequestException as exc:
+                    last_error=exc
+                    time.sleep(min(2.0 ** attempt, 8.0))
+        if last_error:
+            raise last_error
+        raise requests.HTTPError("Yahoo Finance rate limit persisted")
+
 
 SYMBOLS={"XAUUSD":"GC=F","XAGUSD":"SI=F","WTI":"CL=F","BRENT":"BZ=F","COCOA":"CC=F"}
 INTERVALS={"5":"5m","15":"15m","60":"60m","240":"1h","d":"1d"}
@@ -52,20 +83,12 @@ class YahooCommodityLoader:
         interval=str(interval).lower()
         if interval not in INTERVALS: raise NotImplementedError(f"unsupported commodity interval: {interval}")
         params={"interval":INTERVALS[interval],"range":"30d","events":"history"}
-        response = None
-        for attempt in range(4):
-            response=self.session.get(
-                f"{self.base_url}/{yahoo_symbol}",
-                params=params,
-                timeout=self.timeout,
-                headers={"User-Agent":"scalp-market-bridge/1.0"},
-            )
-            if response.status_code != 429:
-                break
-            retry_after=response.headers.get("Retry-After")
-            delay=float(retry_after) if retry_after else (1.0 * (2 ** attempt))
-            time.sleep(min(delay, 8.0))
-        response.raise_for_status()
+        response = _yahoo_get(
+            f"/v8/finance/chart/{yahoo_symbol}",
+            params=params,
+            timeout=self.timeout,
+            headers={"User-Agent":"scalp-market-bridge/1.0"},
+        )
         payload=response.json()
         result=(payload.get("chart") or {}).get("result") or []
         if not result:
