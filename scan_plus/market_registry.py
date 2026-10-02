@@ -1,5 +1,5 @@
 """Failure-isolated registry for Scan+ market adapters."""
-from typing import Dict
+from typing import Dict, Mapping
 
 from scan_plus.contracts import MarketAdapter
 
@@ -25,8 +25,23 @@ class MarketRegistry:
         return tuple(sorted(self._adapters))
 
     def safe_scan(self, market: str, symbol: str):
+        key=str(market).lower()
+        normalized_symbol=str(symbol).upper()
         try:
-            return {"status": "OK", "market": market, "result": self.get(market).scan(symbol)}
+            result=self.get(key).scan(symbol)
+            if not isinstance(result, Mapping):
+                raise TypeError("adapter scan must return a mapping")
+            returned_market=str(result.get("market") or "").lower()
+            if returned_market != key:
+                raise ValueError(
+                    f"market contract violation: requested={key}, returned={returned_market or 'missing'}"
+                )
+            returned_symbol=str(result.get("symbol") or "").upper()
+            if returned_symbol and returned_symbol != normalized_symbol:
+                raise ValueError(
+                    f"symbol contract violation: requested={normalized_symbol}, returned={returned_symbol}"
+                )
+            return {"status": "OK", "market": key, "symbol": normalized_symbol, "result": dict(result)}
         except Exception as exc:
             return {
                 "status": "DATA_ERROR",
