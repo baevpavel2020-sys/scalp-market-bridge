@@ -1,27 +1,20 @@
 {
-  "created_at": 1790960426.7989995,
+  "created_at": 1790970107.90898,
   "error": null,
-  "finished_at": 1790960642.085717,
-  "job_id": "48573382f9a9428e",
-  "job_manager_version": "scan_job_manager_v3_1_2_queue_guard",
+  "finished_at": 1790970111.2954092,
+  "job_id": "ba9b0b432a4e4038",
+  "job_manager_version": "scan_job_manager_v3_1_1_adaptive_warmup_fix",
   "mode": "auto",
   "progress": {
     "current_symbol": null,
-    "done": 6,
+    "done": 0,
     "stage": "FINAL_SCAN",
-    "total": 6,
-    "warmup_remaining_seconds": 0
+    "total": 0,
+    "warmup_remaining_seconds": 40
   },
   "result": {
-    "activated_symbols": [
-      "ETHUSDT",
-      "XRPUSDT",
-      "TAOUSDT",
-      "ZROUSDT",
-      "NEARUSDT",
-      "APTUSDT"
-    ],
-    "elapsed_ms": 215286.27,
+    "activated_symbols": [],
+    "elapsed_ms": 3386.0,
     "errors": {},
     "mode": "auto",
     "orchestrator_version": "scan_orchestrator_v2_1_adaptive_warmup",
@@ -29,8 +22,99 @@
       "diagnostics": {
         "analysis_error_count": 0,
         "analysis_errors": {},
-        "history_error_count": 0,
-        "history_errors": {},
+        "history_error_count": 90,
+        "history_errors": {
+          "1000PEPEUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "1000PEPEUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "1000PEPEUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "AAVEUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "AAVEUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "AAVEUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "ADAUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "ADAUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "ADAUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "APTUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "APTUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "APTUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "ARBUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "ARBUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "ARBUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "AVAXUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "AVAXUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "AVAXUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "BCHUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "BCHUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "BCHUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "BNBUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "BNBUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "BNBUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "BTCUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "BTCUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "BTCUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "DOGEUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "DOGEUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "DOGEUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "ENAUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "ENAUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "ENAUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "ETHUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "ETHUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "ETHUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "HBARUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "HBARUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "HBARUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "HYPEUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "HYPEUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "HYPEUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "LINKUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "LINKUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "LINKUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "LTCUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "LTCUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "LTCUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "NEARUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "NEARUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "NEARUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "ONDOUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "ONDOUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "ONDOUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "QNTUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "QNTUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "QNTUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "SANDUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "SANDUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "SANDUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "SOLUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "SOLUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "SOLUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "SUIUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "SUIUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "SUIUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "TAOUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "TAOUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "TAOUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "TIAUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "TIAUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "TIAUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "UNIUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "UNIUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "UNIUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "WLDUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "WLDUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "WLDUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "XLMUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "XLMUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "XLMUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "XRPUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "XRPUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "XRPUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "ZECUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "ZECUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "ZECUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "ZROUSDT:15": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "ZROUSDT:5": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}",
+          "ZROUSDT:60": "all_history_providers_failed:{\"okx_swap_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"kucoin_futures_rest\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"},\"binance_spot_marketdata\":{\"5\":\"NameError:name 'urllib' is not defined\",\"15\":\"NameError:name 'urllib' is not defined\",\"60\":\"NameError:name 'urllib' is not defined\"}}"
+        },
         "skipped_symbol_count": 8,
         "skipped_symbols": [
           "1000SHIBUSDT",
@@ -45,1220 +129,25 @@
         "ws_error_count": 0,
         "ws_errors": []
       },
-      "elapsed_ms": 11977.21,
+      "elapsed_ms": 3385.56,
       "engine_version": "prescan_v3_2_final",
-      "scan_plus_candidates": [
-        "ETHUSDT",
-        "XRPUSDT",
-        "TAOUSDT",
-        "ZROUSDT",
-        "NEARUSDT",
-        "APTUSDT"
-      ],
+      "scan_plus_candidates": [],
       "status": "PASS"
     },
     "prescan_used": true,
-    "scan_plus_count": 6,
-    "scan_plus_results": [
-      {
-        "architecture": {
-          "opportunity_states": [
-            "MARKET_READY",
-            "LIMIT_READY",
-            "WATCH"
-          ],
-          "pipeline": [
-            "market",
-            "data_quality",
-            "regime_structure",
-            "event",
-            "evidence",
-            "setup",
-            "execution"
-          ],
-          "version": "scan_architecture_v2"
-        },
-        "block_class": "DATA_BLOCK",
-        "block_reasons": [
-          "trade_data_not_ready",
-          "trigger_not_confirmed",
-          "book_opposed"
-        ],
-        "context": {
-          "direction": "neutral",
-          "frames": {
-            "240": {
-              "direction": "neutral",
-              "live_mode": "inside_structure",
-              "price_gap_atr": 0.0,
-              "raw_confluence": "bullish",
-              "ready": true,
-              "structure": "range_or_transition",
-              "transition": false
-            },
-            "D": {
-              "direction": "neutral",
-              "live_mode": "inside_structure",
-              "price_gap_atr": 0.0,
-              "raw_confluence": "bullish",
-              "ready": true,
-              "structure": "range_or_transition",
-              "transition": false
-            }
-          }
-        },
-        "data_quality": {
-          "analysis_ready": true,
-          "block_reasons": [
-            "trade_data_not_ready",
-            "trigger_not_confirmed",
-            "book_opposed",
-            "execution_trade_data_not_ready"
-          ],
-          "checks": {
-            "flow_15m": false,
-            "flow_1h": false,
-            "flow_1m": false,
-            "flow_5m": false,
-            "history_15m": true,
-            "history_1H": true,
-            "history_1m": true,
-            "history_4H": true,
-            "history_5m": true,
-            "history_D": true,
-            "linear_capability": true,
-            "linear_transport": true,
-            "oi_15m": false,
-            "oi_1h": false,
-            "oi_1m": true,
-            "oi_5m": true,
-            "orderbook_ready": true,
-            "realtime_price": true,
-            "ticker_fresh": true
-          },
-          "decision_ready": false,
-          "execution_mode": "spot_perp",
-          "execution_ready": false,
-          "flow_ready": false,
-          "flow_windows": [],
-          "missing": [
-            "flow_1m",
-            "flow_5m",
-            "flow_15m",
-            "flow_1h",
-            "oi_15m",
-            "oi_1h"
-          ],
-          "oi_ready": true,
-          "oi_windows": [
-            "1m",
-            "5m"
-          ],
-          "realtime_ready": true,
-          "spot_available": true,
-          "spot_capability_resolved": true,
-          "spot_capability_state": "active",
-          "trade_data_ready": false,
-          "version": "data_quality_v1"
-        },
-        "direction": {
-          "direction": "bullish",
-          "frames": {
-            "15": {
-              "direction": "bullish",
-              "live_mode": "inside_structure",
-              "price_gap_atr": 0.0,
-              "raw_confluence": "bullish",
-              "ready": true,
-              "structure": "uptrend",
-              "transition": false
-            },
-            "60": {
-              "direction": "bullish",
-              "live_mode": "inside_structure",
-              "price_gap_atr": 0.0,
-              "raw_confluence": "bullish",
-              "ready": true,
-              "structure": "uptrend",
-              "transition": false
-            }
-          },
-          "score": 1.0,
-          "state": "confirmed"
-        },
-        "engine_version": "scan_plus_v3_10_data_quality",
-        "manipulation": {
-          "direction": "NONE",
-          "execution": "NONE",
-          "price": 2690.71,
-          "reasons": [],
-          "score": 0,
-          "signal": "NONE",
-          "status": "NO_EVENT"
-        },
-        "price": 2690.71,
-        "retryable": true,
-        "setup": {
-          "entry": null,
-          "entry_zone": null,
-          "failed_requirements": [
-            "trade_data_ready",
-            "trigger_confirmed",
-            "execution_not_opposed"
-          ],
-          "limit_plan": {
-            "eligible": false,
-            "reason": null,
-            "state": "NO_LIMIT_PLAN"
-          },
-          "opportunity_state": "WATCH",
-          "risk_reward": 2.994,
-          "side": null,
-          "stop": null,
-          "targets": {
-            "minimum_rr": 2.0,
-            "rr_basis": "scan_price_to_stop_and_t1",
-            "rule": "nearest_valid_scenario_target_same_intraday_scale_first",
-            "t1": 2700.67,
-            "t1_source": "liquidity_objective_1",
-            "t1_timeframe": "1",
-            "t2": 2706.0,
-            "t2_source": "previous_swing_1",
-            "t2_timeframe": "1"
-          }
-        },
-        "setup_state": "aligned",
-        "status": {
-          "driver_ready": false,
-          "execution_ready": true,
-          "flow_ready": false,
-          "historical_ready": true,
-          "linear_connected": true,
-          "spot_connected": true,
-          "trade_data_ready": false
-        },
-        "symbol": "ETHUSDT",
-        "trade_state": "DATA_BLOCK",
-        "trade_style": "mixed_context",
-        "trigger_state": "waiting"
-      },
-      {
-        "architecture": {
-          "opportunity_states": [
-            "MARKET_READY",
-            "LIMIT_READY",
-            "WATCH"
-          ],
-          "pipeline": [
-            "market",
-            "data_quality",
-            "regime_structure",
-            "event",
-            "evidence",
-            "setup",
-            "execution"
-          ],
-          "version": "scan_architecture_v2"
-        },
-        "block_class": "DATA_BLOCK",
-        "block_reasons": [
-          "trade_data_not_ready",
-          "setup_not_aligned",
-          "trigger_not_confirmed"
-        ],
-        "context": {
-          "direction": "neutral",
-          "frames": {
-            "240": {
-              "direction": "neutral",
-              "live_mode": "inside_structure",
-              "price_gap_atr": 0.0,
-              "raw_confluence": "bearish",
-              "ready": true,
-              "structure": "range_or_transition",
-              "transition": false
-            },
-            "D": {
-              "direction": "neutral",
-              "live_mode": "inside_structure",
-              "price_gap_atr": 0.0,
-              "raw_confluence": "bearish",
-              "ready": true,
-              "structure": "range_or_transition",
-              "transition": false
-            }
-          }
-        },
-        "data_quality": {
-          "analysis_ready": true,
-          "block_reasons": [
-            "trade_data_not_ready",
-            "setup_not_aligned",
-            "trigger_not_confirmed",
-            "execution_trade_data_not_ready"
-          ],
-          "checks": {
-            "flow_15m": false,
-            "flow_1h": false,
-            "flow_1m": false,
-            "flow_5m": false,
-            "history_15m": true,
-            "history_1H": true,
-            "history_1m": true,
-            "history_4H": true,
-            "history_5m": true,
-            "history_D": true,
-            "linear_capability": true,
-            "linear_transport": true,
-            "oi_15m": false,
-            "oi_1h": false,
-            "oi_1m": true,
-            "oi_5m": true,
-            "orderbook_ready": true,
-            "realtime_price": true,
-            "ticker_fresh": true
-          },
-          "decision_ready": false,
-          "execution_mode": "spot_perp",
-          "execution_ready": false,
-          "flow_ready": false,
-          "flow_windows": [],
-          "missing": [
-            "flow_1m",
-            "flow_5m",
-            "flow_15m",
-            "flow_1h",
-            "oi_15m",
-            "oi_1h"
-          ],
-          "oi_ready": true,
-          "oi_windows": [
-            "1m",
-            "5m"
-          ],
-          "realtime_ready": true,
-          "spot_available": true,
-          "spot_capability_resolved": true,
-          "spot_capability_state": "active",
-          "trade_data_ready": false,
-          "version": "data_quality_v1"
-        },
-        "direction": {
-          "direction": "bearish",
-          "frames": {
-            "15": {
-              "direction": "bearish",
-              "live_mode": "inside_structure",
-              "price_gap_atr": 0.0,
-              "raw_confluence": "bearish",
-              "ready": true,
-              "structure": "downtrend",
-              "transition": false
-            },
-            "60": {
-              "direction": "bearish",
-              "live_mode": "inside_structure",
-              "price_gap_atr": 0.0,
-              "raw_confluence": "neutral",
-              "ready": true,
-              "structure": "downtrend",
-              "transition": false
-            }
-          },
-          "score": -1.0,
-          "state": "confirmed"
-        },
-        "engine_version": "scan_plus_v3_10_data_quality",
-        "manipulation": {
-          "direction": "NONE",
-          "execution": "NONE",
-          "price": 1.5049,
-          "reasons": [],
-          "score": 0,
-          "signal": "NONE",
-          "status": "NO_EVENT"
-        },
-        "price": 1.5049,
-        "retryable": true,
-        "setup": {
-          "entry": null,
-          "entry_zone": null,
-          "failed_requirements": [
-            "trade_data_ready",
-            "setup_aligned",
-            "trigger_confirmed"
-          ],
-          "limit_plan": {
-            "eligible": false,
-            "reason": null,
-            "state": "NO_LIMIT_PLAN"
-          },
-          "opportunity_state": "WATCH",
-          "risk_reward": 7.252,
-          "side": null,
-          "stop": null,
-          "targets": {
-            "minimum_rr": 2.0,
-            "rr_basis": "scan_price_to_stop_and_t1",
-            "rule": "nearest_valid_scenario_target_same_intraday_scale_first",
-            "t1": 1.4941,
-            "t1_source": "liquidity_objective_1",
-            "t1_timeframe": "1",
-            "t2": 1.4897,
-            "t2_source": "previous_swing_1",
-            "t2_timeframe": "1"
-          }
-        },
-        "setup_state": "forming",
-        "status": {
-          "driver_ready": false,
-          "execution_ready": true,
-          "flow_ready": false,
-          "historical_ready": true,
-          "linear_connected": true,
-          "spot_connected": true,
-          "trade_data_ready": false
-        },
-        "symbol": "XRPUSDT",
-        "trade_state": "DATA_BLOCK",
-        "trade_style": "mixed_context",
-        "trigger_state": "waiting"
-      },
-      {
-        "architecture": {
-          "opportunity_states": [
-            "MARKET_READY",
-            "LIMIT_READY",
-            "WATCH"
-          ],
-          "pipeline": [
-            "market",
-            "data_quality",
-            "regime_structure",
-            "event",
-            "evidence",
-            "setup",
-            "execution"
-          ],
-          "version": "scan_architecture_v2"
-        },
-        "block_class": "DATA_BLOCK",
-        "block_reasons": [
-          "trade_data_not_ready",
-          "direction_provisional",
-          "trigger_not_confirmed"
-        ],
-        "context": {
-          "direction": "neutral",
-          "frames": {
-            "240": {
-              "direction": "neutral",
-              "live_mode": "inside_structure",
-              "price_gap_atr": 0.0,
-              "raw_confluence": "bearish",
-              "ready": true,
-              "structure": "range_or_transition",
-              "transition": false
-            },
-            "D": {
-              "direction": "neutral",
-              "live_mode": "inside_structure",
-              "price_gap_atr": 0.0,
-              "raw_confluence": "bullish",
-              "ready": true,
-              "structure": "range_or_transition",
-              "transition": false
-            }
-          }
-        },
-        "data_quality": {
-          "analysis_ready": true,
-          "block_reasons": [
-            "trade_data_not_ready",
-            "direction_provisional",
-            "trigger_not_confirmed",
-            "execution_trade_data_not_ready"
-          ],
-          "checks": {
-            "flow_15m": false,
-            "flow_1h": false,
-            "flow_1m": false,
-            "flow_5m": false,
-            "history_15m": true,
-            "history_1H": true,
-            "history_1m": true,
-            "history_4H": true,
-            "history_5m": true,
-            "history_D": true,
-            "linear_capability": true,
-            "linear_transport": true,
-            "oi_15m": false,
-            "oi_1h": false,
-            "oi_1m": true,
-            "oi_5m": false,
-            "orderbook_ready": true,
-            "realtime_price": true,
-            "ticker_fresh": true
-          },
-          "decision_ready": false,
-          "execution_mode": "perp_only",
-          "execution_ready": false,
-          "flow_ready": false,
-          "flow_windows": [],
-          "missing": [
-            "flow_1m",
-            "flow_5m",
-            "flow_15m",
-            "flow_1h",
-            "oi_5m",
-            "oi_15m",
-            "oi_1h"
-          ],
-          "oi_ready": true,
-          "oi_windows": [
-            "1m"
-          ],
-          "realtime_ready": true,
-          "spot_available": false,
-          "spot_capability_resolved": true,
-          "spot_capability_state": "unsupported",
-          "trade_data_ready": false,
-          "version": "data_quality_v1"
-        },
-        "direction": {
-          "direction": "bearish",
-          "frames": {
-            "15": {
-              "direction": "bearish",
-              "live_mode": "inside_structure",
-              "price_gap_atr": 0.0,
-              "raw_confluence": "bearish",
-              "ready": true,
-              "structure": "downtrend",
-              "transition": false
-            },
-            "60": {
-              "direction": "neutral",
-              "live_mode": "inside_structure",
-              "price_gap_atr": 0.0,
-              "raw_confluence": "bearish",
-              "ready": true,
-              "structure": "range_or_transition",
-              "transition": false
-            }
-          },
-          "score": -0.45,
-          "state": "provisional"
-        },
-        "engine_version": "scan_plus_v3_10_data_quality",
-        "manipulation": {
-          "direction": "NONE",
-          "execution": "NONE",
-          "price": 309.06,
-          "reasons": [],
-          "score": 0,
-          "signal": "NONE",
-          "status": "NO_EVENT"
-        },
-        "price": 309.06,
-        "retryable": true,
-        "setup": {
-          "entry": null,
-          "entry_zone": null,
-          "failed_requirements": [
-            "direction_confirmed",
-            "trade_data_ready",
-            "trigger_confirmed"
-          ],
-          "limit_plan": {
-            "eligible": false,
-            "reason": null,
-            "state": "NO_LIMIT_PLAN"
-          },
-          "opportunity_state": "WATCH",
-          "risk_reward": 4.141,
-          "side": null,
-          "stop": null,
-          "targets": {
-            "minimum_rr": 2.0,
-            "rr_basis": "scan_price_to_stop_and_t1",
-            "rule": "nearest_valid_scenario_target_same_intraday_scale_first",
-            "t1": 302.395,
-            "t1_source": "liquidity_objective_1",
-            "t1_timeframe": "1",
-            "t2": 300.39,
-            "t2_source": "previous_swing_5",
-            "t2_timeframe": "5"
-          }
-        },
-        "setup_state": "aligned",
-        "status": {
-          "driver_ready": false,
-          "execution_ready": true,
-          "flow_ready": false,
-          "historical_ready": true,
-          "linear_connected": true,
-          "spot_connected": false,
-          "trade_data_ready": false
-        },
-        "symbol": "TAOUSDT",
-        "trade_state": "DATA_BLOCK",
-        "trade_style": "mixed_context",
-        "trigger_state": "opposed"
-      },
-      {
-        "architecture": {
-          "opportunity_states": [
-            "MARKET_READY",
-            "LIMIT_READY",
-            "WATCH"
-          ],
-          "pipeline": [
-            "market",
-            "data_quality",
-            "regime_structure",
-            "event",
-            "evidence",
-            "setup",
-            "execution"
-          ],
-          "version": "scan_architecture_v2"
-        },
-        "block_class": "DATA_BLOCK",
-        "block_reasons": [
-          "trade_data_not_ready",
-          "direction_provisional",
-          "extended_wait_pullback",
-          "rr_below_1_5",
-          "stop_too_many_atr",
-          "setup_not_aligned",
-          "trigger_not_confirmed"
-        ],
-        "context": {
-          "direction": "bullish",
-          "frames": {
-            "240": {
-              "direction": "bullish",
-              "live_mode": "price_discovery_up",
-              "price_gap_atr": 0.5529,
-              "raw_confluence": "bullish",
-              "ready": true,
-              "structure": "uptrend",
-              "transition": false
-            },
-            "D": {
-              "direction": "neutral",
-              "live_mode": "price_discovery_up",
-              "price_gap_atr": 3.1399,
-              "raw_confluence": "bullish",
-              "ready": true,
-              "structure": "downtrend",
-              "transition": true
-            }
-          }
-        },
-        "data_quality": {
-          "analysis_ready": true,
-          "block_reasons": [
-            "trade_data_not_ready",
-            "direction_provisional",
-            "extended_wait_pullback",
-            "rr_below_1_5",
-            "stop_too_many_atr",
-            "setup_not_aligned",
-            "trigger_not_confirmed",
-            "execution_trade_data_not_ready"
-          ],
-          "checks": {
-            "flow_15m": false,
-            "flow_1h": false,
-            "flow_1m": false,
-            "flow_5m": false,
-            "history_15m": true,
-            "history_1H": true,
-            "history_1m": true,
-            "history_4H": true,
-            "history_5m": true,
-            "history_D": true,
-            "linear_capability": true,
-            "linear_transport": true,
-            "oi_15m": false,
-            "oi_1h": false,
-            "oi_1m": true,
-            "oi_5m": false,
-            "orderbook_ready": true,
-            "realtime_price": true,
-            "ticker_fresh": true
-          },
-          "decision_ready": false,
-          "execution_mode": "spot_perp",
-          "execution_ready": false,
-          "flow_ready": false,
-          "flow_windows": [],
-          "missing": [
-            "flow_1m",
-            "flow_5m",
-            "flow_15m",
-            "flow_1h",
-            "oi_5m",
-            "oi_15m",
-            "oi_1h"
-          ],
-          "oi_ready": true,
-          "oi_windows": [
-            "1m"
-          ],
-          "realtime_ready": true,
-          "spot_available": true,
-          "spot_capability_resolved": true,
-          "spot_capability_state": "active",
-          "trade_data_ready": false,
-          "version": "data_quality_v1"
-        },
-        "direction": {
-          "direction": "bullish",
-          "frames": {
-            "15": {
-              "direction": "bullish",
-              "live_mode": "price_discovery_up",
-              "price_gap_atr": 2.9668,
-              "raw_confluence": "bullish",
-              "ready": true,
-              "structure": "uptrend",
-              "transition": false
-            },
-            "60": {
-              "direction": "neutral",
-              "live_mode": "price_discovery_up",
-              "price_gap_atr": 1.1158,
-              "raw_confluence": "bullish",
-              "ready": true,
-              "structure": "downtrend",
-              "transition": true
-            }
-          },
-          "score": 0.45,
-          "state": "provisional"
-        },
-        "engine_version": "scan_plus_v3_10_data_quality",
-        "manipulation": {
-          "direction": "NONE",
-          "execution": "NONE",
-          "price": 1.9518,
-          "reasons": [],
-          "score": 0,
-          "signal": "NONE",
-          "status": "NO_EVENT"
-        },
-        "price": 1.9518,
-        "retryable": true,
-        "setup": {
-          "entry": null,
-          "entry_zone": null,
-          "failed_requirements": [
-            "direction_confirmed",
-            "trade_data_ready",
-            "rr_min_2_0",
-            "trade_scale_valid",
-            "setup_aligned",
-            "trigger_confirmed"
-          ],
-          "limit_plan": {
-            "eligible": false,
-            "reason": null,
-            "state": "NO_LIMIT_PLAN"
-          },
-          "opportunity_state": "WATCH",
-          "risk_reward": 0.213,
-          "side": null,
-          "stop": null,
-          "targets": {
-            "minimum_rr": 2.0,
-            "rr_basis": "scan_price_to_stop_and_t1",
-            "rule": "nearest_valid_scenario_target_same_intraday_scale_first",
-            "t1": 1.9838,
-            "t1_source": "projection_D",
-            "t1_timeframe": "D",
-            "t2": 1.9969144,
-            "t2_source": "projection_60",
-            "t2_timeframe": "60"
-          }
-        },
-        "setup_state": "forming",
-        "status": {
-          "driver_ready": false,
-          "execution_ready": true,
-          "flow_ready": false,
-          "historical_ready": true,
-          "linear_connected": true,
-          "spot_connected": true,
-          "trade_data_ready": false
-        },
-        "symbol": "ZROUSDT",
-        "trade_state": "DATA_BLOCK",
-        "trade_style": "with_context",
-        "trigger_state": "aligned"
-      },
-      {
-        "architecture": {
-          "opportunity_states": [
-            "MARKET_READY",
-            "LIMIT_READY",
-            "WATCH"
-          ],
-          "pipeline": [
-            "market",
-            "data_quality",
-            "regime_structure",
-            "event",
-            "evidence",
-            "setup",
-            "execution"
-          ],
-          "version": "scan_architecture_v2"
-        },
-        "block_class": "DATA_BLOCK",
-        "block_reasons": [
-          "trade_data_not_ready",
-          "direction_not_confirmed",
-          "direction_provisional",
-          "invalidation_missing",
-          "target_missing",
-          "price_order_invalid",
-          "rr_below_1_5",
-          "scale_mismatch",
-          "setup_not_aligned",
-          "trigger_not_confirmed"
-        ],
-        "context": {
-          "direction": "neutral",
-          "frames": {
-            "240": {
-              "direction": "bearish",
-              "live_mode": "inside_structure",
-              "price_gap_atr": 0.0,
-              "raw_confluence": "bearish",
-              "ready": true,
-              "structure": "downtrend",
-              "transition": false
-            },
-            "D": {
-              "direction": "bullish",
-              "live_mode": "inside_structure",
-              "price_gap_atr": 0.0,
-              "raw_confluence": "bullish",
-              "ready": true,
-              "structure": "uptrend",
-              "transition": false
-            }
-          }
-        },
-        "data_quality": {
-          "analysis_ready": true,
-          "block_reasons": [
-            "trade_data_not_ready",
-            "direction_not_confirmed",
-            "direction_provisional",
-            "invalidation_missing",
-            "target_missing",
-            "price_order_invalid",
-            "rr_below_1_5",
-            "scale_mismatch",
-            "setup_not_aligned",
-            "trigger_not_confirmed",
-            "execution_trade_data_not_ready"
-          ],
-          "checks": {
-            "flow_15m": false,
-            "flow_1h": false,
-            "flow_1m": false,
-            "flow_5m": false,
-            "history_15m": true,
-            "history_1H": true,
-            "history_1m": true,
-            "history_4H": true,
-            "history_5m": true,
-            "history_D": true,
-            "linear_capability": true,
-            "linear_transport": true,
-            "oi_15m": false,
-            "oi_1h": false,
-            "oi_1m": false,
-            "oi_5m": false,
-            "orderbook_ready": true,
-            "realtime_price": true,
-            "ticker_fresh": true
-          },
-          "decision_ready": false,
-          "execution_mode": "spot_perp",
-          "execution_ready": false,
-          "flow_ready": false,
-          "flow_windows": [],
-          "missing": [
-            "flow_1m",
-            "flow_5m",
-            "flow_15m",
-            "flow_1h",
-            "oi_1m",
-            "oi_5m",
-            "oi_15m",
-            "oi_1h"
-          ],
-          "oi_ready": false,
-          "oi_windows": [],
-          "realtime_ready": true,
-          "spot_available": true,
-          "spot_capability_resolved": true,
-          "spot_capability_state": "active",
-          "trade_data_ready": false,
-          "version": "data_quality_v1"
-        },
-        "direction": {
-          "direction": "neutral",
-          "frames": {
-            "15": {
-              "direction": "neutral",
-              "live_mode": "inside_structure",
-              "price_gap_atr": 0.0,
-              "raw_confluence": "neutral",
-              "ready": true,
-              "structure": "range_or_transition",
-              "transition": false
-            },
-            "60": {
-              "direction": "neutral",
-              "live_mode": "inside_structure",
-              "price_gap_atr": 0.0,
-              "raw_confluence": "bearish",
-              "ready": true,
-              "structure": "range_or_transition",
-              "transition": false
-            }
-          },
-          "score": 0,
-          "state": "uncertain"
-        },
-        "engine_version": "scan_plus_v3_10_data_quality",
-        "manipulation": {
-          "direction": "NONE",
-          "execution": "NONE",
-          "price": 4.837,
-          "reasons": [],
-          "score": 0,
-          "signal": "NONE",
-          "status": "NO_EVENT"
-        },
-        "price": 4.837,
-        "retryable": true,
-        "setup": {
-          "entry": null,
-          "entry_zone": null,
-          "failed_requirements": [
-            "direction_confirmed",
-            "trade_data_ready",
-            "price_order_valid",
-            "rr_min_2_0",
-            "trade_scale_valid",
-            "setup_aligned",
-            "trigger_confirmed"
-          ],
-          "limit_plan": {
-            "eligible": false,
-            "reason": null,
-            "state": "NO_LIMIT_PLAN"
-          },
-          "opportunity_state": "WATCH",
-          "risk_reward": null,
-          "side": null,
-          "stop": null,
-          "targets": {
-            "minimum_rr": 2.0,
-            "rr_basis": "scan_price_to_stop_and_t1",
-            "rule": "nearest_valid_scenario_target_same_intraday_scale_first",
-            "t1": null,
-            "t1_source": null,
-            "t1_timeframe": null,
-            "t2": null,
-            "t2_source": null,
-            "t2_timeframe": null
-          }
-        },
-        "setup_state": "forming",
-        "status": {
-          "driver_ready": false,
-          "execution_ready": true,
-          "flow_ready": false,
-          "historical_ready": true,
-          "linear_connected": true,
-          "spot_connected": true,
-          "trade_data_ready": false
-        },
-        "symbol": "NEARUSDT",
-        "trade_state": "DATA_BLOCK",
-        "trade_style": "mixed_context",
-        "trigger_state": "waiting"
-      },
-      {
-        "architecture": {
-          "opportunity_states": [
-            "MARKET_READY",
-            "LIMIT_READY",
-            "WATCH"
-          ],
-          "pipeline": [
-            "market",
-            "data_quality",
-            "regime_structure",
-            "event",
-            "evidence",
-            "setup",
-            "execution"
-          ],
-          "version": "scan_architecture_v2"
-        },
-        "block_class": "DATA_BLOCK",
-        "block_reasons": [
-          "trade_data_not_ready",
-          "extended_wait_pullback",
-          "invalidation_from_htf",
-          "setup_pullback_active",
-          "trigger_not_confirmed"
-        ],
-        "context": {
-          "direction": "neutral",
-          "frames": {
-            "240": {
-              "direction": "bearish",
-              "live_mode": "inside_structure",
-              "price_gap_atr": 0.0,
-              "raw_confluence": "bearish",
-              "ready": true,
-              "structure": "downtrend",
-              "transition": false
-            },
-            "D": {
-              "direction": "bullish",
-              "live_mode": "inside_structure",
-              "price_gap_atr": 0.0,
-              "raw_confluence": "bullish",
-              "ready": true,
-              "structure": "uptrend",
-              "transition": false
-            }
-          }
-        },
-        "data_quality": {
-          "analysis_ready": true,
-          "block_reasons": [
-            "trade_data_not_ready",
-            "extended_wait_pullback",
-            "invalidation_from_htf",
-            "setup_pullback_active",
-            "trigger_not_confirmed",
-            "execution_trade_data_not_ready"
-          ],
-          "checks": {
-            "flow_15m": false,
-            "flow_1h": false,
-            "flow_1m": false,
-            "flow_5m": false,
-            "history_15m": true,
-            "history_1H": true,
-            "history_1m": true,
-            "history_4H": true,
-            "history_5m": true,
-            "history_D": true,
-            "linear_capability": true,
-            "linear_transport": true,
-            "oi_15m": false,
-            "oi_1h": false,
-            "oi_1m": true,
-            "oi_5m": false,
-            "orderbook_ready": true,
-            "realtime_price": true,
-            "ticker_fresh": true
-          },
-          "decision_ready": false,
-          "execution_mode": "spot_perp",
-          "execution_ready": false,
-          "flow_ready": false,
-          "flow_windows": [],
-          "missing": [
-            "flow_1m",
-            "flow_5m",
-            "flow_15m",
-            "flow_1h",
-            "oi_5m",
-            "oi_15m",
-            "oi_1h"
-          ],
-          "oi_ready": true,
-          "oi_windows": [
-            "1m"
-          ],
-          "realtime_ready": true,
-          "spot_available": true,
-          "spot_capability_resolved": true,
-          "spot_capability_state": "active",
-          "trade_data_ready": false,
-          "version": "data_quality_v1"
-        },
-        "direction": {
-          "direction": "bearish",
-          "frames": {
-            "15": {
-              "direction": "bearish",
-              "live_mode": "price_discovery_up",
-              "price_gap_atr": 7.7012,
-              "raw_confluence": "bullish",
-              "ready": true,
-              "structure": "downtrend",
-              "transition": true
-            },
-            "60": {
-              "direction": "bearish",
-              "live_mode": "inside_structure",
-              "price_gap_atr": 0.0,
-              "raw_confluence": "neutral",
-              "ready": true,
-              "structure": "downtrend",
-              "transition": false
-            }
-          },
-          "score": -1.0,
-          "state": "confirmed"
-        },
-        "engine_version": "scan_plus_v3_10_data_quality",
-        "manipulation": {
-          "direction": "NONE",
-          "execution": "NONE",
-          "price": 0.8305,
-          "reasons": [],
-          "score": 0,
-          "signal": "NONE",
-          "status": "NO_EVENT"
-        },
-        "price": 0.8305,
-        "retryable": true,
-        "setup": {
-          "entry": null,
-          "entry_zone": null,
-          "failed_requirements": [
-            "trade_data_ready",
-            "trade_scale_valid",
-            "setup_aligned",
-            "trigger_confirmed"
-          ],
-          "limit_plan": {
-            "eligible": false,
-            "reason": null,
-            "state": "NO_LIMIT_PLAN"
-          },
-          "opportunity_state": "WATCH",
-          "risk_reward": 2.255,
-          "side": null,
-          "stop": null,
-          "targets": {
-            "minimum_rr": 2.0,
-            "rr_basis": "scan_price_to_stop_and_t1",
-            "rule": "nearest_valid_scenario_target_same_intraday_scale_first",
-            "t1": 0.7752,
-            "t1_source": "liquidity_objective_1",
-            "t1_timeframe": "1",
-            "t2": 0.7601,
-            "t2_source": "previous_swing_15",
-            "t2_timeframe": "15"
-          }
-        },
-        "setup_state": "pullback",
-        "status": {
-          "driver_ready": false,
-          "execution_ready": true,
-          "flow_ready": false,
-          "historical_ready": true,
-          "linear_connected": true,
-          "spot_connected": true,
-          "trade_data_ready": false
-        },
-        "symbol": "APTUSDT",
-        "trade_state": "DATA_BLOCK",
-        "trade_style": "mixed_context",
-        "trigger_state": "opposed"
-      }
-    ],
-    "selected_symbols": [
-      "ETHUSDT",
-      "XRPUSDT",
-      "TAOUSDT",
-      "ZROUSDT",
-      "NEARUSDT",
-      "APTUSDT"
-    ],
+    "scan_plus_count": 0,
+    "scan_plus_results": [],
+    "selected_symbols": [],
     "warmup_max_seconds": 120,
-    "warmup_readiness": {
-      "APTUSDT": {
-        "driver_ready": false,
-        "execution_mode": "spot_perp",
-        "flow_ready": false,
-        "ready": true,
-        "symbol": "APTUSDT",
-        "trade_data_ready": false,
-        "warmed_flow_windows": []
-      },
-      "ETHUSDT": {
-        "driver_ready": false,
-        "execution_mode": "spot_perp",
-        "flow_ready": false,
-        "ready": true,
-        "symbol": "ETHUSDT",
-        "trade_data_ready": false,
-        "warmed_flow_windows": []
-      },
-      "NEARUSDT": {
-        "driver_ready": false,
-        "execution_mode": "spot_perp",
-        "flow_ready": false,
-        "ready": true,
-        "symbol": "NEARUSDT",
-        "trade_data_ready": false,
-        "warmed_flow_windows": []
-      },
-      "TAOUSDT": {
-        "driver_ready": false,
-        "execution_mode": "perp_only",
-        "flow_ready": false,
-        "ready": true,
-        "symbol": "TAOUSDT",
-        "trade_data_ready": false,
-        "warmed_flow_windows": []
-      },
-      "XRPUSDT": {
-        "driver_ready": false,
-        "execution_mode": "spot_perp",
-        "flow_ready": false,
-        "ready": true,
-        "symbol": "XRPUSDT",
-        "trade_data_ready": false,
-        "warmed_flow_windows": []
-      },
-      "ZROUSDT": {
-        "driver_ready": false,
-        "execution_mode": "spot_perp",
-        "flow_ready": false,
-        "ready": true,
-        "symbol": "ZROUSDT",
-        "trade_data_ready": false,
-        "warmed_flow_windows": []
-      }
-    },
-    "warmup_ready_count": 0,
-    "warmup_seconds": 120.01,
+    "warmup_readiness": {},
+    "warmup_ready_count": null,
+    "warmup_seconds": 0.0,
     "warmup_target_seconds": 40,
-    "warmup_timed_out": true,
-    "warmup_total_count": 6
+    "warmup_timed_out": false,
+    "warmup_total_count": null
   },
-  "started_at": 1790960426.7994032,
+  "started_at": 1790970107.9093957,
   "state": "DONE",
-  "updated_at": 1790960642.0857222,
+  "updated_at": 1790970111.2954118,
   "bridge_version": "v2"
 }
