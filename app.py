@@ -5,6 +5,7 @@ from flask import Flask, jsonify, request
 from collector import collector
 from spot_collector import spot_collector
 from dynamic_collector import (dynamic_manager, run_bybit_prescan_ws_probe, run_prescan, run_scan_auto, run_scan_single, run_scan_batch, start_scan_auto_job, start_scan_batch_job, get_scan_job)
+from multi_market_adapters import ExternalMarketAdapter, external_universe
 
 app = Flask(__name__)
 
@@ -95,6 +96,24 @@ def market_dynamic(symbol):
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
+
+@app.get("/scan-markets")
+def scan_markets():
+    """Analysis-only scan for Forex, commodities and traditional equities."""
+    try:
+        adapter=ExternalMarketAdapter()
+        requested=request.args.get("markets","forex,commodities,stocks").split(",")
+        universe=external_universe()
+        out={"adapter_version":adapter.VERSION,"provider":"twelve_data","configured":adapter.configured,"markets":{}}
+        for market in requested:
+            market=market.strip().lower()
+            if market not in universe: continue
+            symbols=universe[market]
+            out["markets"][market]=[adapter.scan(market,s) for s in symbols] if adapter.configured else {
+                "status":"DATA_BLOCK","reason":"TWELVE_DATA_API_KEY_not_configured","symbols":symbols}
+        return jsonify(out)
+    except Exception as exc:
+        return jsonify({"status":"FAIL","error":f"{type(exc).__name__}:{exc}"}),500
 
 @app.get("/scan-auto")
 def scan_auto():
