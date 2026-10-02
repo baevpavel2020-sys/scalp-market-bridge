@@ -25,7 +25,7 @@ MARKET_BLOCK_POLICY = {
         "priority": ("structure","session","gap","liquidity","smart_money","volume","elliott","fibonacci","harmonics","divergence","momentum"),
         "enabled": ("technical","structure","fibonacci","elliott","harmonics","divergence","liquidity","smart_money","session","gap","volume"),
         "flow": False, "manipulation": False, "sessions": True,
-        "event_priority": ("gap","failed_breakout","failed_breakdown","session_failed_high","session_failed_low"),
+        "event_priority": ("gap","daily_failed_high","daily_failed_low","failed_breakout","failed_breakdown","session_failed_high","session_failed_low"),
     },
     "forex": {
         "priority": ("structure","session","liquidity","smart_money","elliott","fibonacci","volume","harmonics","divergence","momentum"),
