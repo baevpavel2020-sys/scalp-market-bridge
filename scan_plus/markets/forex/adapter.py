@@ -11,6 +11,7 @@ from scan_plus.priority_engine import resolve_priorities
 from scan_plus.core.analytical_engine import AnalyticalEngine, CanonicalPricePatternBackend
 from scan_plus.core.sessions import active_sessions, session_overlap
 from scan_plus.core.session_levels import session_high_low
+from scan_plus.core.data_contract import normalize_candles
 from scan_plus.markets.forex.yahoo import YahooFXLoader
 from scan_plus.markets.forex.session_liquidity import session_interaction, session_sweep
 from scan_plus.markets.forex.candidate import build_forex_candidate
@@ -82,11 +83,12 @@ class ForexMarketAdapter(MarketAdapter):
         symbol=str(symbol).upper().replace("/","")
         data=self._load(symbol,kwargs.get("interval","60"))
         rows=self._normalize_rows(data.get("candles"))
+        rows, quality=normalize_candles(rows, symbol=symbol, interval=data.get("interval", kwargs.get("interval","60")))
         return {
             "market":self.market,"symbol":symbol,"status":"OK",
             "profile":self.profile(symbol),
             "source":data.get("source"),"interval":data.get("interval"),
-            "bars":len(rows),"session":self._session_context(rows),
+            "bars":len(rows),"data_quality":quality,"session":self._session_context(rows),
             "provider_error":data.get("error"),
         }
 
@@ -97,9 +99,11 @@ class ForexMarketAdapter(MarketAdapter):
         for label,interval in (("5m","5"),("15m","15"),("1h","60"),("4h","240")):
             data=self._load(symbol,interval)
             rows=self._normalize_rows(data.get("candles"))
+            rows, quality=normalize_candles(rows, symbol=symbol, interval=data.get("interval",interval))
             sessions=self._session_context(rows)
             frames[label]={
                 "bars":len(rows),
+                "data_quality":quality,
                 "provider_error":data.get("error"),
                 "analysis":self.engine.analyze_profiled(rows,profile.get("scan") or []),
                 "sessions":sessions,
