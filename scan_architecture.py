@@ -11,6 +11,49 @@ MARKETS=("crypto","stocks","forex","commodities")
 OPPORTUNITY_STATES=("MARKET_READY","LIMIT_READY","WATCH")
 MIN_RR=2.0
 
+# Market-specific analytical priorities. These are routing/weighting contracts,
+# not independent strategies: upstream structure remains authoritative and
+# downstream blocks may only add evidence or execution context.
+MARKET_BLOCK_POLICY = {
+    "crypto": {
+        "priority": ("manipulation","structure","liquidity","smart_money","flow","elliott","fibonacci","harmonics","divergence","momentum"),
+        "enabled": ("technical","structure","fibonacci","elliott","harmonics","divergence","liquidity","smart_money","flow","manipulation"),
+        "flow": True, "manipulation": True, "sessions": False,
+        "event_priority": ("pump_exhaustion","liquidity_grab","failed_breakout","failed_breakdown"),
+    },
+    "stocks": {
+        "priority": ("structure","session","gap","liquidity","smart_money","volume","elliott","fibonacci","harmonics","divergence","momentum"),
+        "enabled": ("technical","structure","fibonacci","elliott","harmonics","divergence","liquidity","smart_money","session","gap","volume"),
+        "flow": False, "manipulation": False, "sessions": True,
+        "event_priority": ("gap","failed_breakout","failed_breakdown","session_failed_high","session_failed_low"),
+    },
+    "forex": {
+        "priority": ("structure","session","liquidity","smart_money","elliott","fibonacci","volume","harmonics","divergence","momentum"),
+        "enabled": ("technical","structure","fibonacci","elliott","harmonics","divergence","liquidity","smart_money","session","volume"),
+        "flow": False, "manipulation": False, "sessions": True,
+        "event_priority": ("session_failed_high","session_failed_low","failed_breakout","failed_breakdown"),
+    },
+    "commodities": {
+        "priority": ("structure","session","liquidity","volume","elliott","fibonacci","harmonics","divergence","momentum"),
+        "enabled": ("technical","structure","fibonacci","elliott","harmonics","divergence","liquidity","session","volume"),
+        "flow": False, "manipulation": False, "sessions": True,
+        "event_priority": ("failed_breakout","failed_breakdown","range_expansion"),
+    },
+}
+
+def market_block_policy(market):
+    key=str(market or "crypto").lower()
+    base=MARKET_BLOCK_POLICY.get(key, MARKET_BLOCK_POLICY["crypto"])
+    return {
+        "market": key,
+        "priority": list(base["priority"]),
+        "enabled": list(base["enabled"]),
+        "flow": bool(base["flow"]),
+        "manipulation": bool(base["manipulation"]),
+        "sessions": bool(base["sessions"]),
+        "event_priority": list(base["event_priority"]),
+    }
+
 def opportunity_state(setup):
     setup=setup or {}
     if setup.get("status")=="SETUP":
