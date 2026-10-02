@@ -23,6 +23,9 @@ class StocksMarketAdapter(MarketAdapter):
     def profile(self, symbol=None):
         return get_profile(self.market, symbol)
 
+    def default_symbols(self, limit=15):
+        return [str(s).upper() for s in self.loader.default_symbols(limit=limit)]
+
     def _underlying(self, symbol):
         if self.underlying_provider is None:
             return None
