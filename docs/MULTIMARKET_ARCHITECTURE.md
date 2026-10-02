@@ -590,3 +590,42 @@ New regression coverage:
 
 Current branch head: `b643894c0a0b342787532013db63a1059bd6f632`.
 GitHub reports no commit status checks for this branch head, so no green CI result is claimed.
+
+
+## Cross-market isolation audit — 2026-10-02
+
+Audit scope: `Скан` command parsing → market/symbol resolution → native universe expansion → concurrent adapter scan → adapter result contract → cross-market normalization → MTF gate → Operator View.
+
+### Isolation invariants now enforced
+1. A registry request is bound to exactly one market namespace.
+2. An adapter result must return the same top-level market as the request.
+3. An adapter result must not silently return a different symbol than requested.
+4. A market-symbol mismatch in an explicitly scoped command is surfaced as DATA_ERROR instead of being silently dropped.
+5. An unresolved symbol in a multi-market command is surfaced as an ambiguity error instead of being routed arbitrarily.
+6. NO_UNIVERSE is treated as a data/error condition, never as a WATCH candidate.
+7. Aggregation checks wrapper market provenance against payload market before normalizing.
+8. Operator View remains presentation-only and receives only normalized, provenance-checked results.
+
+### Market-by-market findings
+- Crypto: mutable event/baseline state is owned by the Crypto adapter and keyed by symbol; no shared state is exposed to the other adapters.
+- Stocks: xStock/underlying/session/gap evidence remains inside the Stocks adapter; no crypto OI/funding or FX session state is imported.
+- Forex: session liquidity is generated from the Forex adapter's own candles and timezone schedule; no stock gap or crypto derivative evidence enters its candidate engine.
+- Commodities: provider context is explicitly scoped to the commodity instrument/group; missing macro/inventory/event context remains unknown.
+- Shared analytical core: the reusable structure/Fibonacci/Elliott/harmonic backend is market-neutral and receives only the rows supplied by the calling adapter. Default registry construction creates separate adapter instances and separate analytical-engine instances.
+
+### Important non-bug design point
+The aggregator intentionally places all markets into one Operator View, but it does not combine their directions or evidence into a universal trade score. Its rank is an attention/presentation ordering only.
+
+### Regression coverage added
+`tests/test_cross_market_isolation.py` covers:
+- four-market default routing;
+- explicit market/symbol mismatch;
+- ambiguous multi-market symbols;
+- adapter market-contract violation;
+- adapter symbol-contract violation;
+- NO_UNIVERSE error preservation;
+- payload/wrapper market provenance mismatch;
+- independent four-market Operator View output.
+
+### Verification limitation
+The environment could not clone the GitHub repository directly because outbound DNS/network access was unavailable. GitHub currently reports no status checks for the branch head, so this audit does not claim a green CI run; the changes were reviewed against the repository source and regression tests were added for the discovered isolation boundaries.
