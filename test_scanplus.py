@@ -401,7 +401,7 @@ class TestScanPlus(unittest.TestCase):
         self.assertIsNone(err)
         self.assertEqual(len(clean), 120)
         stale = [dict(x) for x in good]
-        stale_base = int(time.time() * 1000) - (3 * 60 * 60 * 1000)
+        stale_base = int(time.time() * 1000) - (3 * 60 * 60 * 1000) - (120 * 300_000)
         for i, row in enumerate(stale):
             row["start"] = stale_base + i * 300_000
             row["end"] = row["start"] + 299_999
