@@ -17,7 +17,16 @@ def session_high_low(candles, market="forex", session="london", before_timestamp
     tz=ZoneInfo(tz_name)
     prepared=[]
     cutoff=None
-    if before_timestamp_ms is not None:
+    if before_timestamp_ms is None:
+        timestamps=[]
+        for candle in candles or []:
+            try:
+                timestamps.append(_to_utc(candle.get("timestamp_ms",candle.get("timestamp"))))
+            except (TypeError,ValueError,OverflowError,OSError):
+                continue
+        if timestamps:
+            cutoff=max(timestamps)
+    else:
         try:
             cutoff=_to_utc(before_timestamp_ms)
         except (TypeError,ValueError,OverflowError,OSError):
