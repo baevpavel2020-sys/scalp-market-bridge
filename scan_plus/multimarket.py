@@ -125,9 +125,15 @@ class MultiMarketOrchestrator:
             else:
                 expanded.append((key,symbol))
 
+        if not expanded:
+            return results
+        if len(expanded) == 1:
+            market, symbol = expanded[0]
+            return [self.registry.safe_scan(market, symbol)]
+
         # Provider calls are independent per instrument. Parallelize them with a
         # bounded pool to reduce wall-clock time without creating unbounded load.
-        workers=min(8,max(1,len(expanded)))
+        workers=min(8,len(expanded))
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures={pool.submit(self.registry.safe_scan,market,symbol):(market,symbol)
                       for market,symbol in expanded}
