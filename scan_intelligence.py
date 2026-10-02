@@ -51,9 +51,16 @@ def classify_regime_from_analysis(timeframes):
     }
 
 
+def _closed_rows(rows):
+    return [
+        row for row in rows or []
+        if row.get("confirm", True) is not False
+    ]
+
+
 def classify_regime(rows):
     rows = [
-        row for row in rows or []
+        row for row in _closed_rows(rows)
         if all(_num(row.get(key)) is not None for key in ("open", "high", "low", "close"))
     ]
     if len(rows) < 30:
@@ -117,7 +124,7 @@ def performance_snapshot(frames, lookbacks=("5m", "15m", "1h", "4h")):
     out = {}
     aliases = {"5m": "5", "15m": "15", "1h": "60", "4h": "240"}
     for tf in lookbacks:
-        rows = frames.get(tf) or frames.get(aliases.get(tf, "")) or []
+        rows = _closed_rows(frames.get(tf) or frames.get(aliases.get(tf, "")) or [])
         if len(rows) < PERFORMANCE_BARS.get(tf, 2):
             continue
         bars = PERFORMANCE_BARS.get(tf, 2)
@@ -179,6 +186,8 @@ def _event_fingerprint(setup):
         or (targets.get("t1") if isinstance(targets, dict) else None)
     )
     payload = {
+        "market": setup.get("market"),
+        "symbol": setup.get("symbol"),
         "state": setup.get("opportunity_state"),
         "direction": setup.get("direction") or setup.get("side"),
         "entry": limit_plan.get("entry") or setup.get("entry"),
@@ -308,7 +317,11 @@ class OutcomeLogger:
             "event_basis": setup.get("event_basis") or [],
             "features": scan.get("mtf_matrix") or {},
         }
-        fingerprint = _event_fingerprint(setup)
+        fingerprint = _event_fingerprint({
+            **setup,
+            "market": scan.get("market", "crypto"),
+            "symbol": scan.get("symbol"),
+        })
         event["fingerprint"] = fingerprint
         with self.lock:
             if fingerprint in self._seen:
@@ -426,7 +439,7 @@ def _resolve_after_fill(direction, candle, stop, target):
 
 def backtest_event_setups(market, symbol, rows, detect_fn, plan_fn, max_checkpoints=100):
     """No-lookahead backtest with explicit limit-fill simulation."""
-    rows = list(rows or [])
+    rows = _closed_rows(rows)
     results = []
     if len(rows) < 31:
         return {
