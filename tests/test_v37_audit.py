@@ -56,3 +56,13 @@ class V37AuditTests(unittest.TestCase):
 
 if __name__=="__main__":
     unittest.main()
+
+    
+class AppBootRegressionTests(unittest.TestCase):
+    def test_app_does_not_start_collectors_at_module_import(self):
+        from pathlib import Path
+        source=Path("app.py").read_text(encoding="utf-8")
+        self.assertNotIn("\ncollector.start()\n", source)
+        self.assertNotIn("\nspot_collector.start()\n", source)
+        self.assertIn("collector.ensure_running()", source)
+        self.assertIn("spot_collector.ensure_running()", source)
