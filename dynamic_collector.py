@@ -109,6 +109,8 @@ class MarketStream:
         # timestamp_ms, open_interest
         self.oi_samples = deque()
 
+        self.liquidation_events = deque()
+
         self.bids = {}
         self.asks = {}
 
@@ -289,6 +291,7 @@ class MarketStream:
 
         topics = [
             f"publicTrade.{self.symbol}",
+            f"allLiquidation.{self.symbol}",
             f"orderbook.50.{self.symbol}",
             f"tickers.{self.symbol}",
 
@@ -2384,6 +2387,10 @@ class MarketStream:
                 )
             )
 
+        elif topic.startswith("allLiquidation."):
+
+            self._handle_liquidations(message.get("data", []))
+
         elif topic.startswith("orderbook."):
 
             self._handle_orderbook(
@@ -2759,6 +2766,47 @@ class MarketStream:
         ):
 
             self.oi_samples.popleft()
+
+        while self.liquidation_events and self.liquidation_events[0][0] < cutoff:
+            self.liquidation_events.popleft()
+
+    def _handle_liquidations(self, rows):
+        if self.market != "linear" or not isinstance(rows, list):
+            return
+        now_ms=int(time.time()*1000)
+        with self.lock:
+            for item in rows:
+                try:
+                    ts=int(item.get("T") or item.get("time") or now_ms)
+                    side=str(item.get("S") or item.get("side") or "").title()
+                    price=float(item.get("p") or item.get("price"))
+                    qty=float(item.get("v") or item.get("qty"))
+                except (TypeError,ValueError):
+                    continue
+                if side not in ("Buy","Sell") or price <= 0 or qty <= 0:
+                    continue
+                self.liquidation_events.append((ts,side,price,qty))
+            self._cleanup(now_ms)
+
+    def _liquidation_metrics(self, now_ms):
+        if self.market != "linear":
+            return None
+        result={}
+        for name,duration in WINDOWS.items():
+            cutoff=now_ms-duration
+            rows=[x for x in self.liquidation_events if x[0]>=cutoff]
+            buy=sum(x[3] for x in rows if x[1]=="Buy")
+            sell=sum(x[3] for x in rows if x[1]=="Sell")
+            result[name]={
+                "event_count":len(rows),
+                "buy_liquidation_volume":round(buy,8),
+                "sell_liquidation_volume":round(sell,8),
+                "short_liquidation_volume":round(buy,8),
+                "long_liquidation_volume":round(sell,8),
+                "total_volume":round(buy+sell,8),
+                "ready":bool(rows),
+            }
+        return result
 
     # ========================================================
     # FLOW METRICS
@@ -3266,6 +3314,11 @@ class MarketStream:
 
                 "open_interest":
                     self._oi_metrics(
+                        now_ms
+                    ),
+
+                "liquidations":
+                    self._liquidation_metrics(
                         now_ms
                     ),
 
