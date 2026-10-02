@@ -242,6 +242,20 @@ def scan_live():
         return jsonify({"status":"FAIL","error":f"{type(exc).__name__}:{exc}"}),500
 
 
+@app.get("/scan")
+def scan_command():
+    """Canonical user-facing Scan command: Prescan -> eligible candidates -> Scan+.
+    Non-blocking: returns a job handle; poll /scan-job/<job_id> for the final result.
+    """
+    try:
+        top_n = max(1, min(int(request.args.get("top", "6")), 6))
+        shortlist = max(top_n, min(int(request.args.get("shortlist", "30")), 100))
+        return jsonify(start_scan_auto_job(top_n=top_n, shortlist=shortlist)), 202
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"status":"FAIL","error":f"{type(exc).__name__}:{exc}"}),500
+
 @app.get("/scan-auto")
 def scan_auto():
     """Compatibility route: now STARTS a background job instead of blocking."""
