@@ -10,8 +10,10 @@ from multi_market_adapters import ExternalMarketAdapter, external_universe, Mark
 
 app = Flask(__name__)
 
-collector.start()
-spot_collector.start()
+
+def ensure_market_collectors():
+    collector.ensure_running()
+    spot_collector.ensure_running()
 
 BYBIT_URLS = [
     "https://api.bybit.com",
@@ -87,11 +89,13 @@ def prescan_manual():
 
 @app.get("/market/BTCUSDT")
 def market_btcusdt():
+    ensure_market_collectors()
     return jsonify(collector.get_snapshot())
 
 
 @app.get("/market/BTCUSDT/spot")
 def market_btcusdt_spot():
+    ensure_market_collectors()
     return jsonify(spot_collector.get_snapshot())
 
 
