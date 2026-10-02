@@ -3276,6 +3276,12 @@ class MarketStream:
             }
 
 
+    @staticmethod
+    def _live_structure_context_v33(linear, execution):
+        """Backward-compatible facade; authority remains DynamicMarketManager."""
+        return DynamicMarketManager._live_structure_context_v33(linear, execution)
+
+
 # ============================================================
 # DYNAMIC MANAGER
 # ============================================================
