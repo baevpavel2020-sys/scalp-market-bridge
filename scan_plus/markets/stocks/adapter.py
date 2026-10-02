@@ -72,7 +72,7 @@ class StocksMarketAdapter(MarketAdapter):
         for label, interval in (("5m","5"),("15m","15"),("1h","60"),("4h","240")):
             data = self.loader.klines(symbol, interval=interval, limit=240)
             rows = data["candles"]
-            rows, quality = normalize_candles(rows, symbol=symbol, interval=interval)
+            rows, quality = normalize_candles(rows, symbol=symbol, interval=interval, closed_only=True)
             frame = {"bars": len(rows),
                      "data_quality": quality,
                      "latest_timestamp_ms": max(
