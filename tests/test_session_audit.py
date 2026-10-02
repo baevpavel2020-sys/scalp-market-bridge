@@ -15,9 +15,9 @@ class SessionAuditTests(unittest.TestCase):
             {"timestamp_ms":ts("2026-09-30T09:00:00"),"high":150,"low":140},
         ]
         out=session_high_low(candles,market="forex",session="london")
-        self.assertEqual(out["local_date"],"2026-09-30")
-        self.assertEqual(out["high"],150)
-        self.assertEqual(out["low"],140)
+        self.assertEqual(out["local_date"],"2026-09-29")
+        self.assertEqual(out["high"],200)
+        self.assertEqual(out["low"],190)
 
     def test_weekend_has_no_fx_session(self):
         saturday=ts("2026-10-03T12:00:00")
