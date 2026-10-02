@@ -673,3 +673,18 @@ CI/runtime limitation remains: GitHub exposes no status checks for the current b
 ## Hostile-input audit
 
 Additional hardening: commodity full scans now exclude forming candles; duplicate explicit and native-universe symbols are deduplicated before concurrent execution; hostile-input regression tests cover empty frames, duplicate symbols and cross-market symbol provenance. The hostile-input invariants are malformed OHLC rejected, forming candles excluded, incomplete 4H rejected, unknown market/symbol/status rejected, DATA_ERROR cannot become WATCH, MTF disagreement is not reversal, empty frames cannot become CANDIDATE, and Operator View cannot rewrite status. No green CI claim is made because the branch exposes no status checks in the current environment.
+
+
+## V3.7 performance/simplicity audit
+
+Completed a focused audit for duplicated work, unnecessary state mutation and nondeterministic output.
+
+Fixed:
+- Removed an unused routing-layer import.
+- Deduplicated explicit and native-universe instruments before provider execution.
+- Kept provider scans concurrent with a bounded worker pool, while restoring deterministic request-order results after futures complete.
+- Restored the structural MTF reversal gate: disagreement alone is not reversal; CHOCH/MSS on 4H/1H is required.
+- MTF transition now reuses already validated frame states instead of re-parsing frames.
+- Added regression coverage for the reversal gate and deterministic parallel result ordering.
+
+The optimization rule remains: no performance optimization may weaken provenance, closed-candle, MTF or candidate-gating invariants.
