@@ -3,7 +3,6 @@
 This layer intentionally knows nothing about Elliott/Fibo/order flow internals.
 It only resolves user intent and invokes independent market adapters.
 """
-import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from scan_plus.market_registry import MarketRegistry
@@ -132,14 +131,18 @@ class MultiMarketOrchestrator:
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures={pool.submit(self.registry.safe_scan,market,symbol):(market,symbol)
                       for market,symbol in expanded}
+            completed={}
             for future in as_completed(futures):
                 market,symbol=futures[future]
+                key=(market,symbol)
                 try:
-                    results.append(future.result())
+                    completed[key]=future.result()
                 except Exception as exc:
-                    results.append({"status":"DATA_ERROR","market":market,"symbol":symbol,
-                                    "error":f"{type(exc).__name__}: {exc}"})
-        return results
+                    completed[key]={"status":"DATA_ERROR","market":market,"symbol":symbol,
+                                    "error":f"{type(exc).__name__}: {exc}"}
+        # Preserve request order after parallel execution. This makes logs,
+        # snapshots and regression tests deterministic without sacrificing latency.
+        return [completed[(market,symbol)] for market,symbol in expanded if (market,symbol) in completed]
 
     def scan(self, command):
         parsed=parse_scan_command(command)
