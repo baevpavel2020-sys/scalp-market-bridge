@@ -387,7 +387,7 @@ class TestScanPlus(unittest.TestCase):
     def test_stage5_provider_rows_reject_nan_and_stale_data(self):
         from dynamic_collector import OnDemandPreScanService
         import time
-        base = int(time.time() * 1000) - 900_000
+        base = int(time.time() * 1000) - (120 * 300_000) - 300_000
         good = [{
             "start": base + i * 300_000,
             "end": base + i * 300_000 + 299_999,
