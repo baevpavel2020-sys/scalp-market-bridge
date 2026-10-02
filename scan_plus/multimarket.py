@@ -19,6 +19,7 @@ ALIASES = {
 }
 
 DEFAULT_MARKETS = ("crypto", "stocks", "forex", "commodities")
+DEFAULT_UNIVERSE_LIMITS = {"crypto":30,"stocks":15,"forex":9,"commodities":5}
 
 
 def parse_scan_command(command):
@@ -72,12 +73,37 @@ class MultiMarketOrchestrator:
         return requests
 
     def scan_many(self, requests):
-        """Run independent requests; one adapter error never aborts the batch."""
+        """Expand market-native universes and run isolated full scans."""
         results = []
         for market, symbol in requests:
+            key=str(market).lower()
             if symbol is None:
-                results.append({"status":"PRESCAN_ONLY","market":market,
-                                "reason":"symbol_required_for_full_scan"})
-                continue
-            results.append(self.registry.safe_scan(market, symbol))
+                try:
+                    adapter=self.registry.get(key)
+                    symbols=adapter.default_symbols(DEFAULT_UNIVERSE_LIMITS.get(key,15))
+                except Exception as exc:
+                    results.append({"status":"DATA_ERROR","market":key,
+                                    "error":f"{type(exc).__name__}: {exc}"})
+                    continue
+                if not symbols:
+                    results.append({"status":"NO_UNIVERSE","market":key,
+                                    "reason":"market_native_universe_unavailable"})
+                    continue
+                for item in symbols:
+                    results.append(self.registry.safe_scan(key,item))
+            else:
+                results.append(self.registry.safe_scan(key,symbol))
         return results
+
+    def scan(self, command):
+        parsed=parse_scan_command(command)
+        if not parsed.get("markets") and not parsed.get("symbols"):
+            return {"status":"INVALID_COMMAND","reason":"no_market_or_symbol"}
+        requests=self.build_requests(parsed)
+        return {
+            "status":"OK",
+            "command":str(command),
+            "parsed":parsed,
+            "requests":requests,
+            "results":self.scan_many(requests),
+        }
