@@ -20,14 +20,21 @@ def _state(frame):
     structure_state=str(structure.get("state") or structure.get("trend") or "").lower()
     raw=str(analysis.get("raw_confluence") or frame.get("raw_confluence") or "").lower()
     direction=str(analysis.get("direction") or frame.get("direction") or "").lower()
-    if structure_state in BULL or direction in BULL:
+
+    # Explicit structural transition/neutral state has priority over derived direction
+    # and raw confluence. Structure is the authoritative state at its own timeframe.
+    if structure_state in TRANSITION or structure_state in ("range","range_or_transition"):
+        return "transition"
+    if structure_state in BULL:
         return "bullish"
-    if structure_state in BEAR or direction in BEAR:
+    if structure_state in BEAR:
         return "bearish"
-    if structure_state in TRANSITION or direction in TRANSITION:
+    if direction in TRANSITION or direction in ("neutral","range","sideways"):
         return "transition"
-    if direction in ("neutral","range","sideways") or structure_state in ("range","range_or_transition"):
-        return "transition"
+    if direction in BULL:
+        return "bullish"
+    if direction in BEAR:
+        return "bearish"
     if raw in BULL:
         return "bullish"
     if raw in BEAR:
