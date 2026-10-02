@@ -84,7 +84,7 @@ def data_quality(frames, required=("D","4h","1h","15m","5m"), min_closed=50):
 
 def dedupe_events(events):
     """Collapse multiple names describing one causal event into one event record."""
-    priority={"pump_exhaustion":5,"failed_breakout":4,"failed_breakdown":4,
+    priority={"pump_exhaustion":5,"failed_breakout":4,"failed_breakdown":4,"daily_failed_high":4,"daily_failed_low":4,
               "liquidity_sweep":3,"range_expansion":2,"gap":2,"volume_expansion":1}
     groups={}
     for event in events or []:
