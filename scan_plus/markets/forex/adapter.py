@@ -96,6 +96,18 @@ class ForexMarketAdapter(MarketAdapter):
         symbol=str(symbol).upper().replace("/","")
         profile=self.profile(symbol)
         frames={}
+        daily=self._load(symbol,"d")
+        daily_rows=self._normalize_rows(daily.get("candles"))
+        daily_rows,daily_quality=normalize_candles(
+            daily_rows,symbol=symbol,interval="d",closed_only=True
+        )
+        frames["1d"]={
+            "bars":len(daily_rows),
+            "data_quality":daily_quality,
+            "provider_error":daily.get("error"),
+            "analysis":self.engine.analyze_profiled(daily_rows,profile.get("scan") or []),
+            "sessions":self._session_context(daily_rows),
+        }
         for label,interval in (("5m","5"),("15m","15"),("1h","60"),("4h","240")):
             data=self._load(symbol,interval)
             rows=self._normalize_rows(data.get("candles"))
