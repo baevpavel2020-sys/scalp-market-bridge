@@ -78,7 +78,7 @@ class CommoditiesMarketAdapter(MarketAdapter):
         for label,interval in (("5m","5"),("15m","15"),("1h","60"),("4h","240")):
             data=self._load(symbol,interval)
             rows=self._normalize(data.get("candles"))
-            rows, quality=normalize_candles(rows, symbol=symbol, interval=interval)
+            rows, quality=normalize_candles(rows, symbol=symbol, interval=interval, closed_only=True)
             frames[label]={
                 "bars":len(rows),
                 "data_quality":quality,
