@@ -28,5 +28,11 @@ class TestScanPlus(unittest.TestCase):
             self.assertEqual(response.status_code,200)
             self.assertEqual(response.get_json()["status"],"healthy")
 
+    def test_collectors_are_lazy_started(self):
+        with open("app.py", "r", encoding="utf-8") as fh:
+            source = fh.read()
+        self.assertNotIn("\ncollector.start()\n", source)
+        self.assertNotIn("\nspot_collector.start()\n", source)
+
 if __name__=="__main__":
     unittest.main()
