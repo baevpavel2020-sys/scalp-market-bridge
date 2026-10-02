@@ -1,8 +1,10 @@
 name: Scan+ Control
 
 on:
-  issue_comment:
-    types: [created]
+  push:
+    branches: [main]
+    paths:
+      - runtime/scan_trigger.json
 
 concurrency:
   group: scan-plus-production
@@ -11,9 +13,7 @@ concurrency:
 jobs:
   scan:
     if: >-
-      !github.event.issue.pull_request &&
-      github.event.comment.body == 'скан' &&
-      github.event.issue.title == 'SCAN CONTROL'
+true
     runs-on: ubuntu-latest
     permissions:
       contents: read
