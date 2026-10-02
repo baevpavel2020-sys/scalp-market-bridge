@@ -12,6 +12,7 @@ from scan_plus.core.analytical_engine import AnalyticalEngine, CanonicalPricePat
 from scan_plus.markets.commodities.loader import CommodityLoader
 from scan_plus.markets.commodities.context import build_commodity_context
 from scan_plus.markets.commodities.candidate import build_commodity_candidate
+from scan_plus.core.mtf_state import build_mtf_state
 
 
 class CommoditiesMarketAdapter(MarketAdapter):
