@@ -16,8 +16,11 @@ def _state(frame):
     if not isinstance(frame,Mapping):
         return "unknown"
     analysis=frame.get("analysis") if isinstance(frame.get("analysis"),Mapping) else frame
-    structure=analysis.get("structure") if isinstance(analysis.get("structure"),Mapping) else {}
-    structure_state=str(structure.get("state") or structure.get("trend") or "").lower()
+    raw_structure=analysis.get("structure")
+    if isinstance(raw_structure,Mapping):
+        structure_state=str(raw_structure.get("state") or raw_structure.get("trend") or "").lower()
+    else:
+        structure_state=str(raw_structure or analysis.get("structure_state") or "").lower()
     raw=str(analysis.get("raw_confluence") or frame.get("raw_confluence") or "").lower()
     direction=str(analysis.get("direction") or frame.get("direction") or "").lower()
 
