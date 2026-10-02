@@ -4531,10 +4531,11 @@ class DynamicMarketManager:
         """
         analysis = linear.get("analysis") or {}
         windows = execution.get("windows") or {}
+        now = time.time()
 
         def fresh_ticker():
             ts = fnum((linear.get("ticker") or {}).get("updated_at"))
-            return bool(ts is not None and time.time() - ts <= 15.0)
+            return bool(ts is not None and now - ts <= 15.0)
 
         tf_ready = {tf: bool((analysis.get(tf) or {}).get("ready")) for tf in ("D","240","60","15","5","1")}
         flow_ready = {
@@ -4604,7 +4605,7 @@ class DynamicMarketManager:
             "execution_mode": execution.get("execution_mode"),
             "spot_capability_state": spot.get("capability_state", "unknown"),
             "spot_available": spot.get("available"),
-            "block_reasons": list(set(
+            "block_reasons": list(dict.fromkeys(
                 (setup.get("block_reasons") or [])
                 + ([] if analysis_ready else ["analysis_history_not_ready"])
                 + ([] if realtime_ready else ["realtime_market_data_not_ready"])
