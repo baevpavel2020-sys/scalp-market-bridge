@@ -21,6 +21,9 @@ class CommoditiesMarketAdapter(MarketAdapter):
         self.loader=loader if isinstance(loader,CommodityLoader) else CommodityLoader(loader)
         self.engine=engine or AnalyticalEngine(CanonicalPricePatternBackend())
 
+    def default_symbols(self, limit=9):
+        return ["XAUUSD","XAGUSD","WTI","BRENT","COCOA"][:int(limit)]
+
     def profile(self,symbol=None):
         return get_profile(self.market,symbol)
 
