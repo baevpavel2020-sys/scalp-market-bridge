@@ -8,6 +8,7 @@ import json, math, os, threading, time, urllib.parse, urllib.request
 from market_event_engine import detect_events, build_setup_plan
 from scan_architecture import market_block_policy
 from scan_intelligence import enrich_external_result
+from data_contracts import normalize_instrument, frame_quality, provenance
 from datetime import datetime, timezone
 try:
     from zoneinfo import ZoneInfo
@@ -323,7 +324,9 @@ class ExternalMarketAdapter:
             events={tf:detect_events(market,symbol,rows) for tf,rows in event_frames.items()}
             analysis_core=MarketProfileRouter.analyze(market,symbol,frames)
             setup={tf:build_setup_plan(market,symbol,rows,events[tf],analysis_core=analysis_core) for tf,rows in event_frames.items()}
-            result={"market":market,"symbol":symbol,"adapter_version":self.VERSION,"provider":"twelve_data",
+            instrument=normalize_instrument(market,symbol)
+            quality=frame_quality(frames)
+            result={"market":market,"symbol":symbol,"instrument_id":instrument["instrument_id"],"instrument":instrument,"adapter_version":self.VERSION,"provider":"twelve_data",
                     "configured":self.configured,"analysis_ready":ready,"execution_ready":False,
                     "execution_reason":"external_market_execution_connector_not_configured",
                     "frames":frames,"quote":quote,"analysis_core":analysis_core,"events":events,
@@ -331,9 +334,7 @@ class ExternalMarketAdapter:
                     "capabilities":{"ohlcv":True,"realtime_quote":True,"orderbook":False,
                                     "open_interest":False,"funding":False,"spot_cvd":False},
                     "market_profile":market_profile(market),"session_context":session_context(market),
-                    "data_quality":{"state":"READY" if ready else "PARTIAL",
-                                    "missing_timeframes":[tf for tf in ("1D","4h","1h","15m","5m")
-                                                          if len(frames.get(tf,[]))<50]}}
+                    "data_quality":quality,"data_provenance":provenance(frames,"twelve_data")}
             enriched=enrich_external_result(result,market)
             enriched.pop("frames",None)
             if isinstance(enriched.get("analysis_core"),dict):
@@ -389,7 +390,10 @@ class ExternalMarketAdapter:
         events={tf:detect_events(market,symbol,rows) for tf,rows in event_frames.items()}
         analysis_core=MarketProfileRouter.analyze(market,symbol,frames)
         setup={tf:build_setup_plan(market,symbol,rows,events[tf],analysis_core=analysis_core) for tf,rows in event_frames.items()}
-        result={"market":market,"symbol":symbol,"adapter_version":self.VERSION,"provider":provider,"configured":configured,"analysis_ready":ready,"execution_ready":False,"execution_reason":"external_market_execution_connector_not_configured","frames":frames,"quote":quote,"analysis_core":analysis_core,"events":events,"setup_plans":setup,"errors":errors,"capabilities":{"ohlcv":True,"realtime_quote":True,"orderbook":False,"open_interest":False,"funding":False,"spot_cvd":False},"market_profile":market_profile(market),"session_context":session_context(market),"data_quality":{"state":"READY" if ready else "PARTIAL","missing_timeframes":[tf for tf in ("1D","4h","1h","15m","5m") if sum(1 for row in frames.get(tf,[]) if row.get("confirm",True))<50]}}
+        instrument=normalize_instrument(market,symbol)
+        quality=frame_quality(frames)
+        fallback_reason=";".join(sorted(set(errors.values()))) if errors else None
+        result={"market":market,"symbol":symbol,"instrument_id":instrument["instrument_id"],"instrument":instrument,"adapter_version":self.VERSION,"provider":provider,"configured":configured,"analysis_ready":ready,"execution_ready":False,"execution_reason":"external_market_execution_connector_not_configured","frames":frames,"quote":quote,"analysis_core":analysis_core,"events":events,"setup_plans":setup,"errors":errors,"capabilities":{"ohlcv":True,"realtime_quote":True,"orderbook":False,"open_interest":False,"funding":False,"spot_cvd":False},"market_profile":market_profile(market),"session_context":session_context(market),"data_quality":quality,"data_provenance":provenance(frames,provider,fallback_reason)}
         enriched=enrich_external_result(result,market)
         # Raw OHLCV is an internal input, not part of the public unified payload.
         enriched.pop("frames",None)
