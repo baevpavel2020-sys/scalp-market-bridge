@@ -11,7 +11,7 @@ from scan_plus.priority_engine import resolve_priorities
 from scan_plus.core.analytical_engine import AnalyticalEngine, CanonicalPricePatternBackend
 from scan_plus.core.sessions import active_sessions, session_overlap
 from scan_plus.core.session_levels import session_high_low
-from scan_plus.markets.forex.stooq import StooqFXLoader
+from scan_plus.markets.forex.yahoo import YahooFXLoader
 from scan_plus.markets.forex.session_liquidity import session_interaction, session_sweep
 from scan_plus.markets.forex.candidate import build_forex_candidate
 
