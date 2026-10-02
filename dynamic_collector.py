@@ -2484,23 +2484,12 @@ class MarketStream:
         with self.lock:
 
             for row in rows:
-
-                try:
-
-                    start = int(
-                        row["start"]
-                    )
-
-                    end = int(
-                        row["end"]
-                    )
-
-                    candle = self._sanitize_candle(
-                        {**row, "source": "bybit_ws"},
-                        interval,
-                    )
-                    if candle is None:
-                        continue
+                candle = self._sanitize_candle(
+                    {**row, "source": "bybit_ws"},
+                    interval,
+                )
+                if candle is None:
+                    continue
 
                 candles = self.candles[interval]
                 merged = self._merge_candle_rows(list(candles), [candle], interval)
@@ -2511,7 +2500,11 @@ class MarketStream:
                 )
                 self.history_bootstrapped = True
                 self.history_loaded_at = self.history_loaded_at or time.time()
-                self.history_source = "binance_seed+bybit_websocket" if any(self.seed_counts.values()) else "bybit_websocket"
+                self.history_source = (
+                    "binance_seed+bybit_websocket"
+                    if any(self.seed_counts.values())
+                    else "bybit_websocket"
+                )
                 self._cache_dirty = True
 
             self._save_candle_cache()
