@@ -6,10 +6,6 @@ import json
 import math
 import os
 import re
-import urllib.error
-import urllib.request
-import urllib.parse
-import zipfile
 import threading
 import time
 import uuid
@@ -55,17 +51,6 @@ CANDLE_STORE_DIR = os.environ.get(
     "CANDLE_STORE_DIR",
     "/tmp/scalp-market-bridge/candles",
 )
-
-BINANCE_PUBLIC_DATA = "https://data.binance.vision/data/futures/um"
-BINANCE_INTERVALS = {
-    "1": "1m",
-    "5": "5m",
-    "15": "15m",
-    "60": "1h",
-    "240": "4h",
-    "D": "1d",
-}
-BINANCE_SEED_MONTHS = 30
 
 
 class MarketStream:
@@ -134,8 +119,7 @@ class MarketStream:
         # Restore native Bybit cache first. Linear history is then filled
         # from Binance USD-M public archives; live Bybit always wins.
         self._load_candle_cache()
-        if self.market == "linear":
-            self._bootstrap_binance_seed()
+        self._load_historical_seed()
 
         # cumulative delta from current collector session
         self.cvd_session = 0.0
@@ -463,205 +447,76 @@ class MarketStream:
         except Exception as exc:
             self.history_error = f"cache load: {type(exc).__name__}: {exc}"
 
-    @staticmethod
-    def _month_shift(year, month, delta):
-        total = year * 12 + (month - 1) + delta
-        return total // 12, total % 12 + 1
+    def _load_historical_seed(self):
+        """Load an offline seed produced by scripts/seed_builder.py.
 
-    @staticmethod
-    def _binance_row_to_candle(row):
-        if len(row) < 8:
-            return None
-        try:
-            candle = {
-                "start": int(row[0]),
-                "end": int(row[6]),
-                "open": float(row[1]),
-                "high": float(row[2]),
-                "low": float(row[3]),
-                "close": float(row[4]),
-                "volume": float(row[5]),
-                "turnover": float(row[7]),
-                "confirm": True,
-                "source": "binance_seed",
-            }
-        except (TypeError, ValueError):
-            return None
-        if candle["low"] > candle["high"]:
-            return None
-        return candle
-
-    def _download_binance_month(self, interval, year, month):
-        tf = BINANCE_INTERVALS[interval]
-        filename = f"{self.symbol}-{tf}-{year:04d}-{month:02d}.zip"
-        url = (
-            f"{BINANCE_PUBLIC_DATA}/monthly/klines/{self.symbol}/"
-            f"{tf}/{filename}"
+        Production intentionally has no REST history-fetch path.
+        WebSocket remains the live authority and replaces seed candles on overlap.
+        """
+        seed_dir = os.environ.get("CANDLE_SEED_DIR", CANDLE_STORE_DIR)
+        safe_symbol = re.sub(r"[^A-Z0-9]", "", self.symbol)
+        safe_market = re.sub(r"[^a-z]", "", self.market.lower())
+        candidates = (
+            os.path.join(seed_dir, f"{safe_symbol}_{safe_market}_seed.json"),
+            os.path.join(seed_dir, f"{safe_symbol}_{safe_market}.json"),
         )
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": "scalp-market-bridge/1.0", "Accept": "*/*"},
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=20) as response:
-                payload = response.read()
-        except urllib.error.HTTPError as exc:
-            if exc.code == 404:
-                return []
-            raise
-
-        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
-            names = [n for n in archive.namelist() if n.lower().endswith(".csv")]
-            if not names:
-                return []
-            text = archive.read(names[0]).decode("utf-8-sig")
-
-        rows = []
-        for row in csv.reader(io.StringIO(text)):
-            candle = self._binance_row_to_candle(row)
-            if candle is not None:
-                rows.append(candle)
-        return rows
-
-    def _download_binance_day(self, interval, day):
-        tf = BINANCE_INTERVALS[interval]
-        stamp = day.strftime("%Y-%m-%d")
-        filename = f"{self.symbol}-{tf}-{stamp}.zip"
-        url = (
-            f"{BINANCE_PUBLIC_DATA}/daily/klines/{self.symbol}/"
-            f"{tf}/{filename}"
-        )
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": "scalp-market-bridge/1.0", "Accept": "*/*"},
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=20) as response:
-                payload = response.read()
-        except urllib.error.HTTPError as exc:
-            if exc.code == 404:
-                return []
-            raise
-
-        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
-            names = [n for n in archive.namelist() if n.lower().endswith(".csv")]
-            if not names:
-                return []
-            text = archive.read(names[0]).decode("utf-8-sig")
-
-        rows = []
-        for row in csv.reader(io.StringIO(text)):
-            candle = self._binance_row_to_candle(row)
-            if candle is not None:
-                rows.append(candle)
-        return rows
-
-    def _merge_seed(self, interval, seed_rows):
-        # Existing cache is treated as native Bybit and wins on timestamp overlap.
-        existing = {int(c["start"]): dict(c) for c in self.candles[interval]}
-        merged = {int(c["start"]): dict(c) for c in seed_rows}
-        merged.update(existing)
-        rows = sorted(merged.values(), key=lambda c: c["start"])[-KLINE_LIMIT:]
-        self.candles[interval].clear()
-        self.candles[interval].extend(rows)
-
-    def _bootstrap_binance_seed(self):
-        if self.market != "linear":
+        path = next((p for p in candidates if os.path.exists(p)), None)
+        if path is None:
             return
 
-        now_dt = dt.datetime.now(dt.timezone.utc)
-        now = time.gmtime()
-        year, month = self._month_shift(now.tm_year, now.tm_mon, -1)
-        errors = []
-        total_seeded = 0
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                payload = json.load(fh)
 
-        # Phase A: old history. A full cache may skip monthly downloads,
-        # but it must NEVER skip the recent daily refresh below.
-        for interval in KLINE_INTERVALS:
-            if len(self.candles[interval]) < KLINE_LIMIT:
-                seed_rows = []
-                for back in range(BINANCE_SEED_MONTHS):
-                    y, mo = self._month_shift(year, month, -back)
+            loaded = 0
+            for interval in KLINE_INTERVALS:
+                rows = payload.get("candles", {}).get(interval, [])
+                clean = []
+                seen = set()
+                for row in rows[-KLINE_LIMIT:]:
                     try:
-                        rows = self._download_binance_month(interval, y, mo)
-                    except Exception as exc:
-                        errors.append(
-                            f"{interval} monthly {y:04d}-{mo:02d}: "
-                            f"{type(exc).__name__}: {exc}"
-                        )
+                        candle = {
+                            "start": int(row["start"]),
+                            "end": int(row["end"]),
+                            "open": float(row["open"]),
+                            "high": float(row["high"]),
+                            "low": float(row["low"]),
+                            "close": float(row["close"]),
+                            "volume": float(row.get("volume", 0.0)),
+                            "turnover": float(row.get("turnover", 0.0)),
+                            "confirm": bool(row.get("confirm", True)),
+                            "source": str(row.get("source", "bybit_seed")),
+                        }
+                    except (KeyError, TypeError, ValueError):
                         continue
-                    if rows:
-                        seed_rows.extend(rows)
-                        if len(seed_rows) >= KLINE_LIMIT:
-                            break
-                seed_rows.sort(key=lambda c: c["start"])
-                self._merge_seed(interval, seed_rows[-KLINE_LIMIT:])
+                    if candle["start"] in seen:
+                        continue
+                    if candle["low"] > candle["high"]:
+                        continue
+                    if candle["high"] < max(candle["open"], candle["close"]):
+                        continue
+                    if candle["low"] > min(candle["open"], candle["close"]):
+                        continue
+                    seen.add(candle["start"])
+                    clean.append(candle)
+                clean.sort(key=lambda item: item["start"])
+                self.candles[interval].extend(clean[-KLINE_LIMIT:])
+                loaded += len(clean)
 
-        # Phase B: fill the gap from the latest cached/seed candle through yesterday.
-        # Binance monthly archives do not contain the current incomplete month.
-        jobs = []
-        yesterday = now_dt.date() - dt.timedelta(days=1)
-        for interval in KLINE_INTERVALS:
-            rows = list(self.candles[interval])
-            if rows:
-                last_day = dt.datetime.fromtimestamp(
-                    int(rows[-1]["start"]) / 1000.0, tz=dt.timezone.utc
-                ).date()
-                first_day = last_day + dt.timedelta(days=1)
-            else:
-                first_day = max(
-                    yesterday - dt.timedelta(days=34),
-                    now_dt.date().replace(day=1),
-                )
-
-            # Safety cap prevents a damaged cache from creating hundreds of requests.
-            first_day = max(first_day, yesterday - dt.timedelta(days=40))
-            day = first_day
-            while day <= yesterday:
-                jobs.append((interval, day))
-                day += dt.timedelta(days=1)
-
-        daily_by_tf = {tf: [] for tf in KLINE_INTERVALS}
-        if jobs:
-            with ThreadPoolExecutor(max_workers=min(12, len(jobs))) as pool:
-                futures = {
-                    pool.submit(self._download_binance_day, interval, day):
-                    (interval, day)
-                    for interval, day in jobs
+            if loaded:
+                self.history_bootstrapped = True
+                self.history_loaded_at = time.time()
+                self.history_source = "bybit_historical_seed+bybit_websocket"
+                self.history_error = None
+                self.seed_counts = {
+                    interval: sum(
+                        1 for row in self.candles[interval]
+                        if row.get("source") == "bybit_seed"
+                    )
+                    for interval in KLINE_INTERVALS
                 }
-                for future in as_completed(futures):
-                    interval, day = futures[future]
-                    try:
-                        rows = future.result()
-                    except Exception as exc:
-                        errors.append(
-                            f"{interval} daily {day.isoformat()}: "
-                            f"{type(exc).__name__}: {exc}"
-                        )
-                        continue
-                    if rows:
-                        daily_by_tf[interval].extend(rows)
-
-        for interval in KLINE_INTERVALS:
-            if daily_by_tf[interval]:
-                daily_by_tf[interval].sort(key=lambda c: c["start"])
-                self._merge_seed(interval, daily_by_tf[interval])
-
-            self.seed_counts[interval] = sum(
-                1 for c in self.candles[interval]
-                if c.get("source") == "binance_seed"
-            )
-            total_seeded += self.seed_counts[interval]
-
-        if total_seeded:
-            self.history_bootstrapped = True
-            self.history_loaded_at = time.time()
-            self.history_source = "binance_seed_daily+monthly+bybit_websocket"
-            self._cache_dirty = True
-            self._save_candle_cache(force=True)
-
-        self.history_error = "; ".join(errors[-8:]) if errors else None
-
+        except Exception as exc:
+            self.history_error = f"seed load: {type(exc).__name__}: {exc}"
     def _save_candle_cache(self, force=False):
         now = time.time()
         if not force and (not self._cache_dirty or now - self._last_cache_save < 5.0):
