@@ -11,8 +11,12 @@ from scan_plus.multimarket import MultiMarketOrchestrator
 
 app = Flask(__name__)
 
-collector.start()
-spot_collector.start()
+# Do not block module import on background WebSocket initialization.
+# Render/Gunicorn must be able to boot the HTTP worker first.
+@app.before_request
+def ensure_background_collectors():
+    collector.ensure_running()
+    spot_collector.ensure_running()
 
 BYBIT_URLS = [
     "https://api.bybit.com",
