@@ -36,7 +36,7 @@ def _fibo_target(frames, direction, preferred_tf):
     return None,None,None
 
 
-def build_commodity_execution_plan(*,candidate,frames,price,equity=None,risk_fraction=None,
+def build_commodity_execution_plan(*,candidate,frames,price,equity,risk_fraction,
                                    min_rr=2.0,entry_policy="limit_or_retest"):
     if not isinstance(candidate,Mapping) or candidate.get("status")!="CANDIDATE":
         return {"status":"WAIT","reason":"candidate_not_confirmed"}
