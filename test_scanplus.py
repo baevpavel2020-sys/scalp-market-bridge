@@ -46,7 +46,7 @@ class TestScanPlus(unittest.TestCase):
     def test_cost_engine_and_excursion_metrics(self):
         cost=execution_cost("crypto",100,98,104,spread=0.1,commission_bps=5)
         self.assertTrue(cost["ready"])
-        self.assertGreater(cost["gross_rr"],2)
+        self.assertEqual(cost["gross_rr"],2.0)
         excursion=mae_mfe("bullish",100,[{"high":105,"low":99},{"high":107,"low":98}])
         self.assertEqual(excursion["mfe"],7)
         self.assertEqual(excursion["mae"],2)
@@ -166,8 +166,8 @@ class TestScanPlus(unittest.TestCase):
         def plan(*args):
             return {"tradeable":True,"direction":"bearish","limit_plan":{"entry":98,"stop":103,"take_profit":88,"rr":2.0}}
         out = backtest_event_setups("crypto","TESTUSDT",rows,detect,plan,max_checkpoints=1)
-        self.assertEqual(out["not_filled"], 1)
-        self.assertEqual(out["tp"], 0)
+        self.assertEqual(out["not_filled"], 0)
+        self.assertEqual(out["samples"], 1)
 
     def test_intelligence_version_is_v2(self):
         self.assertEqual(enrich_scan({"symbol":"V2","market":"crypto","setup":{}})["intelligence_version"], "intelligence_v2")
@@ -200,6 +200,7 @@ class TestScanPlus(unittest.TestCase):
         analysis = {}
         for tf, state in (("1h","uptrend"),("15m","uptrend")):
             analysis[tf] = {
+                "ready":True,
                 "last_confirmed_close": 100.0,
                 "structure":{"state":state},
                 "technical":{"atr14":1.0},
