@@ -80,11 +80,15 @@ class AnalyticalEngine:
         }
         shared=[]
         context=[]
+        known_context={"session_liquidity","gaps","underlying_volume","session","active_session",
+                        "session_high_low","order_flow","open_interest","liquidations","volatility",
+                        "liquidity","structure_mtf","structure","volume","gap","event_context",
+                        "inventory_context","usd_context","usd_yields_context"}
         for name in ordered:
             if name in aliases:
                 if aliases[name] not in shared:
                     shared.append(aliases[name])
-            else:
+            elif name in known_context:
                 context.append(name)
         return shared, context
 
