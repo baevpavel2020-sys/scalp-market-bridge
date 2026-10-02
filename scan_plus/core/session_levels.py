@@ -17,6 +17,7 @@ def session_high_low(candles, market="forex", session="london", before_timestamp
     tz=ZoneInfo(tz_name)
     prepared=[]
     cutoff=None
+    explicit_cutoff=before_timestamp_ms is not None
     if before_timestamp_ms is None:
         timestamps=[]
         for candle in candles or []:
@@ -40,7 +41,7 @@ def session_high_low(candles, market="forex", session="london", before_timestamp
             if not (start <= local.time() < end):
                 continue
             session_end_local=datetime.combine(local.date(),end,tzinfo=tz)
-            if cutoff is not None and session_end_local > cutoff:
+            if explicit_cutoff and cutoff is not None and session_end_local > cutoff:
                 continue
             prepared.append((local.date(),candle))
         except (TypeError,ValueError,OverflowError,OSError):
