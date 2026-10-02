@@ -2,6 +2,7 @@
 import json
 import os
 import time
+import uuid
 
 
 class ShadowRecorder:
@@ -18,7 +19,7 @@ class ShadowRecorder:
         directory=os.path.join(self.root,symbol)
         os.makedirs(directory,exist_ok=True)
         ts=int(float(scan.get("generated_at") or time.time())*1000)
-        path=os.path.join(directory,f"{ts}.json")
+        path=os.path.join(directory,f"{ts}_{uuid.uuid4().hex[:8]}.json")
         payload={"recorded_at":time.time(),"symbol":symbol,"scan":scan,"event_engine":event_engine}
         tmp=path+".tmp"
         with open(tmp,"w",encoding="utf-8") as fh:
