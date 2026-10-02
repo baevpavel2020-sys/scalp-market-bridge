@@ -44,6 +44,22 @@ class EndToEndAuditTests(unittest.TestCase):
         self.assertTrue(view["watchlist"][0]["mtf_gate_blocked"])
         self.assertEqual(view["watchlist"][0]["mtf_state"]["regime"],"countertrend_correction")
 
+    def test_unknown_candidate_status_does_not_become_watch(self):
+        decision=aggregate_results([{
+            "status":"OK","market":"crypto","symbol":"BTCUSDT",
+            "candidate":{"status":"MAYBE","direction":"unknown"}
+        }])
+        self.assertEqual(decision["count"],0)
+        self.assertEqual(decision["error_count"],1)
+
+    def test_missing_symbol_does_not_reach_operator_view(self):
+        decision=aggregate_results([{
+            "status":"OK","market":"crypto",
+            "candidate":{"status":"WATCH","direction":"unknown"}
+        }])
+        self.assertEqual(decision["count"],0)
+        self.assertEqual(decision["error_count"],1)
+
     def test_data_error_candidate_does_not_become_watch(self):
         decision=aggregate_results([{
             "status":"OK","market":"crypto","symbol":"BTCUSDT",
