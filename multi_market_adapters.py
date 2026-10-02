@@ -62,13 +62,27 @@ class ExternalMarketAdapter:
     def quote(self,symbol): return self._get("/quote",{"symbol":symbol})
     def scan(self,market,symbol):
         frames={}; errors={}
-        for tf in ("1D","4h","1h","15m","5m"):
-            try: frames[tf]=self.candles(symbol,tf)
-            except Exception as e: errors[tf]=f"{type(e).__name__}:{e}"
-        try: quote=self.quote(symbol)
-        except Exception as e: quote={"error":f"{type(e).__name__}:{e}"}
+        provider="twelve_data"
+        if market=="stocks":
+            provider="bybit_xstocks"
+            tf_intervals={"1D":"D","4h":"240","1h":"60","15m":"15","5m":"5"}
+            for tf,itv in tf_intervals.items():
+                try: frames[tf]=bybit_xstock_candles(symbol,itv)
+                except Exception as e: errors[tf]=f"{type(e).__name__}:{e}"
+            try:
+                data=_bybit_get("/v5/market/tickers",{"category":"spot","symbol":symbol})
+                quote=(data.get("result",{}).get("list") or [{}])[0]
+            except Exception as e: quote={"error":f"{type(e).__name__}:{e}"}
+            configured=True
+        else:
+            for tf in ("1D","4h","1h","15m","5m"):
+                try: frames[tf]=self.candles(symbol,tf)
+                except Exception as e: errors[tf]=f"{type(e).__name__}:{e}"
+            try: quote=self.quote(symbol)
+            except Exception as e: quote={"error":f"{type(e).__name__}:{e}"}
+            configured=self.configured
         ready=all(len(frames.get(tf,[]))>=50 for tf in ("1D","4h","1h","15m","5m"))
-        return {"market":market,"symbol":symbol,"adapter_version":self.VERSION,"provider":"twelve_data","configured":self.configured,"analysis_ready":ready,"execution_ready":False,"execution_reason":"external_market_execution_connector_not_configured","frames":frames,"quote":quote,"errors":errors,"capabilities":{"ohlcv":True,"realtime_quote":True,"orderbook":False,"open_interest":False,"funding":False,"spot_cvd":False}}
+        return {"market":market,"symbol":symbol,"adapter_version":self.VERSION,"provider":provider,"configured":configured,"analysis_ready":ready,"execution_ready":False,"execution_reason":"external_market_execution_connector_not_configured","frames":frames,"quote":quote,"errors":errors,"capabilities":{"ohlcv":True,"realtime_quote":True,"orderbook":False,"open_interest":False,"funding":False,"spot_cvd":False}}
 def external_universe():
     try: stocks=bybit_xstocks_top15()
     except Exception: stocks=list(DEFAULT_STOCKS)
