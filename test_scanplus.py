@@ -368,6 +368,16 @@ class TestScanPlus(unittest.TestCase):
             ScanJobManager._jobs.clear()
             ScanJobManager._jobs.update(original)
 
+    def test_stage11_canonical_scan_command_is_nonblocking(self):
+        from app import app
+        client = app.test_client()
+        response = client.get("/scan")
+        self.assertEqual(response.status_code, 202)
+        payload = response.get_json()
+        self.assertIn("job_id", payload)
+        self.assertEqual(payload.get("mode"), "auto")
+        self.assertEqual(payload.get("state"), "QUEUED")
+
     def test_stage10_release_contract_is_explicit(self):
         from release_gate import RELEASE_VERSION, RELEASE_STAGES
         self.assertEqual(RELEASE_VERSION,"scanplus_v3_9_stage7_10")
