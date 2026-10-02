@@ -86,6 +86,7 @@ def build_forex_execution_plan(*,candidate,frames,price,equity=None,risk_fractio
         return {"status":"WAIT","reason":"rr_below_minimum","rr":rr}
     return {
         "status":"PLAN",
+        "eligible":True,
         "side":"BUY" if direction=="bullish" else "SELL",
         "entry":{"type":"LIMIT","reference_price":px,"policy":entry_policy},
         "stop":{"price":stop,"source":"structure","timeframe":stop_tf},
