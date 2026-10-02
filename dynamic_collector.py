@@ -1688,6 +1688,40 @@ class MarketStream:
                 confirmed.append({"name":"AB=CD","direction":"bullish" if bullish else "bearish",
                                   "ratios":{"CD_AB":round(abcd,4)},"checks":{"AB_CD":True},
                                   "points":[{"point":n,**q} for n,q in zip("XABCD",s)]})
+            elif 1.20<=abcd<=1.70:
+                confirmed.append({"name":"Extended AB=CD","direction":"bullish" if bullish else "bearish",
+                                  "ratios":{"CD_AB":round(abcd,4)},"checks":{"extended_AB_CD":True},
+                                  "points":[{"point":n,**q} for n,q in zip("XABCD",s)]})
+            # Families whose defining geometry is not captured by the classic
+            # AB/XA, BC/AB, CD/BC, XD/XA template are evaluated explicitly.
+            xc=self._safe_ratio(c-x,a-x)
+            dc_xc=self._safe_ratio(d-c,c-x)
+            cypher_checks={"AB_XA":0.382<=vals["ab"]<=0.618,
+                           "XC_XA":xc is not None and 1.272<=xc<=1.414,
+                           "DC_XC":dc_xc is not None and 0.75<=dc_xc<=0.82}
+            rec={"name":"Cypher","direction":"bullish" if bullish else "bearish",
+                 "ratios":{"AB_XA":round(vals["ab"],4),"XC_XA":None if xc is None else round(xc,4),
+                           "DC_XC":None if dc_xc is None else round(dc_xc,4)},
+                 "checks":cypher_checks,"points":[{"point":n,**q} for n,q in zip("XABCD",s)]}
+            (confirmed if all(cypher_checks.values()) else developing if sum(cypher_checks.values())==2 else []).append(rec) if sum(cypher_checks.values())>=2 else None
+            # Shark / 5-0 use the same five-pivot geometry with their own ratios.
+            bx=self._safe_ratio(b-a,a-x); cb=self._safe_ratio(c-b,b-a); dc=self._safe_ratio(d-c,c-b)
+            shark_checks={"AB_XA":bx is not None and 1.13<=bx<=1.618,
+                          "BC_AB":cb is not None and 1.618<=cb<=2.24,
+                          "CD_BC":dc is not None and 0.45<=dc<=1.13}
+            shark={"name":"Shark","direction":"bullish" if bullish else "bearish",
+                   "ratios":{"AB_XA":None if bx is None else round(bx,4),"BC_AB":None if cb is None else round(cb,4),"CD_BC":None if dc is None else round(dc,4)},
+                   "checks":shark_checks,"points":[{"point":n,**q} for n,q in zip("OXABC",s)]}
+            if all(shark_checks.values()): confirmed.append(shark)
+            elif sum(shark_checks.values())==2: developing.append(shark)
+            five_checks={"AB_XA":bx is not None and 1.13<=bx<=1.618,
+                         "BC_AB":cb is not None and 1.618<=cb<=2.24,
+                         "CD_BC":dc is not None and 0.45<=dc<=0.55}
+            five={"name":"5-0","direction":"bullish" if bullish else "bearish",
+                  "ratios":{"AB_XA":None if bx is None else round(bx,4),"BC_AB":None if cb is None else round(cb,4),"CD_BC":None if dc is None else round(dc,4)},
+                  "checks":five_checks,"points":[{"point":n,**q} for n,q in zip("XABCD",s)]}
+            if all(five_checks.values()): confirmed.append(five)
+            elif sum(five_checks.values())==2: developing.append(five)
         return {"ready":len(points)>=5,"confirmed":confirmed[-6:],"developing":developing[-6:]}
 
     def _divergence_engine_v2(self, rows, ctx):
