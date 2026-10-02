@@ -186,6 +186,8 @@ def _event_fingerprint(setup):
         or (targets.get("t1") if isinstance(targets, dict) else None)
     )
     payload = {
+        "market": setup.get("market"),
+        "symbol": setup.get("symbol"),
         "state": setup.get("opportunity_state"),
         "direction": setup.get("direction") or setup.get("side"),
         "entry": limit_plan.get("entry") or setup.get("entry"),
