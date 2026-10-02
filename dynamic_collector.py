@@ -7159,6 +7159,29 @@ class ScanJobManager:
         return cls.status(jid)
 
     @classmethod
+    def latest_unified(cls):
+        """Return the newest unified Scan job; prefer an active one, otherwise newest completed."""
+        cls._cleanup()
+        with cls._lock:
+            jobs = [
+                job for job in cls._jobs.values()
+                if job.get("mode") == "unified"
+            ]
+            if not jobs:
+                return None
+            active = [
+                job for job in jobs
+                if job.get("state") in ("QUEUED", "RUNNING")
+            ]
+            pool = active or jobs
+            latest = max(
+                pool,
+                key=lambda job: float(job.get("updated_at", job.get("created_at", 0))),
+            )
+            jid = latest.get("job_id")
+        return cls.status(jid)
+
+    @classmethod
     def status(cls, jid):
         cls._cleanup()
         with cls._lock:
@@ -7199,4 +7222,8 @@ def start_scan_batch_job(symbols):
 
 def get_scan_job(job_id):
     return ScanJobManager.status(job_id)
+
+
+def get_latest_unified_scan_job():
+    return ScanJobManager.latest_unified()
 
