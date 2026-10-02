@@ -23,6 +23,22 @@ class V37AuditTests(unittest.TestCase):
         out=build_mtf_state(frames)
         self.assertTrue(out["reversal_confirmed"])
 
+    def test_empty_scan_has_no_thread_pool_work(self):
+        class R:
+            def get(self,m): raise AssertionError("no adapter lookup expected")
+        o=MultiMarketOrchestrator(R())
+        self.assertEqual(o.scan_many([]), [])
+
+    def test_single_scan_uses_direct_path(self):
+        class Fake:
+            market="crypto"
+            def scan(self,symbol):
+                return {"market":"crypto","symbol":symbol,"candidate":{"status":"WATCH","direction":"unknown"}}
+        class R:
+            def get(self,m): return Fake()
+        out=MultiMarketOrchestrator(R()).scan_many([("crypto","BTCUSDT")])
+        self.assertEqual(out[0]["status"],"OK")
+
     def test_parallel_results_are_returned_in_request_order(self):
         class Fake:
             market="crypto"
