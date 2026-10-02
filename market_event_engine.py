@@ -79,12 +79,19 @@ def detect_events(market,symbol,rows):
    if sh is not None and c["high"]>sh and c["close"]<sh:ev.append({"event":"session_failed_high","direction":"bearish","confidence":"high","session":prev_session,"level":sh})
    if sl is not None and c["low"]<sl and c["close"]>sl:ev.append({"event":"session_failed_low","direction":"bullish","confidence":"high","session":prev_session,"level":sl})
  elif market=="commodities":
-  ev += [{"event":"instrument_session_context","confidence":"context"},{"event":"inventory_event","confidence":"unavailable","status":"fundamental_calendar_not_connected"},{"event":"contract_rollover","confidence":"unavailable","status":"contract_calendar_not_connected"}]
- elif market=="stocks":ev.append({"event":"xstock_24_7_context","confidence":"context"})
+  ev.append({"event":"instrument_session_context","confidence":"context"})
+ elif market=="stocks":
+  ev.append({"event":"xstock_24_7_context","confidence":"context"})
+  day=datetime.fromtimestamp(int(c.get("start",0))/1000,timezone.utc).date()
+  day_rows=[x for x in r[:-1] if datetime.fromtimestamp(int(x.get("start",0))/1000,timezone.utc).date()==day]
+  if day_rows:
+   dh=max(x["high"] for x in day_rows); dl=min(x["low"] for x in day_rows)
+   if c["high"]>dh and c["close"]<dh:ev.append({"event":"daily_failed_high","direction":"bearish","confidence":"high","level":dh})
+   if c["low"]<dl and c["close"]>dl:ev.append({"event":"daily_failed_low","direction":"bullish","confidence":"high","level":dl})
  ev=_dedupe_events(ev)
  for event in ev:
   event["market"]=market; event["symbol"]=symbol; event["lifecycle"]=EVENT_LIFECYCLE.update(event,confirmed=True)["state"]
- return {"ready":True,"engine_version":VERSION,"market":market,"symbol":symbol,"events":ev,"session":sess,"reference":{"atr":atr,"range_high":hi,"range_low":lo},"event_lifecycle":EVENT_LIFECYCLE.snapshot(market,symbol)}
+ return {"ready":True,"engine_version":VERSION,"market":market,"symbol":symbol,"events":ev,"session":sess,"reference":{"atr":atr,"range_high":hi,"range_low":lo},"event_lifecycle":EVENT_LIFECYCLE.snapshot(market,symbol),"fundamental_context":{"inventory":"unavailable","rollover":"unavailable"} if market=="commodities" else None}
 
 def _shared_direction(analysis_core):
     analysis=(analysis_core or {}).get("analysis") or {}
