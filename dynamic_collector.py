@@ -6605,7 +6605,7 @@ class ScanOrchestrator:
     """
 
     VERSION = "scan_orchestrator_v1"
-    MAX_AUTO_SCAN_PLUS = 6
+    MAX_AUTO_SCAN_PLUS = 8
     MAX_BATCH_SYMBOLS = 8
 
     @staticmethod
@@ -6755,7 +6755,7 @@ class ScanJobManager:
     occurred when several scans were executed inside one HTTP request.
     """
 
-    VERSION = "scan_job_manager_v3_2_0_redis_resume"
+    VERSION = "scan_job_manager_v3_3_0_scan_contract"
     MAX_JOBS = 20
     JOB_TTL_SECONDS = 3600
     AUTO_WARMUP_SECONDS = max(30, min(90, int(os.environ.get("SCAN_AUTO_WARMUP_SECONDS", "40"))))
@@ -7138,7 +7138,7 @@ class ScanJobManager:
                 started_unified=time.time()
                 top_n=max(1,min(int(payload.get("top_n",5)),ScanOrchestrator.MAX_AUTO_SCAN_PLUS))
                 shortlist=int(payload.get("shortlist",30))
-                markets=[str(x).strip().lower() for x in (payload.get("markets") or ["crypto","stocks","forex","commodities"]) if str(x).strip()]
+                markets=[str(x).strip().lower() for x in (payload.get("markets") or ["crypto","stocks"]) if str(x).strip()]
                 cls._progress(jid,done=0,total=None,current_symbol=None,stage="UNIFIED_PRESCAN")
                 prescan=run_prescan(top_n=top_n,shortlist=shortlist)
                 eligible=[]
@@ -7213,7 +7213,7 @@ class ScanJobManager:
         payload = {
             "top_n": int(top_n),
             "shortlist": int(shortlist),
-            "markets": list(markets or ["crypto", "stocks", "forex", "commodities"]),
+            "markets": list(markets or ["crypto", "stocks"]),
         }
         with cls._lock:
             for existing in cls._jobs.values():
@@ -7315,11 +7315,18 @@ def start_scan_unified_job(top_n=5, shortlist=30, markets=None):
     return ScanJobManager.start_unified(top_n=top_n,shortlist=shortlist,markets=markets)
 
 
-def start_scan_auto_job(top_n=6, shortlist=30):
+def start_scan_auto_job(top_n=8, shortlist=30):
+    """Canonical user 'Scan': top-30 crypto futures prescan + Bybit xStocks only.
+
+    PreScan always evaluates the 30 highest-turnover crypto contracts from the
+    discovered universe. Full Scan+ remains bounded to the strongest candidates
+    so realtime collectors are not overloaded. Forex/commodities are explicit
+    modes and must never leak into the default user Scan.
+    """
     return ScanJobManager.start_unified(
-        top_n=min(int(top_n), 5),
-        shortlist=shortlist,
-        markets=["crypto", "stocks", "forex", "commodities"],
+        top_n=min(max(int(top_n), 1), ScanOrchestrator.MAX_AUTO_SCAN_PLUS),
+        shortlist=max(30, int(shortlist)),
+        markets=["crypto", "stocks"],
     )
 
 
