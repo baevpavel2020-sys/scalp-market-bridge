@@ -224,6 +224,8 @@ def alert_payload(scan):
         "target": target,
         "rr": setup.get("risk_reward") or limit_plan.get("risk_reward") or limit_plan.get("rr"),
         "reason": "setup_state_changed",
+        "scenario": (setup.get("scenario") or {}).get("primary"),
+        "limit_candidates": setup.get("limit_candidates") or [],
     }
 
 
@@ -263,6 +265,8 @@ class WatchlistStore:
                 or (setup.get("limit_plan") or {}).get("risk_reward")
                 or (setup.get("limit_plan") or {}).get("rr"),
                 "fingerprint": fingerprint,
+                "scenario": (setup.get("scenario") or {}).get("primary"),
+                "limit_candidates": setup.get("limit_candidates") or [],
                 "updated_at": time.time(),
                 "state_changed": changed,
             }
