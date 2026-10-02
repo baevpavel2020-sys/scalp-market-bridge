@@ -391,7 +391,7 @@ class TestScanPlus(unittest.TestCase):
         self.assertEqual(response.status_code, 202)
         payload = response.get_json()
         self.assertIn("job_id", payload)
-        self.assertEqual(payload.get("mode"), "auto")
+        self.assertEqual(payload.get("mode"), "unified")
         self.assertIn(payload.get("state"), ("QUEUED", "RUNNING"))
 
     def test_stage10_release_contract_is_explicit(self):
