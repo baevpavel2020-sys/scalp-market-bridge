@@ -18,6 +18,26 @@ class BybitXStocksTests(unittest.TestCase):
         self.assertEqual(loader.token_symbol("NVDA"),"NVDAXUSDT")
         self.assertEqual(loader.token_symbol("NVDAXUSDT"),"NVDAXUSDT")
 
+    def test_default_symbols_falls_back_when_universe_request_fails(self):
+        session=Mock()
+        session.get.side_effect=RuntimeError("provider unavailable")
+        out=BybitXStocksLoader(session=session).default_symbols(15)
+        self.assertGreaterEqual(len(out), 11)
+        self.assertEqual(out[:3], ["NVDA","AAPL","MSFT"])
+
+    def test_default_symbols_fills_partial_live_universe(self):
+        session=Mock()
+        response=Mock()
+        response.json.return_value={"retCode":0,"result":{"list":[
+            {"symbol":"NVDAXUSDT","turnover24h":"100"},
+            {"symbol":"AAPLXUSDT","turnover24h":"90"},
+        ]}}
+        response.raise_for_status.return_value=None
+        session.get.return_value=response
+        out=BybitXStocksLoader(session=session).default_symbols(5)
+        self.assertEqual(out[:2],["NVDA","AAPL"])
+        self.assertEqual(len(out),5)
+
     def test_ticker_normalizes_bybit_payload(self):
         session=Mock()
         response=Mock()
