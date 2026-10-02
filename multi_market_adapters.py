@@ -6,6 +6,7 @@ This layer is analysis-only until a broker/execution connector is explicitly add
 import concurrent.futures
 import json, math, os, threading, time, urllib.parse, urllib.request
 from market_event_engine import detect_events, build_setup_plan
+from scan_architecture import data_quality, opportunity_state, pipeline_contract
 from datetime import datetime, timezone
 try:
     from zoneinfo import ZoneInfo
@@ -190,7 +191,7 @@ class ExternalMarketAdapter:
         events={tf:detect_events(market,symbol,rows) for tf,rows in event_frames.items()}
         setup={tf:build_setup_plan(market,symbol,rows,events[tf]) for tf,rows in event_frames.items()}
         analysis_core=MarketProfileRouter.analyze(market,symbol,frames)
-        return {"market":market,"symbol":symbol,"adapter_version":self.VERSION,"provider":provider,"configured":configured,"analysis_ready":ready,"execution_ready":False,"execution_reason":"external_market_execution_connector_not_configured","frames":frames,"quote":quote,"analysis_core":analysis_core,"events":events,"setup_plans":setup,"errors":errors,"capabilities":{"ohlcv":True,"realtime_quote":True,"orderbook":False,"open_interest":False,"funding":False,"spot_cvd":False},"market_profile":market_profile(market),"session_context":session_context(market)}
+        return {"market":market,"symbol":symbol,"adapter_version":self.VERSION,"provider":provider,"configured":configured,"analysis_ready":ready,"execution_ready":False,"execution_reason":"external_market_execution_connector_not_configured","frames":frames,"quote":quote,"analysis_core":analysis_core,"events":events,"setup_plans":setup,"errors":errors,"capabilities":{"ohlcv":True,"realtime_quote":True,"orderbook":False,"open_interest":False,"funding":False,"spot_cvd":False},"market_profile":market_profile(market),"session_context":session_context(market),"data_quality":data_quality(frames,min_closed=50),"architecture":pipeline_contract()}
 def external_universe():
     try: stocks=bybit_xstocks_top15()
     except Exception: stocks=list(DEFAULT_STOCKS)
