@@ -164,7 +164,9 @@ class ExternalMarketAdapter:
         out=[]
         for x in data.get("values",[]) or []:
             try:
-                out.append({"datetime":x["datetime"],"open":float(x["open"]),"high":float(x["high"]),"low":float(x["low"]),"close":float(x["close"]),"volume":float(x.get("volume") or 0),"source":"twelve_data"})
+                raw_dt=str(x["datetime"]).replace("Z","+00:00")
+                parsed=datetime.fromisoformat(raw_dt)
+                out.append({"start":int(parsed.timestamp()*1000),"datetime":x["datetime"],"open":float(x["open"]),"high":float(x["high"]),"low":float(x["low"]),"close":float(x["close"]),"volume":float(x.get("volume") or 0),"source":"twelve_data"})
             except (KeyError,TypeError,ValueError): pass
         return out
     def quote(self,symbol): return self._get("/quote",{"symbol":symbol})
