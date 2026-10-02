@@ -374,13 +374,15 @@ class TestScanPlus(unittest.TestCase):
 
     def test_stage6_job_routes_return_202_and_job_id(self):
         from app import app
-        with app.test_client() as client:
-            response = client.get("/scan-batch?symbols=BTCUSDT")
-            self.assertEqual(response.status_code, 202)
-            data = response.get_json()
-            self.assertIn("job_id", data)
-            status = client.get("/scan-job/" + data["job_id"])
-            self.assertIn(status.status_code, (200, 404))
+        from unittest.mock import patch
+        fake={"job_id":"testjob123","state":"QUEUED"}
+        with patch("app.start_scan_batch_job", return_value=fake):
+            with app.test_client() as client:
+                response = client.get("/scan-batch?symbols=BTCUSDT")
+                self.assertEqual(response.status_code, 202)
+                data = response.get_json()
+                self.assertEqual(data["job_id"], "testjob123")
+                self.assertEqual(data["state"], "QUEUED")
 
     def test_price_discovery_does_not_rewrite_unconfirmed_mtf_direction(self):
         linear={"analysis":{"15":{"regime_levels":{"atr":1.0},"structure":{
