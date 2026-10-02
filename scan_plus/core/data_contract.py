@@ -48,6 +48,8 @@ def normalize_candles(rows, *, symbol: str, interval: str, as_of_ms=None, closed
         end_raw=item.get("end")
         try:
             end_ms=int(float(end_raw)) if end_raw is not None else (ts + duration if duration else ts)
+            if end_ms < 1e11:
+                end_ms *= 1000
         except (TypeError,ValueError):
             end_ms=ts + duration if duration else ts
         is_closed=end_ms <= now_ms
