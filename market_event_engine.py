@@ -110,7 +110,9 @@ def _shared_limit_geometry(market, symbol, analysis_core):
         return None
 
     def levels(tf, side):
-        r=((analysis.get(tf) or {}).get("regime_levels") or {})
+        aliases={"D":"1D","240":"4h","60":"1h","15":"15m","5":"5m","1":"1m"}
+        key=aliases.get(tf,tf)
+        r=((analysis.get(key) or {}).get("regime_levels") or {})
         return [float(x) for x in (r.get(side) or []) if isinstance(x,(int,float)) and math.isfinite(float(x))]
 
     # Structural location is the entry source. Events remain confirmation/trigger,
