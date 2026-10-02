@@ -9,6 +9,33 @@ import hashlib
 VERSION = "analytical_depth_v3_8_1"
 DEFAULT_TTLS = {"structure":12,"elliott":12,"fibonacci":12,"harmonics":8,"divergence":6,"liquidity":6,"smc":6,"flow":3}
 AUTHORITY = {"structure":100,"market":100,"data_quality":95,"event":80,"liquidity":70,"smc":60,"elliott":55,"fibonacci":50,"harmonics":50,"divergence":40,"flow":30,"momentum":20}
+STRUCTURE_TTL_BY_TF={"1m":20,"5m":16,"15m":12,"1h":10,"4h":8,"1d":6,"1D":6,"60":10,"240":8,"15":12,"5":16,"1":20}
+
+def validate_smc_evidence(smc,timeframe=None):
+    if not isinstance(smc,dict): return {"valid":True,"reasons":[]}
+    reasons=[]; objects=[]
+    for key in ("sweep","mss","fvg","ob","breaker","bpr","inducement","poi"):
+        value=smc.get(key)
+        if value is not None: objects.extend(value if isinstance(value,list) else [value])
+    for obj in objects:
+        if not isinstance(obj,dict): continue
+        kind=str(obj.get("type") or obj.get("kind") or "").lower()
+        if obj.get("invalidated") is True or (obj.get("mitigated") is True and kind in ("ob","order_block")):
+            reasons.append({"type":"stale_smc_object","kind":kind or "unknown","timeframe":timeframe})
+        if kind in ("ob","order_block") and not (obj.get("causal") or obj.get("causal_event") or obj.get("displacement") or obj.get("displacement_atr") or obj.get("structural_effect") or obj.get("bos") or obj.get("mss")):
+            reasons.append({"type":"non_causal_ob","timeframe":timeframe})
+        if kind=="bpr":
+            a=obj.get("fvg_a") or obj.get("first_fvg"); b=obj.get("fvg_b") or obj.get("second_fvg")
+            if not (isinstance(a,dict) and isinstance(b,dict) and a.get("direction") and b.get("direction") and a.get("direction")!=b.get("direction")):
+                reasons.append({"type":"bpr_not_opposite_fvg_overlap","timeframe":timeframe})
+    return {"valid":not reasons,"reasons":reasons}
+
+def validate_divergence(evidence):
+    if not isinstance(evidence,dict): return {"state":"UNKNOWN_AGE","usable":False,"reason":"divergence_age_unknown"}
+    if evidence.get("age_bars") is None and evidence.get("fresh") is None: return {"state":"UNKNOWN_AGE","usable":False,"reason":"divergence_age_unknown"}
+    if evidence.get("invalidated") is True or evidence.get("fresh") is False: return {"state":"STALE","usable":False,"reason":"divergence_stale"}
+    return {"state":"FRESH","usable":True,"reason":None}
+
 
 def fingerprint(*parts):
     return hashlib.sha256(repr(parts).encode("utf-8")).hexdigest()[:20]
@@ -73,6 +100,9 @@ def derive_hard_invalidations(setup,timeframes=None):
         for key in ("invalidation","hard_invalidation"):
             item=s.get(key)
             if isinstance(item,dict) and item.get("hard",True): add(item.get("reason") or key,"structure",{"timeframe":tf})
+        for issue in validate_smc_evidence(a.get("smc"),tf)["reasons"]:
+            if issue["type"] in ("stale_smc_object","non_causal_ob","bpr_not_opposite_fvg_overlap"):
+                add(issue["type"],"smc",issue)
     lp=setup.get("limit_plan") or {}
     for key in ("target","take_profit"):
         target=lp.get(key)
