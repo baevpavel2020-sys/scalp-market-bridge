@@ -2282,9 +2282,23 @@ class MarketStream:
         legacy=self._confluence_engine_v2(technical,ctx,fib,elliott,harmonics,divergences,liquidity,smc)
         confluence={**legacy,"decision_authority":False,"deprecated_vote_model":True,"evidence_graph":evidence}
         ready=bool(technical.get("ready") and ctx.get("ready"))
+        now_ms=int(time.time()*1000)
+        last_start=rows[-1].get("start") if rows else None
+        last_end=rows[-1].get("end") if rows else None
+        age_seconds=None
+        try:
+            age_seconds=max(0.0,(now_ms-int(last_end if last_end is not None else last_start))/1000.0)
+        except (TypeError,ValueError):
+            pass
+        freshness_state="UNKNOWN"
+        if age_seconds is not None:
+            freshness_state="FRESH" if age_seconds<=120 else "STALE" if age_seconds>900 else "AGING"
+        freshness={"state":freshness_state,"age_seconds":age_seconds,
+                   "last_confirmed_start":last_start,"last_confirmed_end":last_end}
         return {"ready":ready,"engine_version":"scan_plus_v3_9_limit_plan","closed_candles":len(rows),
-                "excluded_open_candles":max(0,len(raw_rows)-len(rows)),"last_confirmed_start":rows[-1].get("start") if rows else None,
+                "excluded_open_candles":max(0,len(raw_rows)-len(rows)),"last_confirmed_start":last_start,
                 "last_confirmed_close":rows[-1].get("close") if rows else None,
+                "signal_freshness":freshness,
                 "pipeline":["technical","structure","fibonacci","elliott","harmonics","divergences","liquidity","smart_money","freshness","evidence_graph"],
                 "technical":technical,"structure":structure,"fibonacci":fib,"elliott":elliott,"harmonics":harmonics,"divergences":divergences,
                 "liquidity":liquidity,"smart_money":smc,"regime_levels":regime,"evidence_graph":evidence,"confluence":confluence}
