@@ -1,6 +1,7 @@
 import unittest
 from market_event_engine import _dedupe_events, detect_events, build_setup_plan
 from scan_architecture import MIN_RR
+from scan_intelligence import classify_regime, relative_strength, WatchlistStore, alert_payload
 class TestScanPlus(unittest.TestCase):
     def test_context_events_survive(self):
         out=_dedupe_events([{"event":"session_context"},{"event":"inventory_event"}])
@@ -33,6 +34,32 @@ class TestScanPlus(unittest.TestCase):
             source = fh.read()
         self.assertNotIn("\ncollector.start()\n", source)
         self.assertNotIn("\nspot_collector.start()\n", source)
+
+    def test_intelligence_regime(self):
+        rows=[]
+        for i in range(40):
+            p=100+i*0.5
+            rows.append({"open":p,"high":p+0.5,"low":p-0.5,"close":p,"volume":100})
+        self.assertIn(classify_regime(rows)["state"], ("TREND","EXPANSION"))
+
+    def test_relative_strength_ranking(self):
+        rows=[{"close":100},{"close":102},{"close":104},{"close":106},{"close":108},{"close":110}]
+        results=[{"symbol":"A","performance":{"15m":{"change_pct":10}}},{"symbol":"B","performance":{"15m":{"change_pct":2}}}]
+        ranked=relative_strength(results,"crypto")
+        self.assertEqual(ranked[0]["symbol"],"A")
+        self.assertEqual(ranked[0]["rank"],1)
+
+    def test_watchlist_event_driven_state(self):
+        store=WatchlistStore()
+        scan={"symbol":"TESTUSDT","market":"crypto","direction":"bearish",
+              "setup":{"opportunity_state":"LIMIT_READY","limit_plan":{"rr":2.0},"event_basis":[{"event":"failed_breakout","direction":"bearish","level":100}]}}
+        first=store.upsert(scan); second=store.upsert(scan)
+        self.assertTrue(first["state_changed"])
+        self.assertFalse(second["state_changed"])
+
+    def test_alert_requires_new_state_or_event(self):
+        scan={"symbol":"TESTUSDT","direction":"SHORT","setup":{"opportunity_state":"LIMIT_READY","limit_plan":{"entry":100,"stop":105,"take_profit":90,"rr":2.0}}}
+        self.assertTrue(alert_payload(scan)["eligible"])
 
 if __name__=="__main__":
     unittest.main()
