@@ -177,7 +177,7 @@ def _event_fingerprint(setup):
         "direction": setup.get("direction") or setup.get("side"),
         "entry": (setup.get("limit_plan") or {}).get("entry") or setup.get("entry"),
         "stop": (setup.get("limit_plan") or {}).get("stop") or setup.get("stop"),
-        "target": (setup.get("limit_plan") or {}).get("take_profit"),
+        "target": (setup.get("limit_plan") or {}).get("take_profit") or (setup.get("targets") or {}).get("t1") if isinstance(setup.get("targets"), dict) else (setup.get("limit_plan") or {}).get("take_profit"),
         "rr": setup.get("risk_reward") or (setup.get("limit_plan") or {}).get("risk_reward") or (setup.get("limit_plan") or {}).get("rr"),
         "events": normalized,
     }
@@ -428,7 +428,7 @@ def backtest_event_setups(market, symbol, rows, detect_fn, plan_fn, max_checkpoi
             "samples": 0, "tp": 0, "sl": 0, "unresolved": 0, "not_filled": 0,
             "hit_rate": 0.0, "results": [],
         }
-    start = max(30, len(rows) - max_checkpoints - 1)
+    start = max(30, len(rows) - 1 - max_checkpoints)
     for checkpoint in range(start, len(rows) - 1):
         prefix = rows[: checkpoint + 1]
         detected = detect_fn(market, symbol, prefix)
