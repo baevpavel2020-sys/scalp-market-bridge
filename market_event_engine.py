@@ -3,7 +3,7 @@ import math,time
 
 def _dedupe_events(events):
     groups={}
-    priority={"failed_breakout":4,"failed_breakdown":4,"daily_failed_high":4,"daily_failed_low":4,"gap":3,"range_expansion":2,"volume_expansion":1}
+    priority={"daily_failed_high":6,"daily_failed_low":6,"failed_breakout":4,"failed_breakdown":4,"gap":3,"range_expansion":2,"volume_expansion":1}
     for e in events or []:
         d=e.get("direction"); level=e.get("level")
         key=(e.get("event"),d,level) if d is None and level is None else (d,level)

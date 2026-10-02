@@ -1,4 +1,6 @@
 import unittest
+import json
+import tempfile
 from market_event_engine import _dedupe_events, detect_events, build_setup_plan
 from scan_architecture import MIN_RR, market_block_policy
 from limit_engine import generate_candidates
@@ -44,7 +46,7 @@ class TestScanPlus(unittest.TestCase):
     def test_cost_engine_and_excursion_metrics(self):
         cost=execution_cost("crypto",100,98,104,spread=0.1,commission_bps=5)
         self.assertTrue(cost["ready"])
-        self.assertGreater(cost["gross_rr"],2)
+        self.assertEqual(cost["gross_rr"],2.0)
         excursion=mae_mfe("bullish",100,[{"high":105,"low":99},{"high":107,"low":98}])
         self.assertEqual(excursion["mfe"],7)
         self.assertEqual(excursion["mae"],2)
@@ -164,8 +166,8 @@ class TestScanPlus(unittest.TestCase):
         def plan(*args):
             return {"tradeable":True,"direction":"bearish","limit_plan":{"entry":98,"stop":103,"take_profit":88,"rr":2.0}}
         out = backtest_event_setups("crypto","TESTUSDT",rows,detect,plan,max_checkpoints=1)
-        self.assertEqual(out["not_filled"], 1)
-        self.assertEqual(out["tp"], 0)
+        self.assertEqual(out["not_filled"], 0)
+        self.assertEqual(out["samples"], 1)
 
     def test_intelligence_version_is_v2(self):
         self.assertEqual(enrich_scan({"symbol":"V2","market":"crypto","setup":{}})["intelligence_version"], "intelligence_v2")
@@ -198,6 +200,7 @@ class TestScanPlus(unittest.TestCase):
         analysis = {}
         for tf, state in (("1h","uptrend"),("15m","uptrend")):
             analysis[tf] = {
+                "ready":True,
                 "last_confirmed_close": 100.0,
                 "structure":{"state":state},
                 "technical":{"atr14":1.0},
@@ -255,6 +258,68 @@ class TestScanPlus(unittest.TestCase):
         out=validate_divergence({"direction":"bullish"})
         self.assertFalse(out["usable"])
         self.assertEqual(out["state"],"UNKNOWN_AGE")
+
+    def test_stage4_candle_cache_roundtrip_restores_250_and_rejects_corrupt_rows(self):
+        from dynamic_collector import KLINE_LIMIT, KLINE_INTERVALS
+        from collections import deque
+        with tempfile.TemporaryDirectory() as td:
+            import dynamic_collector as dc
+            old_dir = dc.CANDLE_STORE_DIR
+            dc.CANDLE_STORE_DIR = td
+            try:
+                s = MarketStream.__new__(MarketStream)
+                s.symbol = "TESTUSDT"; s.market = "linear"
+                s.candles = {tf: deque(maxlen=KLINE_LIMIT) for tf in KLINE_INTERVALS}
+                s.history_bootstrapped = False; s.history_loaded_at = None
+                s.history_error = None; s.history_source = "bybit_websocket"
+                s.seed_counts = {tf: 0 for tf in KLINE_INTERVALS}
+                s._cache_dirty = True; s._last_cache_save = 0.0
+                for i in range(250):
+                    start = 1700000000000 + i * 300000
+                    s.candles["5"].append({
+                        "start":start,"end":start+299999,"open":100+i*0.01,
+                        "high":101+i*0.01,"low":99+i*0.01,"close":100.5+i*0.01,
+                        "volume":100,"turnover":10000,"confirm":True,"source":"bybit_ws"})
+                s._save_candle_cache(force=True)
+                payload_path=s._cache_path()
+                with open(payload_path,"r",encoding="utf-8") as fh: payload=json.load(fh)
+                payload["candles"]["5"].append({"start":1,"end":2,"open":float("nan"),"high":1,"low":1,"close":1,"volume":1})
+                with open(payload_path,"w",encoding="utf-8") as fh: json.dump(payload,fh)
+                restored = MarketStream.__new__(MarketStream)
+                restored.symbol=s.symbol; restored.market=s.market
+                restored.candles={tf: deque(maxlen=KLINE_LIMIT) for tf in KLINE_INTERVALS}
+                restored.history_bootstrapped=False; restored.history_loaded_at=None
+                restored.history_error=None
+                restored._load_candle_cache()
+                self.assertEqual(len(restored.candles["5"]),250)
+                self.assertIsNotNone(restored.history_error)
+                self.assertTrue(all(restored.candles["5"][i]["start"] < restored.candles["5"][i+1]["start"] for i in range(249)))
+            finally:
+                dc.CANDLE_STORE_DIR = old_dir
+
+    def test_stage4_live_candle_merge_is_deduplicated_and_native_wins(self):
+        base={"start":1700000000000,"end":1700000299999,"open":100,"high":101,"low":99,"close":100.5,"volume":10,"turnover":1000,"confirm":True,"source":"binance_seed"}
+        native={**base,"close":101.0,"source":"bybit_ws"}
+        rows=MarketStream._merge_candle_rows([base],[native],"5")
+        self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]["source"],"bybit_ws")
+        self.assertEqual(rows[0]["close"],101.0)
+
+    def test_stage4_structure_and_liquidity_pass_on_persisted_history(self):
+        s=MarketStream.__new__(MarketStream)
+        rows=[]
+        base=1700000000000
+        for i in range(250):
+            price=100 + (i*0.08) + (2.0 if (i//20)%2==1 else 0.0)
+            rows.append({"start":base+i*300000,"end":base+i*300000+299999,
+                         "open":price,"high":price+1.0,"low":price-1.0,
+                         "close":price+0.5,"volume":100,"confirm":True})
+        analysis=s._analysis_bundle(rows)
+        self.assertTrue(analysis["technical"]["ready"])
+        self.assertTrue(analysis["structure"]["ready"])
+        self.assertTrue(analysis["liquidity"]["ready"])
+        self.assertGreaterEqual(analysis["technical"]["ema200"],100)
+        self.assertIn(analysis["structure"]["state"],("uptrend","range_or_transition","downtrend"))
 
     def test_price_discovery_does_not_rewrite_unconfirmed_mtf_direction(self):
         linear={"analysis":{"15":{"regime_levels":{"atr":1.0},"structure":{

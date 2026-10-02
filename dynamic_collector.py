@@ -75,6 +75,7 @@ BINANCE_INTERVALS = {
     "D": "1d",
 }
 BINANCE_SEED_MONTHS = 72
+PERSISTENCE_SEED_TARGET = 250
 
 
 class MarketStream:
@@ -424,6 +425,48 @@ class MarketStream:
             f"{safe_symbol}_{safe_market}.json",
         )
 
+    @staticmethod
+    def _sanitize_candle(row, interval, default_source="bybit_ws"):
+        """Canonical candle validator used by disk restore and live WS ingestion."""
+        if not isinstance(row, dict) or interval not in KLINE_INTERVALS:
+            return None
+        try:
+            start = int(row["start"]); end = int(row["end"])
+            values = {k: float(row[k]) for k in ("open", "high", "low", "close", "volume")}
+            turnover = float(row.get("turnover", 0.0) or 0.0)
+        except (KeyError, TypeError, ValueError, OverflowError):
+            return None
+        if start <= 0 or end < start:
+            return None
+        expected_end = MarketStream._candle_end_ms(start, interval)
+        if abs(end - expected_end) > 1000:
+            return None
+        if not all(math.isfinite(v) for v in values.values()) or not math.isfinite(turnover):
+            return None
+        o, h, l, cl = values["open"], values["high"], values["low"], values["close"]
+        if min(o, h, l, cl) <= 0 or h < max(o, cl) or l > min(o, cl) or h < l or values["volume"] < 0 or turnover < 0:
+            return None
+        return {
+            "start": start, "end": end, "open": o, "high": h, "low": l, "close": cl,
+            "volume": values["volume"], "turnover": turnover,
+            "confirm": bool(row.get("confirm", True)),
+            "source": str(row.get("source", default_source) or default_source),
+        }
+
+    @staticmethod
+    def _merge_candle_rows(existing, incoming, interval):
+        """Deduplicate by start; native Bybit data wins over archive seed."""
+        priority = {"bybit_ws": 3, "bybit_rest": 3, "binance_seed": 1}
+        merged = {int(x["start"]): dict(x) for x in existing if x.get("start") is not None}
+        for raw in incoming:
+            candle = MarketStream._sanitize_candle(raw, interval)
+            if candle is None:
+                continue
+            key = candle["start"]; old = merged.get(key)
+            if old is None or priority.get(candle["source"], 2) >= priority.get(str(old.get("source")), 2):
+                merged[key] = candle
+        return sorted(merged.values(), key=lambda x: x["start"])[-KLINE_LIMIT:]
+
     def _load_candle_cache(self):
         path = self._cache_path()
         try:
@@ -431,40 +474,23 @@ class MarketStream:
                 return
             with open(path, "r", encoding="utf-8") as fh:
                 payload = json.load(fh)
-            loaded = 0
+            loaded = rejected = 0
             for interval in KLINE_INTERVALS:
                 rows = payload.get("candles", {}).get(interval, [])
                 clean = []
-                seen = set()
-                for row in rows[-KLINE_LIMIT:]:
-                    try:
-                        candle = {
-                            "start": int(row["start"]),
-                            "end": int(row["end"]),
-                            "open": float(row["open"]),
-                            "high": float(row["high"]),
-                            "low": float(row["low"]),
-                            "close": float(row["close"]),
-                            "volume": float(row["volume"]),
-                            "turnover": float(row.get("turnover", 0.0)),
-                            "confirm": bool(row.get("confirm", True)),
-                            "source": str(row.get("source", "bybit_ws")),
-                        }
-                    except (KeyError, TypeError, ValueError):
-                        continue
-                    if candle["start"] in seen:
-                        continue
-                    if candle["low"] > candle["high"]:
-                        continue
-                    seen.add(candle["start"])
-                    clean.append(candle)
-                clean.sort(key=lambda c: c["start"])
-                self.candles[interval].extend(clean[-KLINE_LIMIT:])
+                for row in rows:
+                    candle = self._sanitize_candle(row, interval)
+                    if candle is None:
+                        rejected += 1
+                    else:
+                        clean.append(candle)
+                clean = self._merge_candle_rows([], clean, interval)
+                self.candles[interval].extend(clean)
                 loaded += len(clean)
             if loaded:
                 self.history_bootstrapped = True
                 self.history_loaded_at = time.time()
-                self.history_error = None
+                self.history_error = None if not rejected else f"cache load rejected {rejected} malformed candles"
         except Exception as exc:
             self.history_error = f"cache load: {type(exc).__name__}: {exc}"
 
@@ -583,7 +609,7 @@ class MarketStream:
         # Phase A: old history. A full cache may skip monthly downloads,
         # but it must NEVER skip the recent daily refresh below.
         for interval in KLINE_INTERVALS:
-            if len(self.candles[interval]) < KLINE_LIMIT:
+            if len(self.candles[interval]) < PERSISTENCE_SEED_TARGET:
                 seed_rows = []
                 for back in range(BINANCE_SEED_MONTHS):
                     y, mo = self._month_shift(year, month, -back)
@@ -600,7 +626,7 @@ class MarketStream:
                         if len(seed_rows) >= KLINE_LIMIT:
                             break
                 seed_rows.sort(key=lambda c: c["start"])
-                self._merge_seed(interval, seed_rows[-KLINE_LIMIT:])
+                self._merge_seed(interval, seed_rows[-PERSISTENCE_SEED_TARGET:])
 
         # Phase B: fill the gap from the latest cached/seed candle through yesterday.
         # Binance monthly archives do not contain the current incomplete month.
@@ -675,7 +701,7 @@ class MarketStream:
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             payload = {
-                "version": 1,
+                "version": 2,
                 "symbol": self.symbol,
                 "market": self.market,
                 "saved_at": now,
@@ -2348,11 +2374,13 @@ class MarketStream:
             structure = {i: analysis[i]["structure"] for i in KLINE_INTERVALS}
             liquidity = {i: analysis[i]["liquidity"] for i in KLINE_INTERVALS}
             counts = {i: len(c) for i, c in self.candles.items()}
+            persistence_counts = {i: counts[i] for i in KLINE_INTERVALS}
             checks = {
                 "connected": bool(self.connected),
                 "orderbook_ready": bool(self.orderbook_ready),
                 "candles_receiving": any(v > 0 for v in counts.values()),
                 "technical_full_6_of_6": all(technical[i]["ready"] for i in KLINE_INTERVALS),
+                "persistence_250_all_6": all(v >= PERSISTENCE_SEED_TARGET for v in persistence_counts.values()),
             }
             return {
                 "symbol": self.symbol,
@@ -2365,6 +2393,7 @@ class MarketStream:
                     and checks["candles_receiving"]
                 ),
                 "full_technical_pass": checks["technical_full_6_of_6"],
+                "persistence_pass": checks["persistence_250_all_6"],
                 "history": {
                     "source": self.history_source,
                     "cache_loaded": self.history_bootstrapped,
@@ -2376,6 +2405,8 @@ class MarketStream:
                         if any(self.seed_counts.values()) else None
                     ),
                     "seed_counts": dict(self.seed_counts),
+                    "persistence_target": PERSISTENCE_SEED_TARGET,
+                    "persistence_ready": checks["persistence_250_all_6"],
                 },
                 "candle_counts": counts,
                 "technical": technical,
@@ -2458,88 +2489,26 @@ class MarketStream:
         with self.lock:
 
             for row in rows:
-
-                try:
-
-                    start = int(
-                        row["start"]
-                    )
-
-                    end = int(
-                        row["end"]
-                    )
-
-                    candle = {
-                        "start": start,
-                        "end": end,
-
-                        "open": float(
-                            row["open"]
-                        ),
-
-                        "high": float(
-                            row["high"]
-                        ),
-
-                        "low": float(
-                            row["low"]
-                        ),
-
-                        "close": float(
-                            row["close"]
-                        ),
-
-                        "volume": float(
-                            row["volume"]
-                        ),
-
-                        "turnover": float(
-                            row.get(
-                                "turnover",
-                                0,
-                            )
-                        ),
-
-                        "confirm": bool(
-                            row.get(
-                                "confirm",
-                                False,
-                            )
-                        ),
-                        "source": "bybit_ws",
-                    }
-
-                except (
-                    KeyError,
-                    TypeError,
-                    ValueError,
-                ):
-
+                candle = self._sanitize_candle(
+                    {**row, "source": "bybit_ws"},
+                    interval,
+                )
+                if candle is None:
                     continue
 
-                candles = self.candles[
-                    interval
-                ]
-
-                # Native Bybit data always wins over Binance seed.
-                replaced = False
-                for index in range(len(candles) - 1, -1, -1):
-                    if candles[index]["start"] == start:
-                        candles[index] = candle
-                        replaced = True
-                        break
-                    if candles[index]["start"] < start:
-                        break
-
-                if not replaced:
-                    merged = list(candles)
-                    merged.append(candle)
-                    merged.sort(key=lambda c: c["start"])
-                    candles.clear()
-                    candles.extend(merged[-KLINE_LIMIT:])
-
+                candles = self.candles[interval]
+                merged = self._merge_candle_rows(list(candles), [candle], interval)
+                candles.clear()
+                candles.extend(merged)
                 self.seed_counts[interval] = sum(
                     1 for c in candles if c.get("source") == "binance_seed"
+                )
+                self.history_bootstrapped = True
+                self.history_loaded_at = self.history_loaded_at or time.time()
+                self.history_source = (
+                    "binance_seed+bybit_websocket"
+                    if any(self.seed_counts.values())
+                    else "bybit_websocket"
                 )
                 self._cache_dirty = True
 
@@ -3310,6 +3279,12 @@ class MarketStream:
                 "orderbook":
                     self._book_metrics(),
             }
+
+
+    @staticmethod
+    def _live_structure_context_v33(linear, execution):
+        """Backward-compatible facade; authority remains DynamicMarketManager."""
+        return DynamicMarketManager._live_structure_context_v33(linear, execution)
 
 
 # ============================================================
