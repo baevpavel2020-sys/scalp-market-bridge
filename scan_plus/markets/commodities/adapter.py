@@ -12,6 +12,7 @@ from scan_plus.core.analytical_engine import AnalyticalEngine, CanonicalPricePat
 from scan_plus.markets.commodities.loader import CommodityLoader
 from scan_plus.markets.commodities.context import build_commodity_context
 from scan_plus.markets.commodities.candidate import build_commodity_candidate
+from scan_plus.core.data_contract import normalize_candles
 from scan_plus.core.mtf_state import build_mtf_state
 
 
@@ -63,9 +64,10 @@ class CommoditiesMarketAdapter(MarketAdapter):
         interval=kwargs.get("interval","60")
         data=self._load(symbol,interval)
         rows=self._normalize(data.get("candles"))
+        rows, quality=normalize_candles(rows, symbol=symbol, interval=interval)
         return {"market":self.market,"symbol":symbol,"status":"OK",
                 "profile":self.profile(symbol),"source":data.get("source"),
-                "interval":interval,"bars":len(rows),"provider_error":data.get("error"),
+                "interval":interval,"bars":len(rows),"data_quality":quality,"provider_error":data.get("error"),
                 "provider_context":{k:v for k,v in data.items()
                                     if k not in {"candles"}}}
 
@@ -76,8 +78,10 @@ class CommoditiesMarketAdapter(MarketAdapter):
         for label,interval in (("5m","5"),("15m","15"),("1h","60"),("4h","240")):
             data=self._load(symbol,interval)
             rows=self._normalize(data.get("candles"))
+            rows, quality=normalize_candles(rows, symbol=symbol, interval=interval)
             frames[label]={
                 "bars":len(rows),
+                "data_quality":quality,
                 "provider_error":data.get("error"),
                 "analysis":self.engine.analyze_profiled(rows,profile.get("scan") or []),
                 "provider_context":{k:v for k,v in data.items() if k!="candles"},
