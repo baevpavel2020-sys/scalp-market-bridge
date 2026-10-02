@@ -75,6 +75,17 @@ class TestScanPlus(unittest.TestCase):
         self.assertTrue(out["windows"])
         self.assertEqual(out["windows"][0]["test_start"],rows[100]["start"])
 
+
+    def test_xstocks_daily_rejection_is_market_specific(self):
+        rows=[]
+        base=1700000000000
+        for i in range(35):
+            rows.append({"start":base+i*900000,"open":100,"high":101,"low":99,"close":100,"volume":100,"confirm":True})
+        rows[-1]["high"]=103; rows[-1]["close"]=100
+        out=detect_events("stocks","AAPLXUSDT",rows)
+        self.assertTrue(out["ready"])
+        self.assertTrue(any(e.get("event")=="daily_failed_high" for e in out["events"]))
+
     def test_context_events_survive(self):
         out=_dedupe_events([{"event":"session_context"},{"event":"inventory_event"}])
         self.assertEqual(len(out),2)
