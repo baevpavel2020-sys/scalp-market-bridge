@@ -8,6 +8,8 @@ from scan_plus.markets.crypto.adapter import CryptoMarketAdapter
 from scan_plus.markets.stocks.adapter import StocksMarketAdapter
 from scan_plus.markets.forex.adapter import ForexMarketAdapter
 from scan_plus.markets.commodities.adapter import CommoditiesMarketAdapter
+from scan_plus.markets.commodities.yahoo import YahooCommodityLoader
+
 
 
 def build_default_registry(*, commodity_fetcher=None, crypto_manager=None,
@@ -16,6 +18,5 @@ def build_default_registry(*, commodity_fetcher=None, crypto_manager=None,
     registry.register(CryptoMarketAdapter(manager=crypto_manager))
     registry.register(StocksMarketAdapter(loader=stocks_loader))
     registry.register(ForexMarketAdapter(loader=forex_loader))
-    if commodity_fetcher is not None:
-        registry.register(CommoditiesMarketAdapter(commodity_fetcher))
+    registry.register(CommoditiesMarketAdapter(commodity_fetcher or YahooCommodityLoader()))
     return registry
