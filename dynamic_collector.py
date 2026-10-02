@@ -4381,7 +4381,7 @@ class DynamicMarketManager:
         # ---------- V3.11 conditional LIMIT_PLAN ----------
         # A limit plan is a conditional order proposal, not a market-entry signal.
         # Offer it for a confirmed structural pullback/setup even when current-price
-        # RR is below 1.5. The proposed fill itself must still provide >=1.5R using
+        # RR is below 1.5. The proposA limit fill itself must provide >=2.0R using
         # the SAME thesis stop and T1. Never bypass hard invalidation.
         limit_plan={"eligible":False,"state":"NO_LIMIT_PLAN","reason":None}
         if state in ("WAIT_TRIGGER","WAIT_PULLBACK","WAIT_SETUP"):
@@ -4394,7 +4394,7 @@ class DynamicMarketManager:
                 and not any(r in market_reasons for r in ("invalidation_missing","target_missing","price_order_invalid"))
             )
             if lp_required:
-                min_rr=1.5
+                min_rr=2.0
                 # Exact entry boundary required to preserve min_rr with the SAME stop/T1.
                 if direction=="bullish":
                     rr_boundary=(t1 + min_rr*stop)/(1.0+min_rr)
@@ -4468,6 +4468,7 @@ class DynamicMarketManager:
                         },
                         "risk_reward":round(final_rr,3),
                         "minimum_rr":min_rr,
+                        "rr_basis":"limit_entry_to_stop_and_t1",
                         "rr_boundary":round(rr_boundary,10),
                         "entry_basis":{
                             "source":chosen["source"],"timeframe":chosen["timeframe"],
@@ -4501,7 +4502,7 @@ class DynamicMarketManager:
             "targets":{
                 "t1":t1,"t1_source":None if not target1 else f"{target1[2]}_{target1[1]}","t1_timeframe":None if not target1 else target1[1],
                 "t2":t2,"t2_source":None if not target2 else f"{target2[2]}_{target2[1]}","t2_timeframe":None if not target2 else target2[1],
-                "rr_basis":"t1","rule":"nearest_valid_scenario_target_same_intraday_scale_first"
+                "rr_basis":"scan_price_to_stop_and_t1","rule":"nearest_valid_scenario_target_same_intraday_scale_first"
             },
             "risk_reward":None if rr is None else round(rr,3),"risk_distance":risk,"reward_distance":reward,
             "trade_scale":{"stop_pct":None if stop_pct is None else round(stop_pct,4),"target_pct":None if target_pct is None else round(target_pct,4),"stop_atr":None if stop_atr is None else round(stop_atr,3),"valid":scale_ok,"reason":scale_reason,"execution_atr":atr,"invalidation_timeframe":inv_tf},
