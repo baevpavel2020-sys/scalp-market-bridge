@@ -7126,8 +7126,22 @@ class ScanJobManager:
 
     @classmethod
     def start_unified(cls, top_n=5, shortlist=30, markets=None):
-        payload={"top_n":int(top_n),"shortlist":int(shortlist),"markets":list(markets or ["crypto","stocks","forex","commodities"])}
-        jid=cls._new_job("unified",payload); cls._executor.submit(cls._run_job,jid); return cls.status(jid)
+        payload = {
+            "top_n": int(top_n),
+            "shortlist": int(shortlist),
+            "markets": list(markets or ["crypto", "stocks", "forex", "commodities"]),
+        }
+        with cls._lock:
+            for existing in cls._jobs.values():
+                if (
+                    existing.get("mode") == "unified"
+                    and existing.get("state") in ("QUEUED", "RUNNING")
+                    and existing.get("payload") == payload
+                ):
+                    return cls.status(existing["job_id"])
+            jid = cls._new_job("unified", payload)
+        cls._executor.submit(cls._run_job, jid)
+        return cls.status(jid)
 
     @classmethod
     def start_auto(cls, top_n=6, shortlist=30):
@@ -7172,7 +7186,11 @@ def start_scan_unified_job(top_n=5, shortlist=30, markets=None):
 
 
 def start_scan_auto_job(top_n=6, shortlist=30):
-    return ScanJobManager.start_auto(top_n=top_n, shortlist=shortlist)
+    return ScanJobManager.start_unified(
+        top_n=min(int(top_n), 5),
+        shortlist=shortlist,
+        markets=["crypto", "stocks", "forex", "commodities"],
+    )
 
 
 def start_scan_batch_job(symbols):
