@@ -6,7 +6,7 @@ from scan_plus.core.mtf_state import build_mtf_state
 class TimeMTFAuditTests(unittest.TestCase):
     def test_forming_bar_is_excluded(self):
         rows=[{"timestamp_ms":9999999999990,"open":1,"high":2,"low":1,"close":1.5}]
-        clean, quality=normalize_candles(rows,symbol="EURUSD",interval="1m",as_of_ms=10000000000000,closed_only=True)
+        clean, quality=normalize_candles(rows,symbol="EURUSD",interval="1m",as_of_ms=9999999999991,closed_only=True)
         self.assertEqual(clean,[])
         self.assertEqual(quality["closed_rejected_bars"],1)
 
