@@ -1,0 +1,21 @@
+name: Scan+ Code Audit
+
+on:
+  pull_request:
+  push:
+    branches: ["main"]
+    paths:
+      - "*.py"
+      - ".github/workflows/scanplus-audit.yml"
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile Python modules
+        run: python -m py_compile app.py dynamic_collector.py collector.py spot_collector.py multi_market_adapters.py market_event_engine.py pump_exhaustion.py scan_architecture.py
+      - name: Run architecture tests
+        run: python -m unittest -v test_scan_architecture.py
