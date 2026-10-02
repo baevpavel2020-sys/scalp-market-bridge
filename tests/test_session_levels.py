@@ -24,7 +24,7 @@ class SessionLevelAuditTests(unittest.TestCase):
     def test_completed_session_can_be_used(self):
         candles=[
             {"timestamp_ms":ms("2026-10-01T08:30:00+00:00"),"high":1.20,"low":1.10},
-            {"timestamp_ms":ms("2026-10-01T16:30:00+00:00"),"high":1.30,"low":1.05},
+            {"timestamp_ms":ms("2026-10-01T15:30:00+00:00"),"high":1.30,"low":1.05},
         ]
         out=session_high_low(
             candles,market="forex",session="london",
