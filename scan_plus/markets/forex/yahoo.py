@@ -6,6 +6,23 @@ than silently substituting daily candles.
 """
 import requests
 
+
+def _aggregate_4h(rows):
+    out=[]
+    bucket=None
+    for row in rows:
+        start=int(row["timestamp_ms"]) // 14400000
+        if bucket is None or bucket["bucket"]!=start:
+            if bucket is not None: out.append(bucket["row"])
+            bucket={"bucket":start,"row":dict(row)}
+            bucket["row"]["timestamp_ms"]=start*14400000
+        else:
+            r=bucket["row"]
+            r["high"]=max(r["high"],row["high"]); r["low"]=min(r["low"],row["low"])
+            r["close"]=row["close"]; r["volume"]+=row.get("volume",0) or 0
+    if bucket is not None: out.append(bucket["row"])
+    return out
+
 class YahooFXLoader:
     SYMBOL_SUFFIX="=X"
     INTERVALS={"5":"5m","15":"15m","60":"60m","240":"1h","d":"1d"}
@@ -40,6 +57,7 @@ class YahooFXLoader:
                              "volume":float((quote.get("volume") or [0]*len(timestamps))[i] or 0)})
             except (IndexError,TypeError,ValueError):
                 continue
+        if interval=="240": rows=_aggregate_4h(rows)
         if not rows: raise LookupError(f"Yahoo FX returned no candles: {symbol} {interval}")
         return {"source":"yahoo_chart","product":"fx","symbol":pair,
                 "interval":interval,"candles":rows}
