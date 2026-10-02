@@ -6,6 +6,8 @@ from collector import collector
 from spot_collector import spot_collector
 from dynamic_collector import (dynamic_manager, run_bybit_prescan_ws_probe, run_prescan, run_scan_auto, run_scan_single, run_scan_batch, start_scan_auto_job, start_scan_batch_job, get_scan_job)
 from scan_plus.markets.crypto.shadow_report import evaluate_recorded_symbol
+from scan_plus.default_registry import build_default_registry
+from scan_plus.multimarket import MultiMarketOrchestrator
 
 app = Flask(__name__)
 
@@ -58,6 +60,18 @@ def provider_test():
             "error": f"{type(exc).__name__}: {exc}",
             "source": "bybit_public_linear_websocket",
         }), 500
+
+
+@app.get("/scan-plus")
+def scan_plus():
+    try:
+        command=request.args.get("command","скан")
+        orchestrator=MultiMarketOrchestrator(build_default_registry())
+        return jsonify(orchestrator.scan(command))
+    except ValueError as exc:
+        return jsonify({"status":"FAIL","error":str(exc)}),400
+    except Exception as exc:
+        return jsonify({"status":"FAIL","error":f"{type(exc).__name__}: {exc}"}),500
 
 
 @app.get("/prescan")
