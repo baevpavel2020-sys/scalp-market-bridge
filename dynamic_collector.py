@@ -24,7 +24,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 
 import websocket
 from pump_exhaustion import detect as detect_pump_exhaustion
-from scan_intelligence import enrich_scan, WATCHLIST, relative_strength
+from scan_intelligence import enrich_scan, relative_strength
 
 
 # ============================================================
@@ -58,7 +58,7 @@ def fnum(value):
 # ============================================================
 
 KLINE_INTERVALS = ("1", "5", "15", "60", "240", "D")
-KLINE_LIMIT = 500
+KLINE_LIMIT = 2000
 CANDLE_STORE_DIR = os.environ.get(
     "CANDLE_STORE_DIR",
     "/tmp/scalp-market-bridge/candles",
@@ -73,7 +73,7 @@ BINANCE_INTERVALS = {
     "240": "4h",
     "D": "1d",
 }
-BINANCE_SEED_MONTHS = 30
+BINANCE_SEED_MONTHS = 72
 
 
 class MarketStream:
@@ -3496,7 +3496,12 @@ class DynamicMarketManager:
             last_event=structure.get("last_event") or {}
             event_dir=last_event.get("direction")
             event_type=last_event.get("type")
-            event_confirmed=bool(last_event.get("confirmed") or last_event.get("valid") or event_type in ("BOS","CHoCH"))
+            # Price discovery is an event, not a direction rewrite. A same-TF
+            # structure event may change effective direction only after close confirmation.
+            event_confirmed=(
+                bool(last_event.get("confirmed_by_close") or last_event.get("confirmed"))
+                and event_type in ("BOS", "CHoCH")
+            )
             if pending_direction and event_confirmed and event_dir==pending_direction:
                 effective_direction=pending_direction
             elif pending_direction:
@@ -4349,7 +4354,7 @@ class DynamicMarketManager:
         if stop is None: market_reasons.append("invalidation_missing")
         if t1 is None: market_reasons.append("target_missing")
         if not order_ok: market_reasons.append("price_order_invalid")
-        if rr is None or rr<1.5: market_reasons.append("rr_below_1_5")
+        if rr is None or rr<MIN_RR: market_reasons.append("rr_below_min_2_0")
         if not scale_ok: market_reasons.append(scale_reason or "scale_mismatch")
         if setup_state=="pullback": exec_reasons.append("setup_pullback_active")
         elif setup_state!="aligned": exec_reasons.append("setup_not_aligned")
@@ -4364,7 +4369,7 @@ class DynamicMarketManager:
         elif direction=="neutral" or "direction_provisional" in market_reasons:
             # A missed entry cannot be declared before the directional thesis exists.
             state="WAIT_DIRECTION"; block_class="MARKET_BLOCK"; retry=True
-        elif any(r in market_reasons for r in ("invalidation_missing","target_missing","price_order_invalid","rr_below_1_5","invalidation_from_htf","stop_too_many_atr","stop_pct_too_large","scale_mismatch")):
+        elif any(r in market_reasons for r in ("invalidation_missing","target_missing","price_order_invalid","rr_below_min_2_0","invalidation_from_htf","stop_too_many_atr","stop_pct_too_large","scale_mismatch")):
             state="INVALID"; block_class="MARKET_BLOCK"; retry=False
         elif missed_entry:
             state="MISSED_ENTRY"; block_class="EXECUTION_BLOCK"; retry=True
@@ -4810,15 +4815,7 @@ class DynamicMarketManager:
             "manipulation": detect_pump_exhaustion(linear, full.get("spot",{}))
         }
         result["_frames"]={tf:list(rows) for tf,rows in (linear.get("candles") or {}).items()}
-        result["regime"]={"composite":__import__("scan_intelligence").classify_regime_from_analysis(result.get("timeframes") or {})}
-        result["mtf_matrix"]=__import__("scan_intelligence").mtf_state_matrix(result.get("timeframes") or {})
-        result["intelligence_version"]="intelligence_v1"
-        result["alert"]=__import__("scan_intelligence").alert_payload(result)
-        watch=WATCHLIST.upsert(result)
-        result["watchlist"]=watch
-        if watch and watch.get("state_changed"):
-            __import__("scan_intelligence").OUTCOMES.record(result)
-        return result
+        return enrich_scan(result, market="crypto")
 
     def replay_no_lookahead(self, candles_by_tf, checkpoints=None):
         """Deterministic prefix replay for regression tests.

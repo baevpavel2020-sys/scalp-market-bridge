@@ -1,0 +1,26 @@
+name: Scan+ CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  python-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Compile Python
+        run: |
+          python -m py_compile app.py dynamic_collector.py multi_market_adapters.py market_event_engine.py pump_exhaustion.py scan_architecture.py scan_intelligence.py test_scanplus.py
+      - name: Unit tests
+        run: python -m unittest -v test_scanplus.py
