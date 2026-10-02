@@ -109,9 +109,8 @@ def fetch_candles(symbol: str, category: str, interval: str, bars: int) -> list[
             break
         end_ms = next_end
 
-        # Bybit returns newest-first. A full page normally means we can continue.
-        if len(batch) < PAGE_LIMIT:
-            break
+        # Keep paging until the requested history is collected or the provider
+        # returns no older data. A short page is not necessarily end-of-history.
 
     return [rows[k] for k in sorted(rows)[-target:]]
 
