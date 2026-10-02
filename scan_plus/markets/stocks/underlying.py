@@ -12,11 +12,17 @@ class UnderlyingProvider:
         self.fetcher=fetcher
 
     def quote(self, symbol) -> Mapping:
-        raw=self.fetcher(str(symbol).upper())
+        requested=str(symbol).upper()
+        raw=self.fetcher(requested)
         if not isinstance(raw, Mapping):
             raise TypeError("underlying provider must return a mapping")
         data={str(k):v for k,v in raw.items()}
-        data.setdefault("symbol",str(symbol).upper())
+        returned=str(data.get("symbol") or data.get("ticker") or requested).upper().replace("/","")
+        if returned not in {requested, requested+"=X"}:
+            raise ValueError(
+                f"underlying symbol provenance mismatch: requested={requested}, returned={returned}"
+            )
+        data["symbol"]=requested
         return data
 
     @staticmethod
