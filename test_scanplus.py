@@ -74,7 +74,7 @@ class TestScanPlus(unittest.TestCase):
         event={"ready":True,"reference":{"atr":1.0},"events":[{"event":"failed_breakout","direction":"bearish","confidence":"high","level":102}]}
         core={"analysis":{
             "5m":{"ready":True,"regime_levels":{"supports":[99.0],"resistances":[105.0]},"technical":{"atr14":1.0}},
-            "15m":{"ready":True,"last_confirmed_close":100.0,"regime_levels":{"supports":[99.0,97.0],"resistances":[105.0]},"technical":{"atr14":1.0}},
+            "15m":{"ready":True,"last_confirmed_close":100.0,"structure":{"state":"downtrend"},"regime_levels":{"supports":[99.0,97.0],"resistances":[105.0]},"technical":{"atr14":1.0}},
             "1h":{"ready":True,"structure":{"state":"downtrend"},"regime_levels":{"supports":[97.0],"resistances":[104.0]}},
             "4h":{"ready":True,"regime_levels":{"supports":[95.0],"resistances":[110.0]}},
         }}
