@@ -8,7 +8,7 @@ from spot_collector import spot_collector
 from dynamic_collector import (dynamic_manager, run_bybit_prescan_ws_probe, run_prescan, start_scan_auto_job, start_scan_unified_job, start_scan_batch_job, get_scan_job)
 from multi_market_adapters import ExternalMarketAdapter, external_universe, MarketProfileRouter
 from market_event_engine import detect_events, build_setup_plan
-from scan_intelligence import WATCHLIST, backtest_event_setups
+from scan_intelligence import WATCHLIST, backtest_event_setups, edge_discovery
 
 app = Flask(__name__)
 
@@ -156,7 +156,12 @@ def intelligence_backtest(symbol):
 @app.get("/intelligence/watchlist")
 def intelligence_watchlist():
     market=request.args.get("market")
-    return jsonify({"version":"intelligence_v1","items":WATCHLIST.snapshot(market=market)})
+    return jsonify({"version":"intelligence_v2","items":WATCHLIST.snapshot(market=market)})
+
+
+@app.get("/intelligence/edge")
+def intelligence_edge():
+    return jsonify(edge_discovery())
 
 @app.get("/scan-live")
 def scan_live():
