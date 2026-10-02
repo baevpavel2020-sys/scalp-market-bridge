@@ -169,8 +169,24 @@ class TestScanPlus(unittest.TestCase):
         self.assertEqual(out["not_filled"], 0)
         self.assertEqual(out["samples"], 1)
 
-    def test_intelligence_version_is_v2(self):
-        self.assertEqual(enrich_scan({"symbol":"V2","market":"crypto","setup":{}})["intelligence_version"], "intelligence_v2")
+    def test_intelligence_version_and_funnel(self):
+        out=enrich_scan({"symbol":"V3","market":"crypto","setup":{"direction":"bullish","risk_reward":1.4,"trade_state":"WAIT_TRIGGER"}})
+        self.assertEqual(out["intelligence_version"], "intelligence_v3_opportunity_funnel")
+        self.assertEqual(out["opportunity_funnel"]["stage"], "DEVELOPING")
+        self.assertFalse(out["opportunity_funnel"]["trade_authorized"])
+
+    def test_funnel_hard_invalidation_never_becomes_trade(self):
+        from scan_intelligence import opportunity_funnel
+        out=opportunity_funnel({"direction":"bullish","risk_reward":4.0,"trade_state":"SETUP","trigger_confirmed":True,
+                                "hard_invalidations":[{"reason":"structure_break"}]}, True, True)
+        self.assertNotEqual(out["stage"], "TRADE")
+        self.assertFalse(out["trade_authorized"])
+
+    def test_execution_contract_separates_analysis_from_broker(self):
+        from scan_intelligence import execution_contract
+        out=execution_contract("forex", True, False, "broker_not_configured")
+        self.assertEqual(out["status"], "TRADE_READY_ANALYSIS_EXECUTION_UNAVAILABLE")
+        self.assertFalse(out["broker_execution_ready"])
 
     def test_alert_duplicate_suppression(self):
         scan={"symbol":"REPEATUSDT","direction":"SHORT","setup":{"opportunity_state":"LIMIT_READY","limit_plan":{"entry":100,"stop":105,"take_profit":90,"rr":2.0},"event_basis":[{"event":"failed_breakout","direction":"bearish","level":100}]}}
