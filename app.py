@@ -5,7 +5,7 @@ from flask import Flask, jsonify, request
 
 from collector import collector
 from spot_collector import spot_collector
-from dynamic_collector import (dynamic_manager, run_bybit_prescan_ws_probe, run_prescan, start_scan_auto_job, start_scan_unified_job, start_scan_batch_job, get_scan_job)
+from dynamic_collector import (dynamic_manager, run_bybit_prescan_ws_probe, run_prescan, start_scan_auto_job, start_scan_unified_job, start_scan_batch_job, get_scan_job, get_latest_unified_scan_job)
 from multi_market_adapters import ExternalMarketAdapter, external_universe, MarketProfileRouter
 from market_event_engine import detect_events, build_setup_plan
 from scan_intelligence import WATCHLIST, backtest_event_setups, walk_forward_backtest, edge_discovery
@@ -304,6 +304,32 @@ def scan_batch_start():
         return jsonify({"error": str(exc)}), 400
     except Exception as exc:
         return jsonify({"status":"FAIL","error":f"{type(exc).__name__}: {exc}"}), 500
+
+
+@app.get("/scan-check")
+def scan_check():
+    """Read-only canonical check: never starts a job."""
+    try:
+        job = get_latest_unified_scan_job()
+        if job is None:
+            return jsonify({
+                "status": "NO_SCAN",
+                "message": "No unified Scan job exists in the current process.",
+            }), 404
+        active = job.get("state") in ("QUEUED", "RUNNING")
+        return jsonify({
+            "status": "RUNNING" if active else job.get("state"),
+            "active": active,
+            "job": job,
+        }), 200
+    except Exception as exc:
+        return jsonify({"status":"FAIL","error":f"{type(exc).__name__}:{exc}"}),500
+
+
+@app.get("/scan-latest")
+def scan_latest():
+    """Alias for the read-only canonical Scan check endpoint."""
+    return scan_check()
 
 
 @app.get("/scan-job/<job_id>")
