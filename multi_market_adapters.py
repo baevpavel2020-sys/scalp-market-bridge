@@ -196,6 +196,16 @@ class ExternalMarketAdapter:
         result={"market":market,"symbol":symbol,"adapter_version":self.VERSION,"provider":provider,"configured":configured,"analysis_ready":ready,"execution_ready":False,"execution_reason":"external_market_execution_connector_not_configured","frames":frames,"quote":quote,"analysis_core":analysis_core,"events":events,"setup_plans":setup,"errors":errors,"capabilities":{"ohlcv":True,"realtime_quote":True,"orderbook":False,"open_interest":False,"funding":False,"spot_cvd":False},"market_profile":market_profile(market),"session_context":session_context(market),"data_quality":{"state":"READY" if ready else "PARTIAL","missing_timeframes":[tf for tf in ("1D","4h","1h","15m","5m") if len(frames.get(tf,[]))<50]}}
         return enrich_external_result(result,market)
 def external_universe():
-    try: stocks=bybit_xstocks_top15()
-    except Exception: stocks=list(DEFAULT_STOCKS)
-    return {"forex":list(FOREX),"commodities":list(COMMODITIES),"stocks":stocks}
+    try:
+        stocks = bybit_xstocks_top15()
+        source = "bybit_xstocks"
+    except Exception as exc:
+        # Public fallback keeps unified scanning alive if xStocks discovery is unavailable.
+        stocks = list(STOCKS)
+        source = f"fallback:{type(exc).__name__}"
+    return {
+        "forex": list(FOREX),
+        "commodities": list(COMMODITIES),
+        "stocks": stocks,
+        "_meta": {"stocks_source": source},
+    }
