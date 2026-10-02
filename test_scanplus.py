@@ -1,7 +1,7 @@
 import unittest
 from market_event_engine import _dedupe_events, detect_events, build_setup_plan
 from scan_architecture import MIN_RR
-from scan_intelligence import classify_regime, relative_strength, WatchlistStore, alert_payload
+from scan_intelligence import classify_regime, relative_strength, WatchlistStore, alert_payload, enrich_scan
 class TestScanPlus(unittest.TestCase):
     def test_context_events_survive(self):
         out=_dedupe_events([{"event":"session_context"},{"event":"inventory_event"}])
@@ -60,6 +60,13 @@ class TestScanPlus(unittest.TestCase):
     def test_alert_requires_new_state_or_event(self):
         scan={"symbol":"TESTUSDT","direction":"SHORT","setup":{"opportunity_state":"LIMIT_READY","limit_plan":{"entry":100,"stop":105,"take_profit":90,"rr":2.0}}}
         self.assertTrue(alert_payload(scan)["eligible"])
+
+    def test_alert_is_suppressed_on_identical_repeat(self):
+        scan={"symbol":"REPEATUSDT","direction":"SHORT","setup":{"opportunity_state":"LIMIT_READY","limit_plan":{"entry":100,"stop":105,"take_profit":90,"rr":2.0},"event_basis":[{"event":"failed_breakout","direction":"bearish","level":100}]}}
+        first=enrich_scan(scan)
+        second=enrich_scan(scan)
+        self.assertTrue(first["alert"]["eligible"])
+        self.assertFalse(second["alert"]["eligible"])
 
 if __name__=="__main__":
     unittest.main()
