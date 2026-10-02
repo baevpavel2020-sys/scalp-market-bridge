@@ -622,3 +622,36 @@ if __name__=="__main__":
         out=opportunity_funnel(setup,True,True)
         self.assertNotEqual(out["stage"],"TRADE")
         self.assertFalse(out["trade_authorized"])
+
+    def test_v4_block4_pump_never_authorizes_immediate_short(self):
+        from liquidity_leverage_engine import detect
+        linear={"flow":{"5m":{"price_change_pct":3.0,"delta_ratio":0.6},"1m":{"delta_ratio":0.2}},
+                "ticker":{"lastPrice":"103"},"orderbook":{"imbalance_50":-0.3},
+                "open_interest":{"windows":{"5m":{"change_pct":2.0}}},"funding_rate":0.001}
+        spot={"flow":{"5m":{"price_change_pct":0.3,"delta_ratio":0.1}}}
+        out=detect(linear,spot,{})
+        self.assertFalse(out["trade_authority"])
+        self.assertEqual(out["execution"],"NO_SHORT_UNTIL_CAUSAL_CONFIRMATION")
+        self.assertNotEqual(out["direction"],"SHORT")
+
+    def test_v4_block4_related_leverage_events_are_deduplicated(self):
+        from liquidity_leverage_engine import dedupe_related
+        ev=[{"type":"PUMP_EXHAUSTION","direction":"bearish","score":7},
+            {"type":"CROWDED_LONGS","direction":"bearish","score":1},
+            {"type":"LEVERAGE_FRAGILITY","direction":None,"score":1}]
+        out=dedupe_related(ev)
+        self.assertEqual(len(out),1)
+        self.assertEqual(out[0]["type"],"PUMP_EXHAUSTION")
+        self.assertEqual({x["type"] for x in out[0]["related_evidence"]},{"CROWDED_LONGS","LEVERAGE_FRAGILITY"})
+
+    def test_v4_block4_causal_chain_required_for_confirmation(self):
+        from liquidity_leverage_engine import advance_lifecycle
+        base={"type":"PUMP_EXHAUSTION","direction":"bearish","stage":"DETECTED"}
+        self.assertEqual(advance_lifecycle(base,failed_acceptance=True)["stage"],"DEVELOPING")
+        self.assertEqual(advance_lifecycle(base,failed_acceptance=True,structure_break=True,failed_retest=True)["stage"],"CONFIRMED")
+        self.assertFalse(advance_lifecycle(base,failed_acceptance=True,structure_break=True,failed_retest=True)["trade_authority"])
+
+    def test_v4_block4_x25_is_not_enabled_by_event_detector(self):
+        from liquidity_leverage_engine import detect
+        out=detect({"flow":{}},{},{})
+        self.assertFalse(out["x25_profile"]["allowed"])
