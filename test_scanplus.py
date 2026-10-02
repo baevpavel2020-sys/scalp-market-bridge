@@ -368,6 +368,22 @@ class TestScanPlus(unittest.TestCase):
             ScanJobManager._jobs.clear()
             ScanJobManager._jobs.update(original)
 
+    def test_stage11_prescan_timeout_is_explicitly_bounded(self):
+        from dynamic_collector import ScanJobManager
+        self.assertGreaterEqual(ScanJobManager.JOB_PRESCAN_TIMEOUT, 20.0)
+        self.assertLessEqual(ScanJobManager.JOB_PRESCAN_TIMEOUT, 60.0)
+
+    def test_stage11_auto_queue_guard_returns_existing_equivalent_job(self):
+        from dynamic_collector import ScanJobManager
+        original = dict(ScanJobManager._jobs)
+        try:
+            ScanJobManager._jobs.clear()
+            first = ScanJobManager._new_job("auto", {"top_n": 6, "shortlist": 30})
+            self.assertEqual(ScanJobManager.status(first)["state"], "QUEUED")
+        finally:
+            ScanJobManager._jobs.clear()
+            ScanJobManager._jobs.update(original)
+
     def test_stage11_canonical_scan_command_is_nonblocking(self):
         from app import app
         client = app.test_client()
