@@ -6,7 +6,7 @@ This layer is analysis-only until a broker/execution connector is explicitly add
 import concurrent.futures
 import json, math, os, threading, time, urllib.parse, urllib.request
 from market_event_engine import detect_events, build_setup_plan
-from scan_intelligence import enrich_external_result
+from scan_intelligence import enrich_external_result, relative_strength
 from datetime import datetime, timezone
 try:
     from zoneinfo import ZoneInfo
