@@ -9,6 +9,7 @@ VERSION="scan_architecture_v1"
 
 MARKETS=("crypto","stocks","forex","commodities")
 OPPORTUNITY_STATES=("MARKET_READY","LIMIT_READY","WATCH")
+MIN_RR=2.0
 
 def opportunity_state(setup):
     setup=setup or {}

@@ -16,6 +16,7 @@ def _dedupe_events(events):
             cur.setdefault("confirmations",[]).append(e.get("event"))
     return list(groups.values())
 from datetime import datetime,timezone
+from scan_architecture import MIN_RR
 try:
  from zoneinfo import ZoneInfo
 except ImportError:
@@ -88,8 +89,8 @@ def build_setup_plan(market,symbol,rows,result):
  e=next((x for x in ds if x["event"] in ("failed_breakout","failed_breakdown")),ds[0])
  direction=e["direction"]; entry=float(e.get("level",c["close"]))
  if direction=="bearish":
-  stop=max(c["high"],entry+.15*atr); risk=stop-entry; target=entry-1.8*risk
+  stop=max(c["high"],entry+.15*atr); risk=stop-entry; target=entry-MIN_RR*risk
  else:
-  stop=min(c["low"],entry-.15*atr); risk=entry-stop; target=entry+1.8*risk
+  stop=min(c["low"],entry-.15*atr); risk=entry-stop; target=entry+MIN_RR*risk
  if risk<=0:return {"ready":True,"tradeable":False,"reason":"invalid_geometry"}
- return {"ready":True,"tradeable":True,"execution_ready":False,"execution_mode":"conditional_limit_or_trigger","market":market,"symbol":symbol,"direction":direction,"trigger":{"type":"retest","level":round(entry,10),"condition":"price_retests_level_and_confirms_rejection"},"limit_plan":{"entry":round(entry,10),"stop":round(stop,10),"take_profit":round(target,10),"rr":1.8,"risk_distance":round(risk,10)},"event_basis":[e],"notes":["Closed-candle structural level only.","No broker order is sent.","OI/funding/liquidation/CVD/orderbook are never inferred."]}
+ return {"ready":True,"tradeable":True,"execution_ready":False,"execution_mode":"conditional_limit_or_trigger","market":market,"symbol":symbol,"direction":direction,"trigger":{"type":"retest","level":round(entry,10),"condition":"price_retests_level_and_confirms_rejection"},"limit_plan":{"entry":round(entry,10),"stop":round(stop,10),"take_profit":round(target,10),"rr":MIN_RR,"minimum_rr":MIN_RR,"rr_basis":"limit_entry_to_stop_and_take_profit","risk_distance":round(risk,10)},"event_basis":[e],"notes":["Closed-candle structural level only.","No broker order is sent.","OI/funding/liquidation/CVD/orderbook are never inferred."]}
