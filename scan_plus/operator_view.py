@@ -2,6 +2,8 @@ from typing import Any, Mapping
 
 
 def build_operator_view(decision: Mapping[str, Any], candidate_limit=10, watch_limit=8):
+    candidate_limit=max(0,int(candidate_limit))
+    watch_limit=max(0,int(watch_limit))
     results=list(decision.get('results') or [])
     candidates=[x for x in results if x.get('status') in ('CANDIDATE','SETUP')]
     watches=[x for x in results if x.get('status')=='WATCH']
