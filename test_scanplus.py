@@ -215,6 +215,35 @@ class TestScanPlus(unittest.TestCase):
         from pump_exhaustion import detect
         self.assertEqual(detect({}, {}).get("signal"), "NONE")
 
+    def test_v38_hard_invalidation_blocks_trade(self):
+        from analytical_depth import analytical_depth_snapshot, apply_hard_invalidations
+        setup={"tradeable":True,"execution_ready":True,"direction":"bullish",
+               "limit_plan":{"entry":100,"stop":95,"take_profit":110}}
+        depth=analytical_depth_snapshot(setup, {"15m":{"structure":{"hard_invalidated":True,"invalidation_reason":"BOS invalidated"}}})
+        blocked=apply_hard_invalidations(setup, depth["hard_invalidations"])
+        self.assertTrue(blocked["invalidated"])
+        self.assertFalse(blocked["tradeable"])
+        self.assertFalse(blocked["execution_ready"])
+        self.assertEqual(blocked["opportunity_state"],"WATCH")
+
+    def test_v38_conflict_resolver_uses_authority_not_vote_count(self):
+        from analytical_depth import build_evidence_graph, resolve_conflicts
+        graph=build_evidence_graph([
+            {"source":"structure","kind":"direction","value":"bearish","timeframe":"1h"},
+            {"source":"elliott","kind":"direction","value":"bullish","timeframe":"1h"},
+            {"source":"harmonics","kind":"direction","value":"bullish","timeframe":"1h"},
+        ])
+        result=resolve_conflicts(graph)
+        self.assertEqual(result["direction"],"bearish")
+        self.assertEqual(result["authority_source"],"structure")
+        self.assertEqual(result["conflict_count"],2)
+
+    def test_v38_swept_target_cannot_remain_valid(self):
+        from analytical_depth import derive_hard_invalidations
+        setup={"tradeable":True,"limit_plan":{"take_profit":{"price":110,"swept":True}}}
+        invalidations=derive_hard_invalidations(setup,{})
+        self.assertTrue(any(x["reason"]=="target_liquidity_already_swept" for x in invalidations))
+
     def test_price_discovery_does_not_rewrite_unconfirmed_mtf_direction(self):
         linear={"analysis":{"15":{"regime_levels":{"atr":1.0},"structure":{
             "degrees":{"minor":{"last_points":[{"price":100.0}]}},
