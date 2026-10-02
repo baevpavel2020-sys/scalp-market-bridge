@@ -45,4 +45,5 @@ def extract_crypto_observables(scan: Mapping[str, Any]):
         "trade_state":scan.get("trade_state"),
         "setup":scan.get("setup") or {},
         "direction":scan.get("direction") or {},
+        "liquidations":ex.get("liquidations") or {},
     }
