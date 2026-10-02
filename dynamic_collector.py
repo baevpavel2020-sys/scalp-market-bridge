@@ -3738,8 +3738,9 @@ class DynamicMarketManager:
         horizon_cap={0:0.0,1:0.55,2:0.75,3:0.90,4:0.97}.get(len(agreeing_ready),0.97)
         overall_conf=min(category_share, strongest, horizon_cap)
 
-        imbalance=book.get("imbalance_50") if book.get("ready") else None
+        liquidation_metrics=linear.get("liquidations") or {}
         pressure="neutral"
+        imbalance=book.get("imbalance_50") if book.get("ready") else None
         if imbalance is not None:
             pressure="bullish" if imbalance>=0.12 else "bearish" if imbalance<=-0.12 else "neutral"
 
@@ -3789,6 +3790,7 @@ class DynamicMarketManager:
             "funding_rate":funding,
             "open_interest_current":oi.get("current"),
             "oi_context":oi_context,
+            "liquidations":liquidation_metrics,
             "driver":{
                 "primary":overall_driver,
                 "confidence":round(overall_conf,4),
