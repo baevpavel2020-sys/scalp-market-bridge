@@ -117,6 +117,7 @@ class ForexMarketAdapter(MarketAdapter):
             frames[label]={
                 "bars":len(rows),
                 "data_quality":quality,
+                "latest_close":rows[-1].get("close") if rows else None,
                 "provider_error":data.get("error"),
                 "analysis":self.engine.analyze_profiled(rows,profile.get("scan") or []),
                 "sessions":sessions,
@@ -152,13 +153,7 @@ class ForexMarketAdapter(MarketAdapter):
             active_sessions=active,
             overlap=session_overlap("forex",latest_ts),
         )
-        latest_price=None
-        latest_frame=frames.get("5m") or {}
-        analysis=latest_frame.get("analysis") or {}
-        latest_price=analysis.get("last_close")
-        if latest_price is None:
-            rows_source=latest_frame.get("data_quality") or {}
-            latest_price=rows_source.get("last_close")
+        latest_price=(frames.get("5m") or {}).get("latest_close")
         limit_plan=build_forex_execution_plan(
             candidate=candidate, frames=frames, price=latest_price, symbol=symbol
         ) if latest_price is not None else {"status":"WAIT","reason":"latest_price_unavailable"}
