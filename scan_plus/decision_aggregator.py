@@ -89,11 +89,21 @@ def aggregate_results(results):
         if not isinstance(item, Mapping):
             errors.append({"status": "DATA_ERROR", "reason": "non_mapping_result"})
             continue
-        if item.get("status") == "DATA_ERROR":
-            errors.append(dict(item))
+        if item.get("status") in ("DATA_ERROR","NO_UNIVERSE"):
+            error=dict(item)
+            if error.get("status")=="NO_UNIVERSE":
+                error["status"]="DATA_ERROR"
+                error["error"]=error.get("reason","market_native_universe_unavailable")
+            errors.append(error)
             continue
         payload = item.get("result") if isinstance(item.get("result"), Mapping) else item
         try:
+            wrapper_market=str(item.get("market") or "").lower()
+            payload_market=str(payload.get("market") or "").lower()
+            if wrapper_market and payload_market and wrapper_market != payload_market:
+                raise ValueError(
+                    f"market provenance mismatch: wrapper={wrapper_market}, payload={payload_market}"
+                )
             normalized.append(normalize_result(payload))
         except (TypeError, ValueError, AttributeError) as exc:
             errors.append({
