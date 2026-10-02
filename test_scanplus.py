@@ -321,6 +321,69 @@ class TestScanPlus(unittest.TestCase):
         self.assertGreaterEqual(analysis["technical"]["ema200"],100)
         self.assertIn(analysis["structure"]["state"],("uptrend","range_or_transition","downtrend"))
 
+    def test_stage5_prescan_status_contract(self):
+        from app import app
+        with app.test_client() as client:
+            response = client.get("/prescan/status")
+            self.assertEqual(response.status_code, 200)
+            data = response.get_json()
+            self.assertIn("providers", data)
+            self.assertEqual(data["providers"], ["okx_swap_rest", "kucoin_futures_rest", "binance_spot_marketdata"])
+            self.assertGreaterEqual(data["history_workers"], 1)
+            self.assertGreaterEqual(data["analysis_workers"], 1)
+
+    def test_stage5_provider_rows_reject_nan_and_stale_data(self):
+        from dynamic_collector import OnDemandPreScanService
+        good = [{
+            "start": 1700000000000,
+            "end": 1700000299999,
+            "open": 100,
+            "high": 101,
+            "low": 99,
+            "close": 100.5,
+            "volume": 100,
+        } for _ in range(120)]
+        clean, err = OnDemandPreScanService._validate_provider_rows(good, "5")
+        self.assertEqual(err, "stale_history")
+        self.assertEqual(clean, [])
+        bad = dict(good[0])
+        bad["open"] = float("nan")
+        clean, err = OnDemandPreScanService._validate_provider_rows([bad], "5")
+        self.assertEqual(err, "insufficient_history")
+        self.assertEqual(clean, [])
+
+    def test_stage5_history_price_sanity_blocks_cross_venue_mismatch(self):
+        from dynamic_collector import OnDemandPreScanService
+        histories = {tf: [{"close": 100.0}] for tf in ("5","15","60")}
+        ok, reason, ratio = OnDemandPreScanService._history_price_sanity({"lastPrice": 150.0}, histories)
+        self.assertFalse(ok)
+        self.assertEqual(reason, "cross_venue_price_mismatch")
+        self.assertGreater(ratio, 1.35)
+
+    def test_stage6_job_status_is_nonblocking_and_idempotent(self):
+        from dynamic_collector import ScanJobManager
+        payload = {"symbols":["BTCUSDT"]}
+        jid = ScanJobManager._new_job("batch", payload)
+        same = ScanJobManager._new_job("batch", payload)
+        self.assertEqual(jid, same)
+        status = ScanJobManager.status(jid)
+        self.assertEqual(status["state"], "QUEUED")
+        self.assertEqual(status["job_id"], jid)
+        ScanJobManager._patch(jid, state="DONE", result={"ok":True})
+        self.assertEqual(ScanJobManager.status(jid)["result"], {"ok":True})
+
+    def test_stage6_job_routes_return_202_and_job_id(self):
+        from app import app
+        from unittest.mock import patch
+        fake={"job_id":"testjob123","state":"QUEUED"}
+        with patch("app.start_scan_batch_job", return_value=fake):
+            with app.test_client() as client:
+                response = client.get("/scan-batch?symbols=BTCUSDT")
+                self.assertEqual(response.status_code, 202)
+                data = response.get_json()
+                self.assertEqual(data["job_id"], "testjob123")
+                self.assertEqual(data["state"], "QUEUED")
+
     def test_price_discovery_does_not_rewrite_unconfirmed_mtf_direction(self):
         linear={"analysis":{"15":{"regime_levels":{"atr":1.0},"structure":{
             "degrees":{"minor":{"last_points":[{"price":100.0}]}},
