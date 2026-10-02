@@ -29,7 +29,7 @@ def _shared_confirmation(frames, structure_tf):
     )
 
 
-def build_stock_candidate(*, frames, gap, underlying, ticker, session=None):
+def build_stock_candidate(*, frames, gap, underlying, ticker, session=None, symbol=None):
     gap_info=classify_gap(gap or {})
     structure,structure_tf=_structure_state(frames or {})
     fibo,fibo_tf=_shared_confirmation(frames or {},structure_tf)
