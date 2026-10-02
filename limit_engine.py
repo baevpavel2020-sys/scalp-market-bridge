@@ -34,8 +34,9 @@ def _atr(analysis):
         if v and v>0: return v
     return None
 
-def _source_levels(analysis, direction, price):
-    """Return candidates from structure plus optional shared level families."""
+def _source_levels(analysis, direction, price, enabled=None):
+    """Return candidates from structure plus only policy-enabled level families."""
+    enabled=set(enabled or ())
     if direction=="bullish":
         pairs=[("support","5m"),("support","15m"),("support","1h"),("support","4h")]
         side="supports"
@@ -53,6 +54,8 @@ def _source_levels(analysis, direction, price):
     # Optional precomputed analytical levels. These are evidence, never direction.
     for tf,item in analysis.items():
         for container_name in ("fibonacci","harmonics","liquidity","smart_money","levels"):
+            if container_name not in enabled and container_name!="levels":
+                continue
             container=item.get(container_name) if isinstance(item,dict) else None
             if not isinstance(container,dict): continue
             for key in ("entry","prz","retest","fvg","ob","breaker","mitigation","support","resistance","level"):
@@ -98,7 +101,9 @@ def generate_candidates(market,symbol,analysis_core,direction,max_candidates=3):
     if not _freshness_ok(analysis): return []
     atr=_atr(analysis)
     tolerance=max((atr or price*0.001)*0.12,price*0.0001)
-    raw=_source_levels(analysis,direction,price)
+    policy=market_block_policy(market)
+    enabled=set(policy.get("enabled") or ())
+    raw=_source_levels(analysis,direction,price,enabled=enabled)
     candidates=_dedupe(raw,tolerance)
     # Prefer the closest valid structural retest, then deeper liquidity/cluster zones.
     if direction=="bullish":
