@@ -109,7 +109,8 @@ def scan_markets():
             market=market.strip().lower()
             if market not in universe: continue
             symbols=universe[market]
-            out["markets"][market]=[adapter.scan(market,s) for s in symbols] if adapter.configured else {
+            market_ready = adapter.configured or market=="stocks"
+            out["markets"][market]=[adapter.scan(market,s) for s in symbols] if market_ready else {
                 "status":"DATA_BLOCK","reason":"TWELVE_DATA_API_KEY_not_configured","symbols":symbols}
         return jsonify(out)
     except Exception as exc:
