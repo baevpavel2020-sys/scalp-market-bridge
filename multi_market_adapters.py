@@ -3,13 +3,21 @@ Multi-market external data adapters for Scan+.
 Provider: Twelve Data, configured with TWELVE_DATA_API_KEY.
 This layer is analysis-only until a broker/execution connector is explicitly added.
 """
-import json, os, urllib.parse, urllib.request
+import json, math, os, threading, time, urllib.parse, urllib.request
+from datetime import datetime, timezone
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    ZoneInfo = None
 
 BASE="https://api.twelvedata.com"
 TF={"1m":"1min","5m":"5min","15m":"15min","1h":"1h","4h":"4h","1D":"1day"}
 FOREX=("EUR/USD","GBP/USD","USD/JPY","USD/CHF","AUD/USD","NZD/USD","USD/CAD","EUR/GBP","EUR/JPY","GBP/JPY")
 COMMODITIES=("XAU/USD","XAG/USD","WTI/USD","BRENT/USD","HG1")
 STOCKS=("AAPL","MSFT","NVDA","AMZN","META","GOOGL","TSLA","AMD","NFLX","AVGO","JPM","XOM")
+_XSTOCKS_CACHE={"expires":0.0,"symbols":None}
+_XSTOCKS_CACHE_LOCK=threading.Lock()
+_XSTOCKS_CACHE_TTL=60.0
 
 
 BYBIT_BASE="https://api.bybit.com"
@@ -20,12 +28,20 @@ def _bybit_get(path,params):
     return data
 
 def bybit_xstocks_top15():
+    now=time.time()
+    with _XSTOCKS_CACHE_LOCK:
+        if _XSTOCKS_CACHE["symbols"] and now < _XSTOCKS_CACHE["expires"]:
+            return list(_XSTOCKS_CACHE["symbols"])
     data=_bybit_get("/v5/market/instruments-info",{"category":"spot","symbolType":"xstocks","limit":1000})
     symbols=[x["symbol"] for x in data.get("result",{}).get("list",[]) if x.get("status")=="Trading"]
     if not symbols: return []
     tick=_bybit_get("/v5/market/tickers",{"category":"spot"})
     rows={x.get("symbol"):x for x in tick.get("result",{}).get("list",[])}
-    return sorted(symbols,key=lambda s:float(rows.get(s,{}).get("turnover24h") or 0),reverse=True)[:15]
+    top=sorted(symbols,key=lambda s:float(rows.get(s,{}).get("turnover24h") or 0),reverse=True)[:15]
+    with _XSTOCKS_CACHE_LOCK:
+        _XSTOCKS_CACHE["symbols"]=list(top)
+        _XSTOCKS_CACHE["expires"]=now+_XSTOCKS_CACHE_TTL
+    return top
 
 def bybit_xstock_candles(symbol,interval="15",limit=500):
     data=_bybit_get("/v5/market/kline",{"category":"spot","symbol":symbol,"interval":interval,"limit":min(int(limit),1000)})
@@ -47,20 +63,23 @@ def market_profile(market):
     return dict(MARKET_PROFILES.get(str(market).lower(), {}))
 
 def session_context(market, now_epoch=None):
-    import datetime as _dt
-    ts=_dt.datetime.fromtimestamp(now_epoch or __import__("time").time(), _dt.timezone.utc)
-    hour=ts.hour + ts.minute/60.0
     market=str(market).lower()
-    if market=="forex":
-        if 0 <= hour < 8: session="ASIA"
-        elif 8 <= hour < 13: session="LONDON"
-        elif 13 <= hour < 17: session="LONDON_NY_OVERLAP"
-        elif 17 <= hour < 22: session="NEW_YORK"
+    now=float(now_epoch) if now_epoch is not None else time.time()
+    utc_dt=datetime.fromtimestamp(now, timezone.utc)
+    if market=="forex" and ZoneInfo:
+        london=utc_dt.astimezone(ZoneInfo("Europe/London"))
+        newyork=utc_dt.astimezone(ZoneInfo("America/New_York"))
+        lh=london.hour+london.minute/60.0
+        nh=newyork.hour+newyork.minute/60.0
+        if 8 <= lh < 13 and 8 <= nh < 17: session="LONDON_NY_OVERLAP"
+        elif 8 <= lh < 17: session="LONDON"
+        elif 8 <= nh < 17: session="NEW_YORK"
+        elif 0 <= utc_dt.hour < 8: session="ASIA"
         else: session="ROLLOVER"
     elif market=="stocks": session="GLOBAL_XSTOCKS_24_7"
     elif market=="commodities": session="INSTRUMENT_SESSION"
     else: session="24_7"
-    return {"market":market,"session":session,"utc_hour":round(hour,2),"profile":market_profile(market)}
+    return {"market":market,"session":session,"utc_hour":round(utc_dt.hour+utc_dt.minute/60.0,2),"profile":market_profile(market)}
 
 class MarketProfileRouter:
     """Routes external-market data into the shared technical core without
@@ -155,10 +174,7 @@ class ExternalMarketAdapter:
             for tf,itv in tf_intervals.items():
                 try: frames[tf]=bybit_xstock_candles(symbol,itv)
                 except Exception as e: errors[tf]=f"{type(e).__name__}:{e}"
-            try:
-                data=_bybit_get("/v5/market/tickers",{"category":"spot","symbol":symbol})
-                quote=(data.get("result",{}).get("list") or [{}])[0]
-            except Exception as e: quote={"error":f"{type(e).__name__}:{e}"}
+            quote=None
             configured=True
         else:
             for tf in ("1D","4h","1h","15m","5m"):
