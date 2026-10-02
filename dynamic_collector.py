@@ -28,6 +28,7 @@ from pump_exhaustion import detect as detect_pump_exhaustion
 from scan_intelligence import enrich_scan, relative_strength
 from risk_engine import exposure_cluster, exposure_buckets
 from context_engine import prescan_context
+from analytical_core_v4 import analytical_core_contract, elliott_degree_contract, harmonic_contract
 
 
 # ============================================================
@@ -1655,6 +1656,7 @@ class MarketStream:
         templates={
             "Gartley":{"ab":(0.60,0.65),"bc":(0.382,0.886),"cd":(1.13,1.618),"xd":(0.76,0.81)},
             "Bat":{"ab":(0.382,0.50),"bc":(0.382,0.886),"cd":(1.618,2.618),"xd":(0.86,0.91)},
+            "Alternate Bat":{"ab":(0.35,0.40),"bc":(0.382,0.886),"cd":(2.0,3.618),"xd":(1.10,1.15)},
             "Butterfly":{"ab":(0.76,0.81),"bc":(0.382,0.886),"cd":(1.618,2.618),"xd":(1.24,1.31)},
             "Crab":{"ab":(0.382,0.618),"bc":(0.382,0.886),"cd":(2.24,3.618),"xd":(1.58,1.66)},
             "Deep Crab":{"ab":(0.86,0.91),"bc":(0.382,0.886),"cd":(2.0,3.618),"xd":(1.58,1.66)},
@@ -2305,8 +2307,20 @@ class MarketStream:
         fib=self._fib_depth_v38(rows,ctx,fib0)
         ell0=self._elliott_engine_v2(rows,ctx,fib)
         elliott=self._elliott_depth_v38(rows,ctx,fib,ell0)
+        # Elliott is recursive across all structural degrees. The working degree
+        # remains the display preference; higher-degree counts are never erased
+        # merely because a lower degree recounts.
+        ell_by_degree={}
+        original_degree=ctx["base"].get("working_degree","intermediate")
+        for degree in ("major","intermediate","minor"):
+            if not (ctx.get("degrees",{}).get(degree,{}).get("points") or []):
+                continue
+            local_ctx={**ctx,"base":{**ctx["base"],"working_degree":degree}}
+            local0=self._elliott_engine_v2(rows,local_ctx,fib)
+            ell_by_degree[degree]=self._elliott_depth_v38(rows,local_ctx,fib,local0)
+        elliott["recursive"]=elliott_degree_contract(ell_by_degree,original_degree)
         harm0=self._harmonic_engine_v2(ctx)
-        harmonics=self._harmonic_depth_v38(rows,harm0)
+        harmonics=harmonic_contract(self._harmonic_depth_v38(rows,harm0))
         div0=self._divergence_engine_v2(rows,ctx)
         divergences=self._divergence_depth_v38(rows,div0)
         liquidity0=self._liquidity_metrics(rows)
@@ -2338,7 +2352,8 @@ class MarketStream:
                 "signal_freshness":freshness,
                 "pipeline":["technical","structure","fibonacci","elliott","harmonics","divergences","liquidity","smart_money","freshness","evidence_graph"],
                 "technical":technical,"structure":structure,"fibonacci":fib,"elliott":elliott,"harmonics":harmonics,"divergences":divergences,
-                "liquidity":liquidity,"smart_money":smc,"regime_levels":regime,"evidence_graph":evidence,"confluence":confluence}
+                "liquidity":liquidity,"smart_money":smc,"regime_levels":regime,"evidence_graph":evidence,"confluence":confluence,
+                "analytical_core":analytical_core_contract(structure,fib,elliott,harmonics,divergences,liquidity,smc,technical,evidence)}
 
 
     def _liquidity_metrics(self, candles):
