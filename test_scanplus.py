@@ -559,3 +559,35 @@ if __name__=="__main__":
         out=provenance({"5m":[{"source":"bybit"},{"source":"bybit"},{"source":"yahoo"}]},"bybit","fallback")
         self.assertEqual(out["sources_by_timeframe"]["5m"]["bybit"],2)
         self.assertEqual(out["fallback_reason"],"fallback")
+
+    def test_v4_block2_regime_contract_is_context_only(self):
+        from context_engine import build_context
+        import time
+        now=int(time.time()*1000)
+        def rows(step):
+            return [{"start":now-step*(60-i),"open":100+i*.2,"high":101+i*.2,"low":99+i*.2,"close":100.5+i*.2,"volume":100,"confirm":True} for i in range(60)]
+        frames={"1D":rows(86400000),"4h":rows(14400000),"1h":rows(3600000),"15m":rows(900000),"5m":rows(300000)}
+        out=build_context("crypto","BTCUSDT",frames)
+        self.assertEqual(out["authority"],"context_only_not_trade_direction")
+        self.assertIn(out["regime"]["state"],("TREND","EXPANSION","COMPRESSION","RANGE_TRANSITION"))
+        self.assertEqual(out["instrument_profile"]["flow_model"],"spot_perp")
+
+    def test_v4_block2_news_risk_never_fabricates_calendar(self):
+        from context_engine import event_risk
+        out=event_risk("forex",{})
+        self.assertEqual(out["calendar_news"]["state"],"UNAVAILABLE")
+        self.assertEqual(out["calendar_news"]["events"],[])
+        supplied=event_risk("forex",{},[{"name":"CPI","impact":"HIGH"}])
+        self.assertEqual(supplied["calendar_news"]["state"],"AVAILABLE")
+        self.assertEqual(supplied["severity"],"HIGH")
+
+    def test_v4_block2_prescan_context_has_no_trade_authority(self):
+        from context_engine import prescan_context
+        import time
+        now=int(time.time()*1000)
+        histories={}
+        for tf,step in (("5",300000),("15",900000),("60",3600000)):
+            histories[tf]=[{"start":now-step*(40-i),"open":100,"high":101,"low":99,"close":100+i*.01,"confirm":True} for i in range(40)]
+        out=prescan_context("ETHUSDT",histories)
+        self.assertEqual(out["authority"],"context_only_not_trade_direction")
+        self.assertEqual(out["session_profile"]["session"],"24_7")
