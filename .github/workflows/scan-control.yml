@@ -1,4 +1,4 @@
-name: Scan+ Control
+name: Scan Control
 
 on:
   push:
@@ -12,13 +12,11 @@ concurrency:
 
 jobs:
   scan:
-    if: >-
-true
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: write
     timeout-minutes: 15
+
     steps:
       - name: Start unified Scan
         id: start
@@ -26,14 +24,11 @@ true
           BASE_URL: https://scalp-market-bridge.onrender.com
         run: |
           set -euo pipefail
-          curl --fail --show-error --silent --retry 3 --retry-delay 5 \
+          curl --fail --show-error --silent --retry 5 --retry-delay 5 \
             "$BASE_URL/scan-auto/start" > start.json
           cat start.json
-          python - <<'PY' >> "$GITHUB_OUTPUT"
-          import json
-          d=json.load(open("start.json"))
-          print("JOB_ID="+str(d["job_id"]))
-          PY
+          JOB_ID=$(python -c 'import json; print(json.load(open("start.json"))["job_id"])')
+          echo "JOB_ID=$JOB_ID" >> "$GITHUB_OUTPUT"
 
       - name: Poll the same job until terminal
         env:
@@ -42,29 +37,22 @@ true
         run: |
           set -euo pipefail
           for i in $(seq 1 60); do
-            curl --fail --show-error --silent --retry 2 --retry-delay 2 \
+            curl --fail --show-error --silent --retry 3 --retry-delay 3 \
               "$BASE_URL/scan-job/$JOB_ID" > result.json
+            STATE=$(python -c 'import json; print(json.load(open("result.json")).get("state","UNKNOWN"))')
+            echo "poll=$i state=$STATE"
             cat result.json
-            STATE=$(python - <<'PY'
-          import json
-          print(json.load(open("result.json")).get("state","UNKNOWN"))
-          PY
-          )
             if [ "$STATE" = "DONE" ] || [ "$STATE" = "FAILED" ]; then
               break
             fi
             sleep 10
           done
-          FINAL_STATE=$(python - <<'PY'
-          import json
-          print(json.load(open("result.json")).get("state","UNKNOWN"))
-          PY
-          )
+          FINAL_STATE=$(python -c 'import json; print(json.load(open("result.json")).get("state","UNKNOWN"))')
           test "$FINAL_STATE" = "DONE"
           test -s result.json
 
-      - name: Persist result as artifact
-        if: ${{ always() }}
+      - name: Persist Scan result
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: scan-result-${{ steps.start.outputs.JOB_ID }}
