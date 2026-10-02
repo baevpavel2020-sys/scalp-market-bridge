@@ -22,14 +22,14 @@ MARKET_BLOCK_POLICY = {
         "event_priority": ("pump_exhaustion","liquidity_grab","failed_breakout","failed_breakdown"),
     },
     "stocks": {
-        "priority": ("structure","session","gap","liquidity","volume","elliott","fibonacci","harmonics","divergence","momentum"),
-        "enabled": ("technical","structure","fibonacci","elliott","harmonics","divergence","liquidity","session","gap","volume"),
+        "priority": ("structure","session","gap","liquidity","smart_money","volume","elliott","fibonacci","harmonics","divergence","momentum"),
+        "enabled": ("technical","structure","fibonacci","elliott","harmonics","divergence","liquidity","smart_money","session","gap","volume"),
         "flow": False, "manipulation": False, "sessions": True,
         "event_priority": ("gap","failed_breakout","failed_breakdown","session_failed_high","session_failed_low"),
     },
     "forex": {
-        "priority": ("structure","session","liquidity","elliott","fibonacci","volume","harmonics","divergence","momentum"),
-        "enabled": ("technical","structure","fibonacci","elliott","harmonics","divergence","liquidity","session","volume"),
+        "priority": ("structure","session","liquidity","smart_money","elliott","fibonacci","volume","harmonics","divergence","momentum"),
+        "enabled": ("technical","structure","fibonacci","elliott","harmonics","divergence","liquidity","smart_money","session","volume"),
         "flow": False, "manipulation": False, "sessions": True,
         "event_priority": ("session_failed_high","session_failed_low","failed_breakout","failed_breakdown"),
     },
