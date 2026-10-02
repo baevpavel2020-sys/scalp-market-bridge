@@ -45,7 +45,7 @@ def _target(frames,direction):
 
 
 def build_forex_execution_plan(*,candidate,frames,price,equity=None,risk_fraction=None,
-                               symbol=None,account_currency="USD",quote_to_account=1.0,
+                               symbol=None,account_currency="USD",quote_to_account=None,
                                min_rr=2.0,entry_policy="retest_or_limit"):
     if not isinstance(candidate,Mapping) or candidate.get("status")!="CANDIDATE":
         return {"status":"WAIT","reason":"candidate_not_confirmed"}
@@ -71,7 +71,7 @@ def build_forex_execution_plan(*,candidate,frames,price,equity=None,risk_fractio
     if risk_per_unit<=0:
         return {"status":"WAIT","reason":"zero_price_risk"}
     risk_value_per_unit=fx_risk_per_unit(symbol,risk_per_unit,account_currency,quote_to_account)
-    if risk_value_per_unit is None:
+    if eq is not None and risk_value_per_unit is None:
         return {"status":"WAIT","reason":"fx_quote_to_account_conversion_required"}
     risk_cash=(eq*rf) if eq is not None and rf is not None else None
     units=(risk_cash/risk_value_per_unit) if risk_cash is not None else None
