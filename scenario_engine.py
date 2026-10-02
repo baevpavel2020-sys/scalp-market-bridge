@@ -41,7 +41,7 @@ def scenario_snapshot(analysis_core,events):
     return {"primary":primary,"alternatives":scenarios[1:],"count":len(scenarios)}
 
 def event_fingerprint(event):
-    payload={k:event.get(k) for k in ("event","type","direction","level","timeframe","confirmed","confirmed_by_close")}
+    payload={k:event.get(k) for k in ("market","symbol","event","type","direction","level","timeframe","confirmed","confirmed_by_close")}
     return hashlib.sha256(json.dumps(payload,sort_keys=True,default=str,separators=(",",":")).encode()).hexdigest()[:20]
 
 class EventLifecycle:
