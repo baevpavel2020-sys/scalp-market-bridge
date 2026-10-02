@@ -6832,6 +6832,7 @@ class ScanOrchestrator:
         setup = scan.get("setup") or {}
         return {
             "symbol": scan.get("symbol"),
+            "manipulation": scan.get("manipulation") or {"status":"NO_DATA","signal":"NONE"},
             "engine_version": scan.get("engine_version"),
             "price": scan.get("price"),
             "setup_state": scan.get("setup_state"),
