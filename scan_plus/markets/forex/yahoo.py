@@ -5,6 +5,7 @@ provider-dependent; unsupported intervals return a clear provider error rather
 than silently substituting daily candles.
 """
 import requests
+import time
 
 
 def _aggregate_4h(rows):
@@ -51,8 +52,24 @@ class YahooFXLoader:
         pair=str(symbol).upper().replace("/","")
         ticker=pair if pair.endswith("=X") else pair+self.SYMBOL_SUFFIX
         params={"interval":self.INTERVALS[interval],"range":"30d" if interval!="d" else "1y","events":"history"}
-        response=self.session.get(f"{self.base_url}/{ticker}",params=params,timeout=self.timeout,
-                                  headers={"User-Agent":"scalp-market-bridge/1.0"})
+        response = None
+        for attempt in range(4):
+            try:
+                response=self.session.get(
+                    f"{self.base_url}/{ticker}",
+                    params=params,
+                    timeout=self.timeout,
+                    headers={"User-Agent":"scalp-market-bridge/1.0"},
+                )
+                if response.status_code != 429:
+                    break
+                retry_after=response.headers.get("Retry-After")
+                delay=float(retry_after) if retry_after else (1.0 * (2 ** attempt))
+                time.sleep(min(delay, 8.0))
+            except requests.RequestException:
+                if attempt >= 3:
+                    raise
+                time.sleep(min(1.0 * (2 ** attempt), 8.0))
         response.raise_for_status()
         payload=response.json()
         result=(payload.get("chart") or {}).get("result") or []
