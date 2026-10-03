@@ -752,3 +752,8 @@ if __name__=="__main__":
         self.assertIn('FLOW_LIVE_COVERAGE_CAP_MS","60000"',src)
         self.assertIn('OI_LIVE_COVERAGE_CAP_MS","60000"',src)
         self.assertLess(60,dynamic_collector.ScanJobManager.AUTO_WARMUP_MAX_SECONDS)
+
+    def test_combat_audit_realtime_pool_covers_deep_scan_cap(self):
+        import dynamic_collector
+        self.assertGreaterEqual(dynamic_collector.dynamic_manager.max_symbols,
+                                dynamic_collector.ScanOrchestrator.MAX_AUTO_SCAN_PLUS)
