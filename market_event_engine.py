@@ -43,7 +43,7 @@ def _session(market,ts):
   if 8<=nh<17:return "NEW_YORK"
   if 0<=d.hour<8:return "ASIA"
   return "ROLLOVER"
- if m=="stocks":return "GLOBAL_XSTOCKS_24_7"
+ if m=="stocks":return "GLOBAL_XSTOCKS_24_7"\n if m=="ru_stocks":return "MOEX_EQUITIES"
  if m=="commodities":return "INSTRUMENT_SESSION"
  return "24_7"
 
