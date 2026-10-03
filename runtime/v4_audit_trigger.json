@@ -1,1 +1,6 @@
-{"command":"v4-combat-audit","requested_at":"2026-10-03T08:21:00Z","nonce":"combat-audit-1"}
+{
+  "requested_at": "2026-10-03T10:56:10Z",
+  "reason": "V4 Block 3 semantic regression rerun",
+  "top": 8,
+  "shortlist": 30
+}
