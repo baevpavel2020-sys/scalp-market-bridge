@@ -3421,13 +3421,17 @@ class DynamicMarketManager:
 
             self._cleanup_idle()
 
+            # Capacity must be decided before touching last_access. Otherwise a new
+            # symbol can evict one of the just-activated warm-up candidates and the
+            # 8-symbol batch continuously churns its own realtime streams.
+            if symbol not in self.streams:
+                self._make_room()
+
             self.last_access[
                 symbol
             ] = time.time()
 
             if symbol not in self.streams:
-
-                self._make_room()
 
                 linear = MarketStream(
                     symbol,
