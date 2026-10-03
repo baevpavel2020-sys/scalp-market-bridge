@@ -60,6 +60,7 @@ def audit_v4():
         payload={"status":"PASS" if passed else "FAIL","tests":{"run":result.testsRun,"failures":len(result.failures),"errors":len(result.errors),
                         "failed":[{"test":str(t),"traceback":tb[-4000:]} for t,tb in (result.failures+result.errors)],"details":stream.getvalue()[-12000:]},"release_gates":gates}
         app._last_v4_audit=payload
+        print("V4_AUDIT_RESULT "+json.dumps(payload,default=str,separators=(",",":")),flush=True)
         return jsonify(payload),200 if passed else 503
     except Exception as exc:
         return jsonify({"status":"FAIL","error":f"{type(exc).__name__}:{exc}"}),500
