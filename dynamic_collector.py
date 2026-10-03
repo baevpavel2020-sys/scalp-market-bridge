@@ -1,3 +1,4 @@
+import hashlib
 from scan_architecture import MIN_RR
 
 SCAN_ARCHITECTURE_VERSION = "scan_architecture_v2"
@@ -6851,12 +6852,16 @@ class ScanJobManager:
     _resumed_jobs = set()
     _redis_client = None
     _redis_checked = False
+    _redis_retry_after = 0.0
 
     @classmethod
     def _redis(cls):
         """Best-effort external job store. Memory remains the hot cache."""
-        if cls._redis_checked:
+        if cls._redis_client is not None:
             return cls._redis_client
+        now=time.time()
+        if cls._redis_checked and now < cls._redis_retry_after:
+            return None
         cls._redis_checked = True
         url = os.environ.get("SCAN_JOB_REDIS_URL") or os.environ.get("REDIS_URL")
         if not url:
@@ -6871,6 +6876,7 @@ class ScanJobManager:
             cls._redis_client = client
         except Exception as exc:
             cls._redis_client = None
+            cls._redis_retry_after = time.time()+min(60.0,max(5.0,float(os.environ.get("SCAN_REDIS_RETRY_SECONDS","15"))))
             _scan_log("JOB_STORE_UNAVAILABLE", error=f"{type(exc).__name__}:{exc}")
         return cls._redis_client
 
@@ -6959,6 +6965,18 @@ class ScanJobManager:
                     and existing.get("payload") == payload
                 ):
                     return existing["job_id"]
+        client=cls._redis()
+        lease_key="scan:lease:"+hashlib.sha256(json.dumps({"mode":mode,"payload":payload},sort_keys=True,separators=(",",":")).encode()).hexdigest()[:24]
+        if client is not None:
+            try:
+                owner=client.get(lease_key)
+                if owner:
+                    persisted=cls._load_persisted(owner)
+                    if persisted and persisted.get("state") in ("QUEUED","RUNNING"):
+                        return owner
+                # Lease is finalized with the generated jid below.
+            except Exception as exc:
+                _scan_log("JOB_LEASE_READ_FAILED",error=f"{type(exc).__name__}:{exc}")
         jid = uuid.uuid4().hex[:16]
         now = time.time()
         job = {
@@ -6978,6 +6996,9 @@ class ScanJobManager:
         with cls._lock:
             cls._jobs[jid] = job
         cls._persist(job)
+        if client is not None:
+            try: client.set(lease_key,jid,nx=True,ex=max(cls.JOB_TTL_SECONDS,3600))
+            except Exception as exc: _scan_log("JOB_LEASE_WRITE_FAILED",job_id=jid,error=f"{type(exc).__name__}:{exc}")
         return jid
 
     @classmethod
