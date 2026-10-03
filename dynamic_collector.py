@@ -1607,13 +1607,13 @@ class MarketStream:
             if not (leg_a*leg_b<0 and leg_a*leg_c>0):
                 continue
             br=b/a; cr=c/a
-            direction="down" if leg_a<0 else "up"
+            direction="bearish" if leg_a<0 else "bullish"
             common={"direction":direction,"degree":degree,
                     "points":[{"wave":w,**x} for w,x in zip(("0","A","B","C"),s)],
                     "ratios":{"B_A":round(br,4),"C_A":round(cr,4)},"invalidation":p[0]}
             add({**common,"type":"zigzag","checks":{
                 "hard_B_below_A_origin":br < 1.0,
-                "hard_C_progresses": (p[3]<p[1]) if direction=="down" else (p[3]>p[1]),
+                "hard_C_progresses": (p[3]<p[1]) if direction=="bearish" else (p[3]>p[1]),
                 "B_typical":0.236 <= br <= 0.886,
                 "C_typical":0.5 <= cr <= 2.0,
             }})
@@ -2049,8 +2049,11 @@ class MarketStream:
         out=[]
         for c in clusters:
             degrees={m["degree"] for m in c["members"]}
-            if len(c["members"])>=2:
-                out.append({"price":round(c["price"],10),"count":len(c["members"]),"degrees":sorted(degrees),"multi_degree":len(degrees)>1,
+            anchors={(m.get("degree"),m.get("anchor_from"),m.get("anchor_to")) for m in c["members"]}
+            # Nearby ratios from one leg are one measurement, not independent confluence.
+            if len(anchors)>=2:
+                out.append({"price":round(c["price"],10),"count":len(c["members"]),"independent_anchor_count":len(anchors),
+                            "degrees":sorted(degrees),"multi_degree":len(degrees)>1,
                             "distance_atr":None if not atr or price is None else round(abs(c["price"]-price)/atr,3),"members":c["members"][:8]})
         out.sort(key=lambda c:(not c["multi_degree"],-c["count"],c["distance_atr"] if c["distance_atr"] is not None else 999))
         return {**base,"depth_clusters":out[:10],"level_count":len(levels)}
@@ -2437,10 +2440,17 @@ class MarketStream:
             age_seconds=max(0.0,(now_ms-int(last_end if last_end is not None else last_start))/1000.0)
         except (TypeError,ValueError):
             pass
+        # Freshness follows the candle cadence; 1H/4H/1D evidence must not
+        # expire on a 15-minute wall-clock borrowed from lower timeframes.
+        tf=self._tf_from_rows_v382(rows)
+        tf_seconds={"1":60,"5":300,"15":900,"60":3600,"240":14400,"D":86400}.get(tf)
+        fresh_limit=(tf_seconds*1.5) if tf_seconds else 120
+        stale_limit=(tf_seconds*3.0) if tf_seconds else 900
         freshness_state="UNKNOWN"
         if age_seconds is not None:
-            freshness_state="FRESH" if age_seconds<=120 else "STALE" if age_seconds>900 else "AGING"
-        freshness={"state":freshness_state,"age_seconds":age_seconds,
+            freshness_state="FRESH" if age_seconds<=fresh_limit else "STALE" if age_seconds>stale_limit else "AGING"
+        freshness={"state":freshness_state,"age_seconds":age_seconds,"timeframe":tf,
+                   "fresh_limit_seconds":fresh_limit,"stale_limit_seconds":stale_limit,
                    "last_confirmed_start":last_start,"last_confirmed_end":last_end}
         return {"ready":ready,"engine_version":"scan_plus_v3_9_limit_plan","closed_candles":len(rows),
                 "excluded_open_candles":max(0,len(raw_rows)-len(rows)),"last_confirmed_start":last_start,
