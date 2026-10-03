@@ -614,7 +614,8 @@ class TestScanPlus(unittest.TestCase):
 
     def test_v4_block5_authorized_primary_scenario_can_advance_funnel(self):
         from scan_intelligence import opportunity_funnel
-        setup={"direction":"bullish","entry":100.0,"stop":99.0,"trigger_confirmed":True}
+        setup={"direction":"bullish","entry":100.0,"stop":99.0,"trigger_confirmed":True,
+               "limit_plan":{"entry":100.0,"stop":99.0,"take_profit":102.0}}
         scenario={"primary":{"direction":"bullish","state":"READY"},"neutral":False}
         out=opportunity_funnel(setup,True,True,scenario)
         self.assertTrue(out["scenario_authorized"])
