@@ -7445,7 +7445,13 @@ class ScanJobManager:
                                  "provider_degraded":sum(1 for x in (result.get("external") or {}).values() if isinstance(x,dict) and x.get("status") not in ("PASS","READY")),
                                  "job_manager_version":cls.VERSION}
             cls._patch(jid, state="DONE", result=result, error=None, finished_at=finished_at)
-            _scan_log("JOB_DONE", job_id=jid, mode=mode, finished_at=finished_at, result=result)
+            # Keep full analysis in the job; Render logs carry lifecycle telemetry only.
+            telemetry = result.get("telemetry") or {}
+            _scan_log("JOB_DONE", job_id=jid, mode=mode, finished_at=finished_at,
+                      markets=result.get("markets") or [],
+                      error_count=telemetry.get("error_count", len(result.get("errors") or {})),
+                      provider_degraded=telemetry.get("provider_degraded", 0),
+                      elapsed_ms=telemetry.get("elapsed_ms"))
         except Exception as exc:
             finished_at = time.time()
             error = f"{type(exc).__name__}: {exc}"
