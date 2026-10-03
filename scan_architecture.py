@@ -45,7 +45,9 @@ MARKET_BLOCK_POLICY = {
 
 def market_block_policy(market):
     key=str(market or "crypto").lower()
-    base=MARKET_BLOCK_POLICY.get(key, MARKET_BLOCK_POLICY["crypto"])
+    if key not in MARKET_BLOCK_POLICY:
+        raise ValueError(f"unsupported market: {key}")
+    base=MARKET_BLOCK_POLICY[key]
     return {
         "market": key,
         "priority": list(base["priority"]),
