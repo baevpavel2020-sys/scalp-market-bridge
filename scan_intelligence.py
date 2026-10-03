@@ -401,7 +401,7 @@ def _setup_cost(setup,market):
     if not all(k in lp for k in ("entry","stop","take_profit")):
         return {"ready":False,"reason":"incomplete_setup"}
     return execution_cost(market,lp["entry"],lp["stop"],lp["take_profit"],
-                          spread=(setup or {}).get("spread"),
+                          spread=(setup or {}).get("spread"), direction=(setup or {}).get("direction") or (setup or {}).get("side"),
                           slippage_bps=(setup or {}).get("slippage_bps",0.0),
                           commission_bps=(setup or {}).get("commission_bps",0.0),
                           funding_bps=(setup or {}).get("funding_bps",0.0))
