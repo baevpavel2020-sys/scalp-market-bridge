@@ -80,7 +80,7 @@ def detect_events(market,symbol,rows):
    if sl is not None and c["low"]<sl and c["close"]>sl:ev.append({"event":"session_failed_low","direction":"bullish","confidence":"high","session":prev_session,"level":sl})
  elif market=="commodities":
   ev.append({"event":"instrument_session_context","confidence":"context"})
- elif market=="stocks":
+ elif market in ("stocks","ru_stocks"):
   ev.append({"event":"xstock_24_7_context","confidence":"context"})
   day=datetime.fromtimestamp(int(c.get("start",0))/1000,timezone.utc).date()
   day_rows=[x for x in r[:-1] if datetime.fromtimestamp(int(x.get("start",0))/1000,timezone.utc).date()==day]
