@@ -74,7 +74,7 @@ def audit_v4_run_scan():
     if denied: return denied
     top=max(1,min(int(request.args.get("top",8)),8))
     shortlist=max(top,min(int(request.args.get("shortlist",30)),30))
-    job_id=start_scan_unified_job(top_n=top,shortlist=shortlist,markets=["crypto","stocks"])
+    job_id=start_scan_unified_job(top_n=top,shortlist=shortlist,markets=["crypto","stocks","forex","commodities"])
     return jsonify({"status":"STARTED","job_id":job_id,"audit":"v4_combat"}),202
 
 @app.get("/audit/v4/last")
@@ -445,7 +445,7 @@ def _start_scan_on_boot_if_enabled():
     def _boot_scan():
         try:
             time.sleep(2)
-            job=start_scan_auto_job(top_n=8,shortlist=30)
+            job=start_scan_unified_job(top_n=8,shortlist=30,markets=["crypto","stocks","forex","commodities"])
             job_id=job.get("job_id") if isinstance(job,dict) else str(job)
             state=job.get("state") if isinstance(job,dict) else "STARTED"
             print("SCAN_BOOT_TRIGGER "+json.dumps({"job_id":job_id,"state":state},separators=(",",":")),flush=True)
