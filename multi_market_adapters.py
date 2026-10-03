@@ -96,7 +96,9 @@ def _moex_candles_native(symbol, interval, start=0):
         try:
             parsed=datetime.fromisoformat(str(row.get("begin") or "").replace(" ","T"))
             if parsed.tzinfo is None: parsed=parsed.replace(tzinfo=ZoneInfo("Europe/Moscow") if ZoneInfo else timezone.utc)
-            out.append({"start":int(parsed.timestamp()*1000),"open":float(row["open"]),"high":float(row["high"]),"low":float(row["low"]),"close":float(row["close"]),"volume":float(row.get("volume") or 0),"value":float(row.get("value") or 0),"source":"moex_iss","confirm":True})
+            tf_ms={"1m":60000,"1h":3600000,"1D":86400000}.get(interval,60000)
+            start_ms=int(parsed.timestamp()*1000)
+            out.append({"start":start_ms,"open":float(row["open"]),"high":float(row["high"]),"low":float(row["low"]),"close":float(row["close"]),"volume":float(row.get("volume") or 0),"value":float(row.get("value") or 0),"source":"moex_iss","confirm":bool(start_ms+tf_ms<=int(time.time()*1000))})
         except (KeyError,TypeError,ValueError,OverflowError): continue
     return out
 
@@ -110,8 +112,8 @@ def moex_candles(symbol, interval, target=500):
             page=_moex_candles_native(symbol,"1m",start=start)
             if not page: break
             rows.extend(page)
-            if len(page)<500: break
             start+=len(page)
+            if start>100000: break
         return _resample_ohlcv(rows,factor*60000)[-target:]
     if interval=="4h": return _resample_ohlcv(moex_candles(symbol,"1h",target=max(target*4,500)),4*3600000)[-target:]
     rows=[]; start=0
@@ -119,8 +121,8 @@ def moex_candles(symbol, interval, target=500):
         page=_moex_candles_native(symbol,interval,start=start)
         if not page: break
         rows.extend(page)
-        if len(page)<500: break
         start+=len(page)
+        if start>100000: break
     return rows[-target:]
 
 def moex_quote(symbol):
