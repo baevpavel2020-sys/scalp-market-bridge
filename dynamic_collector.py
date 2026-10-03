@@ -2368,7 +2368,7 @@ class MarketStream:
         current=rec.get("major") or {}
         primary=current.get("primary") if isinstance(current,dict) else None
         close=float(rows[-1]["close"]) if rows else None
-        old=self._elliott_memory.get("major")
+        memory=getattr(self,"_elliott_memory",None)\n        if memory is None:\n            self._elliott_memory={}; memory=self._elliott_memory\n        old=memory.get("major")
         def invalidated(candidate):
             if not candidate or close is None: return False
             inv=fnum(candidate.get("invalidation")); direction=candidate.get("direction")
