@@ -296,6 +296,15 @@ class ExternalMarketAdapter:
                 vals=list(pool.map(lambda s:self.scan(market,s),symbols))
             return {v.get("symbol"):v for v in vals}
 
+        # Forex/commodities must remain usable without a paid Twelve Data key.
+        # When the primary provider is not configured, route through the same
+        # per-symbol Yahoo fallback used by the single-symbol adapter instead
+        # of manufacturing a batch DATA_BLOCK from the missing key.
+        if market in ("forex","commodities") and not self.configured:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(5,len(symbols))) as pool:
+                vals=list(pool.map(lambda s:self.scan(market,s),symbols))
+            return {v.get("symbol"):v for v in vals}
+
         frames_by_symbol={s:{} for s in symbols}
         errors_by_symbol={s:{} for s in symbols}
         for tf in ("1D","4h","1h","15m","5m"):
