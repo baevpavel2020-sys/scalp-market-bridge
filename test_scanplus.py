@@ -760,6 +760,27 @@ class TestScanPlus(unittest.TestCase):
         with self.assertRaises(ValueError):
             market_block_policy("unknown_market")
 
+
+    def test_mentor_external_fallback_skips_unconfigured_primary_and_reuses_quote(self):
+        from unittest.mock import patch
+        from multi_market_adapters import ExternalMarketAdapter
+        rows=[{"start":i*300000,"open":100.0,"high":101.0,"low":99.0,"close":100.5,"volume":1.0,"confirm":True,"source":"yahoo_finance"} for i in range(80)]
+        adapter=ExternalMarketAdapter(api_key="")
+        with patch("multi_market_adapters._yahoo_candles",return_value=rows) as yc, \
+             patch("multi_market_adapters._yahoo_quote",side_effect=AssertionError("redundant quote request")), \
+             patch.object(adapter,"candles",side_effect=AssertionError("unconfigured primary must be skipped")):
+            out=adapter.scan("forex","EUR/USD")
+        self.assertEqual(out["provider"],"yahoo_finance")
+        self.assertEqual((out.get("quote") or {}).get("source"),"yahoo_finance_candle")
+        self.assertEqual(yc.call_count,5)
+
+    def test_mentor_market_policy_keeps_crypto_only_blocks_isolated(self):
+        from scan_architecture import market_block_policy
+        self.assertTrue(market_block_policy("crypto")["manipulation"])
+        for market in ("stocks","forex","commodities"):
+            self.assertFalse(market_block_policy(market)["manipulation"])
+        self.assertFalse(market_block_policy("commodities")["flow"])
+
 if __name__=="__main__":
     unittest.main()
 
