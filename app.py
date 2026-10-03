@@ -65,6 +65,16 @@ def audit_v4():
     except Exception as exc:
         return jsonify({"status":"FAIL","error":f"{type(exc).__name__}:{exc}"}),500
 
+@app.get("/audit/v4/run-scan")
+def audit_v4_run_scan():
+    """Combat-audit helper: starts the same unified production job used by Scan."""
+    denied=_require_scan_write_auth()
+    if denied: return denied
+    top=max(1,min(int(request.args.get("top",8)),8))
+    shortlist=max(top,min(int(request.args.get("shortlist",30)),30))
+    job_id=start_scan_unified_job(top_n=top,shortlist=shortlist,markets=["crypto","stocks"])
+    return jsonify({"status":"STARTED","job_id":job_id,"audit":"v4_combat"}),202
+
 @app.get("/audit/v4/last")
 def audit_v4_last():
     """Read the latest in-process audit result without re-running tests."""
