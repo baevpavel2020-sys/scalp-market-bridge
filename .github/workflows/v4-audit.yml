@@ -1,4 +1,4 @@
-name: V4 Audit   
+name: V4 Audit    
 on:
   push:
     branches: [scan-plus-multimarket, v4-audit-run, v4-combat-run]
