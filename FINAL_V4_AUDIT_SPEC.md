@@ -49,3 +49,22 @@ Relative-strength ranking is downstream context/ranking only, not trade authorit
 Final production scan completed with 8 selected candidates; Block 1 realtime/data contract remained healthy, including spot_perp and perp_only paths.
 
 Block 2 contract is frozen. Later changes to context or PreScan require Block 2 regression plus all affected downstream blocks.
+
+
+## Block 3 closure record
+Status: PASS (production regression + runtime)
+Production regression endpoint: HTTP 200 after Block 3 mathematical regressions.
+Final runtime job: 6ce5909986f04ca4, state DONE.
+Structure remains fact authority; indicators/patterns cannot override it and hard invalidation beats confluence.
+MTF price discovery remains transition/context until structure confirms.
+Elliott is evaluated recursively across major/intermediate/minor degrees; higher-degree major count is retained across stream rescans until its own invalidation is breached.
+Impulse overlap is a hard impulse-rule failure; diagonal is evaluated as a separate candidate rather than used to excuse an invalid impulse.
+Fibonacci retracements/extensions and multi-leg clusters are structural-context modules.
+Harmonic families include Gartley, Bat, Alternate Bat, Butterfly, Crab, Deep Crab, Cypher, Shark, 5-0, AB=CD and Extended AB=CD.
+XABCD D geometry was corrected to measure A-to-D relative to XA; a synthetic Gartley regression locks the corrected ratio.
+RSI/MACD/Stochastic divergences are pivot-based, deduplicated and freshness/TTL aware.
+Liquidity map now includes lifecycle-aware structural/equal pools plus PDH/PDL/PWH/PWL reference liquidity; taken/accepted pools are excluded from actionable nearest objectives.
+SMC remains causal: liquidity -> displacement -> MSS -> POI, and cannot rewrite Structure.
+Final production scan completed with 8 deep-scan candidates while frozen Blocks 1 and 2 remained operational.
+
+Block 3 contract is frozen. Later analytical-core changes require Block 3 regression and affected downstream reruns.
