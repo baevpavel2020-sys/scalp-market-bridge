@@ -695,3 +695,29 @@ if __name__=="__main__":
         self.assertEqual(out["pipeline"][0],"DATA")
         self.assertEqual(out["pipeline"][-1],"LEARNING")
         self.assertIn("no_real_order_by_default",out["invariants"])
+
+    def test_v4_block10_watchlist_accepts_ready_trade_states(self):
+        from scan_intelligence import WatchlistStore
+        w=WatchlistStore()
+        scan={"market":"crypto","symbol":"BTCUSDT","setup":{"direction":"bullish"},"opportunity_funnel":{"stage":"READY"}}
+        item=w.upsert(scan)
+        self.assertEqual(item["state"],"READY")
+
+    def test_v4_block13_job_manager_has_redis_retry_and_distributed_lease(self):
+        import inspect
+        from dynamic_collector import ScanJobManager
+        src=inspect.getsource(ScanJobManager)
+        self.assertIn("_redis_retry_after",src)
+        self.assertIn("scan:lease:",src)
+        self.assertEqual(ScanJobManager.VERSION,"scan_job_manager_v4_prod_contract")
+
+    def test_v4_block13_scan_start_auth_is_optional_but_enforceable(self):
+        import os
+        from unittest.mock import patch
+        import app as app_module
+        with app_module.app.test_request_context("/scan"):
+            with patch.dict(os.environ,{"SCAN_API_TOKEN":"secret"}):
+                self.assertFalse(app_module._scan_write_authorized())
+        with app_module.app.test_request_context("/scan",headers={"X-Scan-Token":"secret"}):
+            with patch.dict(os.environ,{"SCAN_API_TOKEN":"secret"}):
+                self.assertTrue(app_module._scan_write_authorized())
