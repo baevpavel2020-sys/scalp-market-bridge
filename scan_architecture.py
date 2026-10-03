@@ -7,7 +7,7 @@ Modules may enrich downstream state, but may not rewrite upstream facts.
 """
 VERSION="scan_architecture_v1"
 
-MARKETS=("crypto","stocks","forex","commodities")
+MARKETS=("crypto","stocks","ru_stocks","forex","commodities")
 OPPORTUNITY_STATES=("MARKET_READY","LIMIT_READY","WATCH")
 MIN_RR=2.0
 
