@@ -1020,6 +1020,18 @@ if __name__=="__main__":
         self.assertIn('state") in ("DONE","FAILED")',src)
 
 
+    def test_canonical_scan_contract_is_all_market_and_keeps_manipulation(self):
+        import inspect,dynamic_collector,app as app_module
+        auto_src=inspect.getsource(dynamic_collector.start_scan_auto_job)
+        self.assertIn('["crypto", "stocks", "forex", "commodities"]',auto_src)
+        unified_src=inspect.getsource(dynamic_collector.ScanJobManager.start_unified)
+        self.assertIn('["crypto","stocks","forex","commodities"]',unified_src)
+        boot_src=inspect.getsource(app_module._start_scan_on_boot_if_enabled)
+        self.assertIn('["crypto","stocks","forex","commodities"]',boot_src)
+        stream_src=inspect.getsource(dynamic_collector.MarketStream)
+        self.assertIn('"manipulation"',stream_src)
+        self.assertIn("detect_pump_exhaustion",stream_src)
+
     def test_transport_job_done_log_is_compact(self):
         import inspect,dynamic_collector
         src=inspect.getsource(dynamic_collector.ScanJobManager._run_job)
