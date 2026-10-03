@@ -1,6 +1,6 @@
 {
-  "requested_at": "2026-10-03T12:45:00Z",
-  "reason": "V4 Block 7 State Check Learning Production audit",
+  "requested_at": "2026-10-03T12:50:00Z",
+  "reason": "V4 Block 7 rerun after Blocks 5-6 fixture regression alignment",
   "top": 8,
   "shortlist": 30
 }
