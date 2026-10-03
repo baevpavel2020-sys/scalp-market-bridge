@@ -6840,7 +6840,7 @@ class ScanJobManager:
     occurred when several scans were executed inside one HTTP request.
     """
 
-    VERSION = "scan_job_manager_v3_3_0_scan_contract"
+    VERSION = "scan_job_manager_v4_prod_contract"
     MAX_JOBS = 20
     JOB_TTL_SECONDS = 3600
     AUTO_WARMUP_SECONDS = max(30, min(90, int(os.environ.get("SCAN_AUTO_WARMUP_SECONDS", "40"))))
@@ -7303,6 +7303,11 @@ class ScanJobManager:
                 raise ValueError(f"unsupported job mode: {mode}")
 
             finished_at = time.time()
+            # Production telemetry is embedded in the job result for auditability.
+            result["telemetry"]={"job_id":jid,"mode":mode,"elapsed_ms":round((finished_at-started)*1000.0,2),
+                                 "error_count":len(result.get("errors") or {}),
+                                 "provider_degraded":sum(1 for x in (result.get("external") or {}).values() if isinstance(x,dict) and x.get("status") not in ("PASS","READY")),
+                                 "job_manager_version":cls.VERSION}
             cls._patch(jid, state="DONE", result=result, error=None, finished_at=finished_at)
             _scan_log("JOB_DONE", job_id=jid, mode=mode, finished_at=finished_at, result=result)
         except Exception as exc:
