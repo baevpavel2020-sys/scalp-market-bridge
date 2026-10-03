@@ -1396,7 +1396,7 @@ class MarketStream:
             xa=a-x; ab=b-a; bc=c-b; cd=d-c
             if min(abs(xa),abs(ab),abs(bc)) < 1e-12:
                 continue
-            vals=(abs(ab/xa),abs(bc/ab),abs(cd/bc),abs((d-x)/xa))
+            vals=(abs(ab/xa),abs(bc/ab),abs(cd/bc),abs((d-a)/xa))
             for name,ranges in templates.items():
                 passed=[lo <= v <= hi for v,(lo,hi) in zip(vals,ranges)]
                 if sum(passed) >= 3:
@@ -1404,7 +1404,7 @@ class MarketStream:
                         "name":name,
                         "direction":"bullish" if d < c else "bearish",
                         "score":sum(passed),
-                        "ratios":{"AB_XA":round(vals[0],4),"BC_AB":round(vals[1],4),"CD_BC":round(vals[2],4),"XD_XA":round(vals[3],4)},
+                        "ratios":{"AB_XA":round(vals[0],4),"BC_AB":round(vals[1],4),"CD_BC":round(vals[2],4),"AD_XA":round(vals[3],4)},
                         "points":[{"point":n,**p} for n,p in zip("XABCD",seq)],
                     })
             # AB=CD is useful independently of XABCD families.
