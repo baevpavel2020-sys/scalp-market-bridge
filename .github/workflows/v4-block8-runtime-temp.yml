@@ -5,6 +5,8 @@ on:
     branches: [scan-plus-multimarket]
     paths:
       - ".github/workflows/v4-block8-runtime-temp.yml"
+      - "multi_market_adapters.py"
+      - "test_scanplus.py"
 
 permissions:
   contents: read
