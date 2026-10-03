@@ -697,6 +697,40 @@ class TestScanPlus(unittest.TestCase):
         self.assertEqual(out["tp"],1)
         self.assertEqual(out["sl"],1)
 
+
+    def test_v4_block8_unified_market_list_is_canonical_and_fail_closed(self):
+        from dynamic_collector import ScanJobManager
+        with self.assertRaises(ValueError):
+            ScanJobManager.start_unified(markets=["crypto","unknown_market"])
+        with self.assertRaises(ValueError):
+            ScanJobManager.start_unified(markets=[])
+
+    def test_v4_block8_market_policy_never_leaks_crypto_features(self):
+        from scan_architecture import market_block_policy
+        for market in ("stocks","forex","commodities"):
+            policy=market_block_policy(market)
+            self.assertFalse(policy["flow"])
+            self.assertFalse(policy["manipulation"])
+            self.assertNotIn("pump_exhaustion",policy["event_priority"])
+
+    def test_v4_block8_external_profiles_keep_execution_analysis_only(self):
+        from multi_market_adapters import MARKET_PROFILES
+        self.assertEqual(MARKET_PROFILES["forex"]["execution"],"external_fx_broker_required")
+        self.assertEqual(MARKET_PROFILES["commodities"]["execution"],"external_commodity_broker_required")
+        self.assertFalse(MARKET_PROFILES["forex"]["oi"])
+        self.assertFalse(MARKET_PROFILES["commodities"]["funding"])
+
+    def test_v4_block8_scan_markets_does_not_gate_fallback_on_api_key(self):
+        import inspect, app as app_module
+        src=inspect.getsource(app_module.scan_markets)
+        self.assertNotIn('market_ready=adapter.configured',src)
+        self.assertIn('adapter.scan(market,s)',src)
+
+    def test_v4_block8_unknown_market_policy_is_not_silently_crypto(self):
+        from scan_architecture import market_block_policy
+        with self.assertRaises(ValueError):
+            market_block_policy("unknown_market")
+
 if __name__=="__main__":
     unittest.main()
 
