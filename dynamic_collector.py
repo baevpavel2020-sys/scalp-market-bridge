@@ -7080,7 +7080,26 @@ class ScanJobManager:
                 shortlist=int(payload.get("shortlist",30))
                 markets=[str(x).strip().lower() for x in (payload.get("markets") or ["crypto","stocks","ru_stocks","forex","commodities"]) if str(x).strip()]
                 cls._progress(jid,done=0,total=None,current_symbol=None,stage="UNIFIED_PRESCAN")
-                prescan=run_prescan(top_n=top_n,shortlist=shortlist)
+                # Unified must have the same hard PreScan boundary as auto mode.
+                # A provider/network stall must fail this job explicitly instead
+                # of occupying the single scan worker forever.
+                prescan_executor=concurrent.futures.ThreadPoolExecutor(
+                    max_workers=1,thread_name_prefix="unified-prescan-job"
+                )
+                prescan_future=prescan_executor.submit(
+                    run_prescan,top_n=top_n,shortlist=shortlist
+                )
+                try:
+                    prescan=prescan_future.result(timeout=cls.JOB_PRESCAN_TIMEOUT)
+                except concurrent.futures.TimeoutError:
+                    prescan_future.cancel()
+                    cls._progress(jid,done=0,total=None,current_symbol=None,stage="UNIFIED_PRESCAN_TIMEOUT")
+                    raise TimeoutError(
+                        f"unified prescan exceeded {cls.JOB_PRESCAN_TIMEOUT:.0f}s hard timeout"
+                    )
+                finally:
+                    prescan_executor.shutdown(wait=False,cancel_futures=True)
+                cls._progress(jid,done=0,total=None,current_symbol=None,stage="UNIFIED_PRESCAN_DONE")
                 eligible=[]
                 for candidate in prescan.get("candidates") or []:
                     if candidate.get("eligible_for_scan_plus") is True:
