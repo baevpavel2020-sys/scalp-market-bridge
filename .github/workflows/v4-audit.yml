@@ -1,7 +1,7 @@
 name: V4 Audit
 on:
   push:
-    branches: [scan-plus-multimarket]
+    branches: [scan-plus-multimarket, v4-audit-run]
     paths:
       - runtime/v4_audit_trigger.json
 concurrency:
