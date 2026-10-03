@@ -24,20 +24,21 @@ def _event(t,d=None,stage="DETECTED",score=0,**kw):
  e={"type":t,"direction":d,"stage":stage,"score":score,"trade_authority":False,**kw}; e["fingerprint"]=_fp(e); return e
 
 def _structure_confirmation(analysis,direction):
- """Reversal confirmation requires a fresh structural break/MSS and failed retest."""
+ """Reversal confirmation requires a fresh structural break/MSS and an explicit failed retest."""
  a=(analysis or {}).get("15") or (analysis or {}).get("15m") or {}
  s=a.get("structure") or {}; smc=a.get("smart_money") or a.get("smc") or {}
  ev=s.get("last_event") or s.get("event") or {}
- mss=smc.get("mss") or {}
+ mss=smc.get("mss") or {}; mss_event=mss.get("event") if isinstance(mss,dict) else None
  target="bearish" if direction=="bearish" else "bullish"
- break_ok=bool((ev.get("type") in ("CHOCH","BOS") and ev.get("direction")==target and ev.get("confirmed_by_close")) or
-               (isinstance(mss,dict) and mss.get("direction")==target and (mss.get("confirmed") is not False)))
+ structure_break=bool(ev.get("type") in ("CHOCH","CHoCH","BOS") and ev.get("direction")==target and ev.get("confirmed_by_close"))
+ mss_break=bool(isinstance(mss_event,dict) and mss.get("confirmed") is True and
+                mss_event.get("direction")==target and mss_event.get("confirmed_by_close"))
+ break_ok=bool(structure_break or mss_break)
  retest=smc.get("failed_retest") or smc.get("retest")
  retest_ok=bool(isinstance(retest,dict) and retest.get("direction")==target and
                 (retest.get("failed") is True or retest.get("confirmed") is True))
  return {"structure_break":break_ok,"failed_retest":retest_ok,
          "confirmed":bool(break_ok and retest_ok),"timeframe":"15m"}
-
 def _classify_move(price5,delta5,spot_price5,spot_delta5,oi5,funding,liq_long,liq_short):
  perp_led=price5 is not None and spot_price5 is not None and spot_price5 < price5*.40
  spot_ok=spot_price5 is not None and spot_price5>0 and (spot_delta5 is None or delta5 is None or spot_delta5>=delta5*.55)
@@ -49,6 +50,20 @@ def _classify_move(price5,delta5,spot_price5,spot_delta5,oi5,funding,liq_long,li
  if perp_led:return "perp_led_low_confirmation"
  return "unclassified"
 
+def _analysis_liquidity_events(analysis):
+ """Import Block-3 liquidity mechanics into the unified event layer without trade authority."""
+ a=(analysis or {}).get("15") or (analysis or {}).get("15m") or {}
+ liq=a.get("liquidity") or {}; src=liq.get("event") if isinstance(liq.get("event"),dict) else None
+ if not src:return []
+ direction=src.get("direction"); side=src.get("side")
+ if direction not in ("bullish","bearish"):
+  direction="bearish" if side=="buy_side" else "bullish" if side=="sell_side" else None
+ if direction not in ("bullish","bearish"):return []
+ common={"level":src.get("level"),"anchor_start":src.get("start"),"timeframe":"15m",
+         "source":"analytical_core_liquidity","source_type":src.get("type"),"side":side}
+ return [_event("FAILED_BREAKOUT" if direction=="bearish" else "FAILED_BREAKDOWN",direction,"DEVELOPING",3,**common),
+         _event("LIQUIDITY_SWEEP",direction,"DETECTED",2,**common)]
+
 def detect(linear,spot=None,analysis=None,now=None):
  now=now or time.time(); linear=linear or {}; spot=spot or {}; flow=linear.get("flow") or {}; sf=spot.get("flow") or {}
  f1=flow.get("1m") or {}; f5=flow.get("5m") or {}; sf5=sf.get("5m") or {}
@@ -59,7 +74,7 @@ def detect(linear,spot=None,analysis=None,now=None):
  liq=linear.get("liquidations") or linear.get("liquidation") or {}
  ll=_n(liq.get("long_usd") or liq.get("long")); ls=_n(liq.get("short_usd") or liq.get("short"))
  ticker=linear.get("ticker") or {}; price=_n(ticker.get("lastPrice"))
- events=[]; reasons=[]; diag={}
+ events=_analysis_liquidity_events(analysis); reasons=[]; diag={}
  if not linear:return {"engine_version":VERSION,"status":"NO_DATA","signal":"NONE","events":[],"reasons":[],"trade_authority":False}
 
  move_class=_classify_move(p5,d5,sp5,sd5,oi5,funding,ll,ls)
