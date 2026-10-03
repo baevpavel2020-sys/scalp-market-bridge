@@ -209,9 +209,11 @@ def _event_fingerprint(setup):
 
 def alert_payload(scan):
     setup = scan.get("setup") or {}
-    state = setup.get("opportunity_state")
-    if state not in ("MARKET_READY", "LIMIT_READY"):
-        return {"eligible": False, "state": state or "WATCH"}
+    state = (scan.get("opportunity_funnel") or {}).get("stage") or setup.get("opportunity_state")
+    # V4 alerts are emitted only for actionable analytical transitions.
+    # Legacy MARKET_READY/LIMIT_READY remain accepted for backward-compatible stored records.
+    if state not in ("READY", "TRADE", "MARKET_READY", "LIMIT_READY"):
+        return {"eligible": False, "state": state or "EARLY"}
     limit_plan = setup.get("limit_plan") or {}
     targets = setup.get("targets")
     if isinstance(targets, dict):
