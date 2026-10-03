@@ -169,17 +169,17 @@ def market_dynamic(symbol):
 
 @app.get("/scan-markets")
 def scan_markets():
-    """Analysis-only scan for Forex, commodities and Bybit xStocks."""
+    """Analysis-only scan for Forex, commodities, Bybit xStocks and MOEX RU Stocks."""
     try:
         adapter=ExternalMarketAdapter()
-        requested=request.args.get("markets","forex,commodities,stocks").split(",")
+        requested=request.args.get("markets","forex,commodities,stocks,ru_stocks").split(",")
         universe=external_universe()
         out={"adapter_version":adapter.VERSION,"markets":{}}
         for market in requested:
             market=market.strip().lower()
             if market not in universe: continue
             symbols=universe[market]
-            market_ready=adapter.configured or market=="stocks"
+            market_ready=adapter.configured or market in ("stocks","ru_stocks")
             if market_ready:
                 workers=min(3,len(symbols)) or 1
                 with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
@@ -195,7 +195,7 @@ def scan_markets():
 def intelligence_backtest(symbol):
     try:
         market=request.args.get("market","crypto").strip().lower()
-        if market not in ("crypto","stocks","forex","commodities"):
+        if market not in ("crypto","stocks","ru_stocks","forex","commodities"):
             return jsonify({"error":"unsupported market"}),400
         limit=max(30,min(int(request.args.get("limit","500")),1000))
         if market=="crypto":
@@ -246,11 +246,11 @@ def intelligence_edge():
 
 @app.get("/scan-live")
 def scan_live():
-    """Unified LIVE scan: Crypto + xStocks + Forex + Commodities."""
+    """Unified LIVE scan: Crypto + xStocks + RU Stocks + Forex + Commodities."""
     try:
         top_n=max(1,min(int(request.args.get("top","5")),6))
         shortlist=int(request.args.get("shortlist","30"))
-        raw=request.args.get("markets","crypto,stocks,forex,commodities")
+        raw=request.args.get("markets","crypto,stocks,ru_stocks,forex,commodities")
         markets=[x.strip().lower() for x in raw.split(",") if x.strip()]
         return jsonify(start_scan_unified_job(top_n=top_n,shortlist=shortlist,markets=markets)),202
     except ValueError as exc:
