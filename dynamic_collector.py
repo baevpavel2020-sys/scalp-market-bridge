@@ -7080,7 +7080,16 @@ class ScanJobManager:
                 shortlist=int(payload.get("shortlist",30))
                 markets=[str(x).strip().lower() for x in (payload.get("markets") or ["crypto","stocks","forex","commodities"]) if str(x).strip()]
                 cls._progress(jid,done=0,total=None,current_symbol=None,stage="UNIFIED_PRESCAN")
-                prescan=run_prescan(top_n=top_n,shortlist=shortlist)
+                prescan_executor=concurrent.futures.ThreadPoolExecutor(max_workers=1,thread_name_prefix="unified-prescan")
+                prescan_future=prescan_executor.submit(run_prescan,top_n=top_n,shortlist=shortlist)
+                try:
+                    prescan=prescan_future.result(timeout=cls.JOB_PRESCAN_TIMEOUT)
+                except concurrent.futures.TimeoutError:
+                    prescan_future.cancel()
+                    cls._progress(jid,done=0,total=None,current_symbol=None,stage="PRESCAN_TIMEOUT")
+                    raise TimeoutError(f"unified prescan exceeded {cls.JOB_PRESCAN_TIMEOUT:.0f}s hard timeout")
+                finally:
+                    prescan_executor.shutdown(wait=False,cancel_futures=True)
                 eligible=[]
                 for candidate in prescan.get("candidates") or []:
                     if candidate.get("eligible_for_scan_plus") is True:
