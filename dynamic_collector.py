@@ -7460,10 +7460,18 @@ class ScanJobManager:
 
     @classmethod
     def start_unified(cls, top_n=8, shortlist=30, markets=None):
+        allowed_markets=("crypto","stocks","forex","commodities")
+        requested=[str(x).strip().lower() for x in (markets or ["crypto","stocks"]) if str(x).strip()]
+        unknown=[x for x in requested if x not in allowed_markets]
+        if unknown:
+            raise ValueError("unsupported market(s): "+",".join(sorted(set(unknown))))
+        canonical=list(dict.fromkeys(requested))
+        if not canonical:
+            raise ValueError("at least one supported market is required")
         payload = {
             "top_n": int(top_n),
             "shortlist": int(shortlist),
-            "markets": list(markets or ["crypto", "stocks"]),
+            "markets": canonical,
         }
         with cls._lock:
             for existing in cls._jobs.values():
