@@ -6896,10 +6896,32 @@ class ScanJobManager:
             return
         try:
             jid = job["job_id"]
+            persist_job=dict(job)
+            # Full analytical payloads are multi-megabyte objects and can exhaust a
+            # small Redis plan. Redis is the resume/control store, not the result
+            # warehouse: terminal jobs persist a compact audit summary while the
+            # live process keeps the full result for /scan-job.
+            if persist_job.get("state") in ("DONE","FAILED") and isinstance(persist_job.get("result"),dict):
+                res=persist_job["result"]
+                crypto=res.get("crypto") or {}
+                external=res.get("external") or {}
+                persist_job["result"]={
+                    "orchestrator_version":res.get("orchestrator_version"),
+                    "mode":res.get("mode"),
+                    "markets":res.get("markets"),
+                    "crypto":{"selected_symbols":crypto.get("selected_symbols"),
+                              "scan_plus_count":crypto.get("scan_plus_count"),
+                              "warmup_seconds":crypto.get("warmup_seconds"),
+                              "warmup_diagnostics":crypto.get("warmup_diagnostics")},
+                    "external":{k:{"status":v.get("status"),"count":v.get("count")} for k,v in external.items() if isinstance(v,dict)},
+                    "errors":res.get("errors"),
+                    "telemetry":res.get("telemetry"),
+                    "persisted_compact":True,
+                }
             client.setex(
                 f"scan:job:{jid}",
                 max(cls.JOB_TTL_SECONDS, 21600),
-                json.dumps(job, ensure_ascii=False, separators=(",", ":"), default=str),
+                json.dumps(persist_job, ensure_ascii=False, separators=(",", ":"), default=str),
             )
             if job.get("mode") == "unified":
                 client.set("scan:latest:unified", jid)
