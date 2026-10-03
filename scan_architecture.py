@@ -7,7 +7,7 @@ Modules may enrich downstream state, but may not rewrite upstream facts.
 """
 VERSION="scan_architecture_v1"
 
-MARKETS=("crypto","stocks","forex","commodities")
+MARKETS=("crypto","stocks","ru_stocks","forex","commodities")
 OPPORTUNITY_STATES=("MARKET_READY","LIMIT_READY","WATCH")
 MIN_RR=2.0
 
@@ -26,6 +26,13 @@ MARKET_BLOCK_POLICY = {
         "enabled": ("technical","structure","fibonacci","elliott","harmonics","divergence","liquidity","smart_money","session","gap","volume"),
         "flow": False, "manipulation": False, "sessions": True,
         "event_priority": ("gap","daily_failed_high","daily_failed_low","failed_breakout","failed_breakdown","session_failed_high","session_failed_low"),
+    },
+    "ru_stocks": {
+        "priority": ("structure","session","gap","liquidity","smart_money","volume","elliott","fibonacci","harmonics","divergence","momentum"),
+        "enabled": ("technical","structure","fibonacci","elliott","harmonics","divergence","liquidity","smart_money","session","gap","volume"),
+        "flow": False, "manipulation": False, "sessions": True,
+        "event_priority": ("gap","daily_failed_high","daily_failed_low","failed_breakout","session_failed_high"),
+        "direction_policy": "long_only",
     },
     "forex": {
         "priority": ("structure","session","liquidity","smart_money","elliott","fibonacci","volume","harmonics","divergence","momentum"),
