@@ -94,8 +94,10 @@ class TestScanPlus(unittest.TestCase):
         self.assertEqual(len(out),2)
     def test_history_gate(self):
         self.assertFalse(detect_events("forex","EUR/USD",[])["ready"])
-    def test_minimum_rr_is_centralized_at_two(self):
-        self.assertEqual(MIN_RR, 2.0)
+    def test_minimum_rr_policy_is_v4_absolute_1_5_preferred_2(self):
+        from scan_architecture import PREFERRED_RR
+        self.assertEqual(MIN_RR, 1.5)
+        self.assertEqual(PREFERRED_RR, 2.0)
 
     def test_external_limit_plan_is_two_r(self):
         rows=[]
@@ -112,7 +114,7 @@ class TestScanPlus(unittest.TestCase):
         plan=build_setup_plan("forex","EUR/USD",rows,event,analysis_core=core)
         self.assertTrue(plan["tradeable"])
         self.assertGreaterEqual(plan["limit_plan"]["rr"], MIN_RR)
-        self.assertEqual(plan["limit_plan"]["minimum_rr"], 2.0)
+        self.assertEqual(plan["limit_plan"]["minimum_rr"], 1.5)
 
     def test_health_contract(self):
         from app import app
@@ -185,7 +187,7 @@ class TestScanPlus(unittest.TestCase):
     def test_execution_contract_separates_analysis_from_broker(self):
         from scan_intelligence import execution_contract
         out=execution_contract("forex", True, False, "broker_not_configured")
-        self.assertEqual(out["status"], "TRADE_READY_ANALYSIS_EXECUTION_UNAVAILABLE")
+        self.assertEqual(out["status"], "EXECUTION_UNAVAILABLE")
         self.assertFalse(out["broker_execution_ready"])
 
     def test_alert_duplicate_suppression(self):
