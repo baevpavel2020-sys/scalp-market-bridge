@@ -1,4 +1,4 @@
-name: V4 Block3 Retry
+name: V4 Block3 Gate
 on:
   push:
     branches: [scan-plus-multimarket, v4-audit-run, v4-combat-run]
