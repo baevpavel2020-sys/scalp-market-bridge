@@ -10,7 +10,24 @@ from multi_market_adapters import ExternalMarketAdapter, external_universe, Mark
 from market_event_engine import detect_events, build_setup_plan
 from scan_intelligence import WATCHLIST, backtest_event_setups, walk_forward_backtest, edge_discovery
 
+
+def _ru_v4_boot_selftest():
+    if os.environ.get("RU_STOCKS_SELFTEST","0")!="1": return
+    def run():
+        try:
+            from multi_market_adapters import TwelveDataAdapter
+            a=TwelveDataAdapter(); out={}
+            for symbol in ("SBER","GAZP","LKOH"):
+                r=a.scan("ru_stocks",symbol)
+                plans=r.get("setup_plans") or {}
+                short_escape=any(str((p or {}).get("direction") or (p or {}).get("side") or "").lower() in ("short","sell","bearish") and bool((p or {}).get("tradeable")) for p in plans.values())
+                out[symbol]={"provider":r.get("provider"),"analysis_ready":r.get("analysis_ready"),"data_quality":r.get("data_quality"),"direction_policy":r.get("direction_policy"),"quote":r.get("quote"),"errors":r.get("errors"),"short_escape":short_escape}
+            print("RU_STOCKS_V4_SELFTEST "+json.dumps(out,ensure_ascii=False,default=str),flush=True)
+        except Exception as e: print(f"RU_STOCKS_V4_SELFTEST_FAIL {type(e).__name__}:{e}",flush=True)
+    threading.Thread(target=run,daemon=True).start()
+
 app = Flask(__name__)
+_ru_v4_boot_selftest()
 
 
 def ensure_market_collectors():
