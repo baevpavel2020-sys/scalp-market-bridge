@@ -43,7 +43,8 @@ def _session(market,ts):
   if 8<=nh<17:return "NEW_YORK"
   if 0<=d.hour<8:return "ASIA"
   return "ROLLOVER"
- if m=="stocks":return "GLOBAL_XSTOCKS_24_7"\n if m=="ru_stocks":return "MOEX_EQUITIES"
+ if m=="stocks":return "GLOBAL_XSTOCKS_24_7"
+ if m=="ru_stocks":return "MOEX_EQUITIES"
  if m=="commodities":return "INSTRUMENT_SESSION"
  return "24_7"
 
@@ -80,8 +81,8 @@ def detect_events(market,symbol,rows):
    if sl is not None and c["low"]<sl and c["close"]>sl:ev.append({"event":"session_failed_low","direction":"bullish","confidence":"high","session":prev_session,"level":sl})
  elif market=="commodities":
   ev.append({"event":"instrument_session_context","confidence":"context"})
- elif market=="stocks":
-  ev.append({"event":"xstock_24_7_context","confidence":"context"})
+ elif market in ("stocks","ru_stocks"):
+  ev.append({"event":"xstock_24_7_context" if market=="stocks" else "moex_equities_context","confidence":"context"})
   day=datetime.fromtimestamp(int(c.get("start",0))/1000,timezone.utc).date()
   day_rows=[x for x in r[:-1] if datetime.fromtimestamp(int(x.get("start",0))/1000,timezone.utc).date()==day]
   if day_rows:
