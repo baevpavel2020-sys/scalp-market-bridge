@@ -739,3 +739,9 @@ if __name__=="__main__":
         import inspect,scan_intelligence
         src=inspect.getsource(scan_intelligence.OutcomeLogger.record)
         self.assertIn('("READY", "TRADE")',src)
+
+    def test_combat_audit_sparse_spot_threshold_fits_warmup_budget(self):
+        import inspect,dynamic_collector
+        src=inspect.getsource(dynamic_collector.DynamicMarketManager)
+        self.assertIn('SPOT_SPARSE_DEGRADE_SECONDS","90"',src)
+        self.assertLessEqual(90,dynamic_collector.ScanJobManager.AUTO_WARMUP_MAX_SECONDS)
