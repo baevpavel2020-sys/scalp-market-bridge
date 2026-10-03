@@ -4353,8 +4353,8 @@ class DynamicMarketManager:
             "execution_mode": execution.get("execution_mode"),
             "warmed_flow_windows": execution.get("warmed_flow_windows") or [],
             "diagnostics": {
-                "linear_trade_count": len(linear.get("trades") or []),
-                "spot_trade_count": len(spot.get("trades") or []),
+                "linear_trade_count": max((int((w or {}).get("perp_trade_count") or 0) for w in (execution.get("windows") or {}).values()), default=0),
+                "spot_trade_count": max((int((w or {}).get("spot_trade_count") or 0) for w in (execution.get("windows") or {}).values()), default=0),
                 "linear_collector_age": linear.get("collector_age_seconds"),
                 "spot_collector_age": spot.get("collector_age_seconds"),
                 "linear_last_message_age": linear.get("last_message_age_seconds"),
