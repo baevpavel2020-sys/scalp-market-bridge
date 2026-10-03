@@ -3863,7 +3863,7 @@ class DynamicMarketManager:
 
         # A listed Spot market can be technically active yet too illiquid to be a
         # useful execution/driver source.  Do not leave such symbols in DATA_BLOCK
-        # forever and do not pretend Spot is absent: after a real observation period
+        # forever and do not pretend Spot is absent: after an explicit observation period
         # degrade explicitly to perp_dominant.  This mode requires usable perp tape,
         # usable OI on the same horizon, and fresh linear book/ticker.
         # Collector age survives reconnects; session age does not.
@@ -3877,7 +3877,7 @@ class DynamicMarketManager:
         spot15=windows.get("15m",{})
         spot_sparse=bool(
             spot_available is True
-            and spot_age >= 600.0
+            and spot_age >= float(os.environ.get("SPOT_SPARSE_DEGRADE_SECONDS","90"))
             and perp_quality_windows
             and not paired_windows
             and (int(spot15.get("spot_trade_count") or 0) < 6
