@@ -4352,6 +4352,15 @@ class DynamicMarketManager:
             "driver_ready": bool(execution.get("driver_ready")),
             "execution_mode": execution.get("execution_mode"),
             "warmed_flow_windows": execution.get("warmed_flow_windows") or [],
+            "diagnostics": {
+                "linear_trade_count": len(linear.get("trades") or []),
+                "spot_trade_count": len(spot.get("trades") or []),
+                "linear_collector_age": linear.get("collector_age_seconds"),
+                "spot_collector_age": spot.get("collector_age_seconds"),
+                "linear_last_message_age": linear.get("last_message_age_seconds"),
+                "spot_last_message_age": spot.get("last_message_age_seconds"),
+                "windows": execution.get("windows") or {},
+            },
         }
 
     @staticmethod
@@ -7119,6 +7128,7 @@ class ScanJobManager:
                     last_readiness
                     and not all(x.get("trade_data_ready") for x in last_readiness.values())
                 )
+                job["warmup_diagnostics"] = last_readiness
                 job["updated_at"] = time.time()
         cls._progress(jid, done=0, total=len(activated), current_symbol=None,
                       stage="FINAL_SCAN", warmup_remaining=0)
@@ -7299,7 +7309,9 @@ class ScanJobManager:
                         item["exposure_buckets"]=exposure
                     external[market]={"status":"PASS","count":len(vals),"results":vals,"relative_strength_ranking":rankings}
                 result={"orchestrator_version":"scan_orchestrator_v3_unified_live","mode":"unified","prescan_used":True,"markets":markets,
-                        "crypto":{"selected_symbols":eligible,"activated_symbols":activated,"warmup_seconds":round(warm_elapsed,2),"scan_plus_count":len(crypto_results),"scan_plus_results":crypto_results},
+                        "crypto":{"selected_symbols":eligible,"activated_symbols":activated,"warmup_seconds":round(warm_elapsed,2),
+                                   "warmup_diagnostics":dict((cls._jobs.get(jid) or {}).get("warmup_diagnostics") or {}),
+                                   "scan_plus_count":len(crypto_results),"scan_plus_results":crypto_results},
                         "external":external,"prescan":{"status":prescan.get("status"),"engine_version":prescan.get("engine_version"),"scan_plus_candidates":prescan.get("scan_plus_candidates") or [],"scan_plus_selection":prescan.get("scan_plus_selection") or [],"diagnostics":prescan.get("diagnostics") or {}},
                         "errors":errors,"elapsed_ms":round((time.time()-started_unified)*1000.0,2)}
             else:
