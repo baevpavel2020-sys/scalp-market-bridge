@@ -567,6 +567,32 @@ class TestScanPlus(unittest.TestCase):
         self.assertEqual(out["signal_freshness"]["state"],"FRESH")
         self.assertGreater(out["signal_freshness"]["stale_limit_seconds"],900)
 
+
+    def test_v4_block4_imports_and_dedupes_block3_liquidity_event(self):
+        from liquidity_leverage_engine import detect
+        analysis={"15":{"liquidity":{"event":{"type":"liquidity_grab","direction":"bearish","side":"buy_side","level":101.0,"start":123}}}}
+        out=detect({"flow":{}},{},analysis)
+        primary=[e for e in out["events"] if e["type"]=="FAILED_BREAKOUT"]
+        self.assertEqual(len(primary),1)
+        self.assertEqual(primary[0]["direction"],"bearish")
+        self.assertEqual({x["type"] for x in primary[0].get("related_evidence",[])},{"LIQUIDITY_SWEEP"})
+        self.assertFalse(primary[0]["trade_authority"])
+
+    def test_v4_block4_mss_contract_is_consumed_but_unknown_retest_never_passes(self):
+        from liquidity_leverage_engine import _structure_confirmation
+        analysis={"15":{"structure":{},"smart_money":{"mss":{"confirmed":True,"event":{"type":"MSS","direction":"bearish","confirmed_by_close":True}}}}}
+        out=_structure_confirmation(analysis,"bearish")
+        self.assertTrue(out["structure_break"])
+        self.assertFalse(out["failed_retest"])
+        self.assertFalse(out["confirmed"])
+
+    def test_v4_block4_explicit_failed_retest_completes_causal_confirmation(self):
+        from liquidity_leverage_engine import _structure_confirmation
+        analysis={"15":{"structure":{"last_event":{"type":"CHOCH","direction":"bearish","confirmed_by_close":True}},
+                        "smart_money":{"failed_retest":{"direction":"bearish","failed":True}}}}
+        out=_structure_confirmation(analysis,"bearish")
+        self.assertTrue(out["confirmed"])
+
 if __name__=="__main__":
     unittest.main()
 
