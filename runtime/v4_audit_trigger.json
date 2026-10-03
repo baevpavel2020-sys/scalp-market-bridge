@@ -1,6 +1,6 @@
 {
-  "requested_at": "2026-10-03T13:02:00Z",
-  "reason": "V4 Block 5 final regression after legacy expectation alignment",
+  "requested_at": "2026-10-03T13:06:00Z",
+  "reason": "V4 Block 5 final audit scenario-authorized alert fixture",
   "top": 8,
   "shortlist": 30
 }
