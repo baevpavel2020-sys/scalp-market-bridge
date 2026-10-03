@@ -59,6 +59,7 @@ def market_block_policy(market):
         "manipulation": bool(base["manipulation"]),
         "sessions": bool(base["sessions"]),
         "event_priority": list(base["event_priority"]),
+        "direction_policy": base.get("direction_policy","both"),
     }
 
 def opportunity_state(setup):
