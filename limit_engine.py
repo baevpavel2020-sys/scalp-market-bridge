@@ -5,7 +5,7 @@ sources are available; this module only ranks structural candidates and validate
 execution geometry. It never chooses a direction.
 """
 import math
-from scan_architecture import MIN_RR, market_block_policy
+from scan_architecture import MIN_RR, PREFERRED_MIN_RR, market_block_policy
 
 _TF_ALIASES={"D":"1D","240":"4h","60":"1h","15":"15m","5":"5m","1":"1m"}
 
@@ -132,6 +132,8 @@ def generate_candidates(market,symbol,analysis_core,direction,max_candidates=3):
         rr=reward/risk if risk>0 else 0
         if rr<MIN_RR: continue
         confirmations=sum(1 for x in str(source).split("+") if x)
+        elevated_quality=confirmations>=2 and tf in ("15m","1h")
+        if rr<PREFERRED_MIN_RR and not elevated_quality: continue
         score=confirmations*2
         if tf in ("15m","1h"): score+=2
         if "liquidity" in enabled and "liquidity" in source: score+=1
@@ -144,7 +146,7 @@ def generate_candidates(market,symbol,analysis_core,direction,max_candidates=3):
             "entry":entry,"entry_zone":[entry-zone,entry+zone],
             "stop":stop,"take_profit":target,"rr":rr,
             "risk_distance":risk,"reward_distance":reward,
-            "validation":{"minimum_rr":MIN_RR,"rr_ok":rr>=MIN_RR,"structure_source":source},
+            "validation":{"absolute_min_rr":MIN_RR,"preferred_min_rr":PREFERRED_MIN_RR,"rr_ok":rr>=MIN_RR,"elevated_quality":elevated_quality,"structure_source":source},
         })
     return sorted(out,key=lambda x:(-x["score"],-x["rr"]))[:max_candidates]
 
