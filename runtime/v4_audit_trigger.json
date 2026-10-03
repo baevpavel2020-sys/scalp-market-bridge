@@ -1,6 +1,6 @@
 {
-  "requested_at": "2026-10-03T13:25:00Z",
-  "reason": "V4 Block 8 final four-market production audit after chaos fixture correction",
+  "requested_at": "2026-10-03T14:30:00Z",
+  "reason": "Post-V4 mentor optimization regression and four-market verification",
   "top": 6,
   "shortlist": 30,
   "markets": [
