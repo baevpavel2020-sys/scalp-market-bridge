@@ -1602,7 +1602,7 @@ class MarketStream:
             if not (leg_a*leg_b<0 and leg_a*leg_c>0):
                 continue
             br=b/a; cr=c/a
-            direction="down" if leg_a<0 else "up"
+            direction="bearish" if leg_a<0 else "bullish"
             common={"direction":direction,"degree":degree,
                     "points":[{"wave":w,**x} for w,x in zip(("0","A","B","C"),s)],
                     "ratios":{"B_A":round(br,4),"C_A":round(cr,4)},"invalidation":p[0]}
@@ -2009,8 +2009,11 @@ class MarketStream:
         out=[]
         for c in clusters:
             degrees={m["degree"] for m in c["members"]}
-            if len(c["members"])>=2:
-                out.append({"price":round(c["price"],10),"count":len(c["members"]),"degrees":sorted(degrees),"multi_degree":len(degrees)>1,
+            anchors={(m.get("degree"),m.get("anchor_from"),m.get("anchor_to")) for m in c["members"]}
+            # Nearby ratios from one leg are one measurement, not independent confluence.
+            if len(anchors)>=2:
+                out.append({"price":round(c["price"],10),"count":len(c["members"]),"independent_anchor_count":len(anchors),
+                            "degrees":sorted(degrees),"multi_degree":len(degrees)>1,
                             "distance_atr":None if not atr or price is None else round(abs(c["price"]-price)/atr,3),"members":c["members"][:8]})
         out.sort(key=lambda c:(not c["multi_degree"],-c["count"],c["distance_atr"] if c["distance_atr"] is not None else 999))
         return {**base,"depth_clusters":out[:10],"level_count":len(levels)}
@@ -2028,9 +2031,18 @@ class MarketStream:
                 idx={r["start"]:i for i,r in enumerate(rows)}; a=idx.get(pts[0].get("start")); b=idx.get(pts[-1].get("start"))
                 q["proportionality"]["time_span_bars"]=(b-a) if a is not None and b is not None else None
             q["status"]="valid_candidate"; cands.append(q)
+        # Run the same hard-rule tree across every available structural degree.
+        by_degree={}
+        for degree,dctx in ctx.get("degrees",{}).items():
+            if len(dctx.get("points",[])) < 4: continue
+            local_ctx={"ready":ctx.get("ready"),"degrees":ctx.get("degrees"),"base":dict(ctx["base"])}
+            local_ctx["base"]["working_degree"]=degree
+            local=self._elliott_engine_v2(rows,local_ctx,fib)
+            by_degree[degree]={"primary":local.get("primary"),"alternatives":local.get("alternatives",[]),
+                               "candidate_count":local.get("candidate_count",0),"ambiguous":local.get("ambiguous",False)}
         # Ambiguity is explicit; Elliott remains interpretive evidence only.
-        return {**base,"candidates":cands,"wave_degree":ctx["base"].get("working_degree"),
-                "role":"interpretation_only","structure_authority":False}
+        return {**base,"candidates":cands,"wave_degree":ctx["base"].get("working_degree"),"degree_candidates":by_degree,
+                "recursive_degrees":True,"role":"interpretation_only","structure_authority":False}
 
     def _harmonic_depth_v38(self, rows, base):
         atr=self._atr(rows); confirmed=[]; developing=[]
@@ -2325,10 +2337,16 @@ class MarketStream:
             age_seconds=max(0.0,(now_ms-int(last_end if last_end is not None else last_start))/1000.0)
         except (TypeError,ValueError):
             pass
+        # Freshness is timeframe-aware: higher-TF closes remain usable through their own cadence.
+        tf=self._tf_from_rows_v382(rows)
+        tf_seconds={"1":60,"5":300,"15":900,"60":3600,"240":14400,"D":86400}.get(tf)
+        fresh_limit=(tf_seconds*1.5) if tf_seconds else 120
+        stale_limit=(tf_seconds*3.0) if tf_seconds else 900
         freshness_state="UNKNOWN"
         if age_seconds is not None:
-            freshness_state="FRESH" if age_seconds<=120 else "STALE" if age_seconds>900 else "AGING"
-        freshness={"state":freshness_state,"age_seconds":age_seconds,
+            freshness_state="FRESH" if age_seconds<=fresh_limit else "STALE" if age_seconds>stale_limit else "AGING"
+        freshness={"state":freshness_state,"age_seconds":age_seconds,"timeframe":tf,
+                   "fresh_limit_seconds":fresh_limit,"stale_limit_seconds":stale_limit,
                    "last_confirmed_start":last_start,"last_confirmed_end":last_end}
         return {"ready":ready,"engine_version":"scan_plus_v3_9_limit_plan","closed_candles":len(rows),
                 "excluded_open_candles":max(0,len(raw_rows)-len(rows)),"last_confirmed_start":last_start,
