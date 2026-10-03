@@ -22,7 +22,7 @@ jobs:
         id: start
         run: |
           set -euo pipefail
-          curl --fail-with-body --show-error --silent --retry 4 --retry-delay 3 "https://scalp-market-bridge.onrender.com/scan-auto/start?top=8&shortlist=30" > start.json
+          curl --fail-with-body --show-error --silent --retry 4 --retry-delay 3 "https://scalp-market-bridge.onrender.com/scan-live?top=6&shortlist=30&markets=crypto,stocks,forex,commodities" > start.json
           cat start.json
           JOB_ID=$(python -c 'import json; print(json.load(open("start.json"))["job_id"])')
           echo "JOB_ID=$JOB_ID" >> "$GITHUB_OUTPUT"
@@ -46,14 +46,26 @@ jobs:
           import json,sys
           j=json.load(open("result.json")); r=j.get("result") or {}
           cr=((r.get("crypto") or {}).get("scan_plus_results") or [])
+          external=r.get("external") or {}
           violations=[]
-          for x in cr:
-              f=x.get("opportunity_funnel") or {}
-              if f.get("trade_authorized") and f.get("stage")!="TRADE": violations.append([x.get("symbol"),"trade_stage"])
-              if f.get("trade_authorized") and (x.get("hard_invalidations") or (x.get("analytical_depth") or {}).get("hard_invalidations")): violations.append([x.get("symbol"),"hard_invalidation_trade"])
-              ec=x.get("execution_contract") or {}
-              if ec.get("order_sent"): violations.append([x.get("symbol"),"real_order_sent"])
-          print(json.dumps({"crypto_count":len(cr),"violations":violations,"telemetry":r.get("telemetry")},indent=2))
+          def check(items,market):
+              for x in items:
+                  f=x.get("opportunity_funnel") or {}
+                  if f.get("trade_authorized") and f.get("stage")!="TRADE": violations.append([market,x.get("symbol"),"trade_stage"])
+                  if f.get("trade_authorized") and (x.get("hard_invalidations") or (x.get("analytical_depth") or {}).get("hard_invalidations")): violations.append([market,x.get("symbol"),"hard_invalidation_trade"])
+                  ec=x.get("execution_contract") or {}
+                  if ec.get("order_sent"): violations.append([market,x.get("symbol"),"real_order_sent"])
+                  if market!="crypto":
+                      prof=x.get("market_profile") or {}
+                      if prof.get("oi") or prof.get("funding") or prof.get("liquidations") or prof.get("cvd"): violations.append([market,x.get("symbol"),"crypto_feature_leak"])
+                      if not x.get("analysis_ready") and f.get("trade_authorized"): violations.append([market,x.get("symbol"),"degraded_trade"])
+          check(cr,"crypto")
+          counts={"crypto":len(cr)}
+          for market in ("stocks","forex","commodities"):
+              vals=((external.get(market) or {}).get("results") or [])
+              counts[market]=len(vals); check(vals,market)
+              if not vals: violations.append([market,None,"market_missing"])
+          print(json.dumps({"market_counts":counts,"violations":violations,"telemetry":r.get("telemetry")},indent=2))
           if violations: sys.exit(1)
           PY
       - uses: actions/upload-artifact@v4
