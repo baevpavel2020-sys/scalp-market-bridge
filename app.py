@@ -1,6 +1,7 @@
 import concurrent.futures
 import os
 import hmac
+import json
 import requests
 from flask import Flask, jsonify, request
 
@@ -57,7 +58,7 @@ def audit_v4():
         gates=run_gates()
         passed=bool(result.wasSuccessful() and gates.get("passed"))
         return jsonify({"status":"PASS" if passed else "FAIL","tests":{"run":result.testsRun,"failures":len(result.failures),"errors":len(result.errors),
-                        "details":stream.getvalue()[-12000:]},"release_gates":gates}),200 if passed else 503
+                        "failed":[{"test":str(t),"traceback":tb[-4000:]} for t,tb in (result.failures+result.errors)],"details":stream.getvalue()[-12000:]},"release_gates":gates}),200 if passed else 503
     except Exception as exc:
         return jsonify({"status":"FAIL","error":f"{type(exc).__name__}:{exc}"}),500
 
