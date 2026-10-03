@@ -148,3 +148,17 @@ The production workflow wrapper reached its 15-minute CI timeout while the same 
 Temporary audit-only workflows used to execute and finalize the same production job were removed after verification.
 
 Block 8 contract is frozen. Later changes to multi-market provider fallback, four-market orchestration, production invariants or zero-chaos semantics require Block 8 regression and affected downstream reruns.
+
+
+## Post-V4 mentor optimization baseline
+Status: PASS (production regression + four-market runtime)
+Production job: 5391885cded5444e, state DONE.
+Frozen V4 audit remains PASS: 79 tests, 0 failures, 0 errors; release gates PASS.
+Four-market runtime completed crypto + stocks + forex + commodities with telemetry error_count=0 and provider_degraded=0.
+External provider routing is selected before network work: when Twelve Data is not configured, Forex/Commodities go directly to Yahoo instead of executing guaranteed-failure primary-provider calls first.
+Yahoo fallback timeframes are fetched concurrently per instrument, and the already-fetched candle stream supplies the analysis quote when available, eliminating a redundant quote request.
+External intelligence now finalizes Opportunity Funnel / Execution Contract only once after analytical hard invalidations, removing a duplicate downstream authorization pass while preserving fail-closed semantics.
+Market policy remains isolated: crypto-only manipulation/flow assumptions are not enabled for stocks/forex/commodities; all four markets share the analytical authority chain without sharing invalid market-specific inputs.
+Duplicate scan protection, event causal dedupe, persistent outcome fingerprint dedupe and read-only /scan-check remain intact.
+
+This baseline is the reference for future optimization: prefer deleting duplicate work and routing by capability before adding new modules. Performance changes must preserve the frozen authority, risk and no-lookahead contracts.
