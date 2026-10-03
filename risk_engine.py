@@ -1,11 +1,15 @@
 """Execution-cost, exposure-cluster and trade-stat helpers."""
 import math
 
-def execution_cost(market,entry,stop,target,spread=None,slippage_bps=0.0,commission_bps=0.0,funding_bps=0.0):
+def execution_cost(market,entry,stop,target,spread=None,slippage_bps=0.0,commission_bps=0.0,funding_bps=0.0,direction=None):
     try:
         entry=float(entry); stop=float(stop); target=float(target)
     except (TypeError,ValueError):
         return {"ready":False,"reason":"invalid_geometry"}
+    if direction=="bullish" and not (stop < entry < target):
+        return {"ready":False,"reason":"invalid_directional_geometry"}
+    if direction=="bearish" and not (target < entry < stop):
+        return {"ready":False,"reason":"invalid_directional_geometry"}
     gross_risk=abs(entry-stop); gross_reward=abs(target-entry)
     if gross_risk<=0:return {"ready":False,"reason":"zero_risk"}
     spread_abs=abs(float(spread)) if spread is not None else 0.0
