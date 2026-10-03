@@ -757,3 +757,14 @@ if __name__=="__main__":
         import dynamic_collector
         self.assertGreaterEqual(dynamic_collector.dynamic_manager.max_symbols,
                                 dynamic_collector.ScanOrchestrator.MAX_AUTO_SCAN_PLUS)
+
+    def test_combat_audit_realtime_pool_fits_v4_deep_scan(self):
+        import dynamic_collector
+        self.assertGreaterEqual(dynamic_collector.dynamic_manager.max_symbols,
+                                dynamic_collector.ScanOrchestrator.MAX_AUTO_SCAN_PLUS)
+
+    def test_combat_audit_terminal_redis_payload_is_compacted(self):
+        import inspect,dynamic_collector
+        src=inspect.getsource(dynamic_collector.ScanJobManager._persist)
+        self.assertIn("persisted_compact",src)
+        self.assertIn('state") in ("DONE","FAILED")',src)
