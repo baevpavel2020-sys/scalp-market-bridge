@@ -151,6 +151,7 @@ class MarketStream:
         self.seed_counts = {interval: 0 for interval in KLINE_INTERVALS}
         self._cache_dirty = False
         self._last_cache_save = 0.0
+        self._elliott_memory = {}
 
         # Restore native Bybit cache first. Linear history is then filled
         # from Binance USD-M public archives; live Bybit always wins.
@@ -2107,6 +2108,28 @@ class MarketStream:
 
     def _liquidity_depth_v38(self, rows, ctx, base):
         atr=self._atr(rows); close=float(rows[-1]["close"]) if rows else None; pools=[]
+        # Previous UTC day/week reference liquidity. These are context pools,
+        # never assumed untouched: later bars determine lifecycle below.
+        refs=[]
+        if rows:
+            from datetime import datetime, timezone
+            buckets_day={}; buckets_week={}
+            for r in rows:
+                try:
+                    dt=datetime.fromtimestamp(float(r.get("start"))/1000.0,timezone.utc)
+                    day=dt.date().isoformat(); iso=dt.isocalendar(); week=f"{iso.year}-W{iso.week:02d}"
+                    buckets_day.setdefault(day,[]).append(r); buckets_week.setdefault(week,[]).append(r)
+                except Exception: pass
+            def prior_levels(buckets, hi_name, lo_name):
+                keys=sorted(buckets)
+                if len(keys)<2: return
+                prev=buckets[keys[-2]]
+                if not prev: return
+                refs.extend([
+                    {"side":"buy_side","price":max(float(x["high"]) for x in prev),"degree":"reference","source":hi_name,"start":prev[-1].get("start")},
+                    {"side":"sell_side","price":min(float(x["low"]) for x in prev),"degree":"reference","source":lo_name,"start":prev[-1].get("start")},
+                ])
+            prior_levels(buckets_day,"PDH","PDL"); prior_levels(buckets_week,"PWH","PWL")
         for degree,d in ctx.get("degrees",{}).items():
             for p in d.get("points",[])[-10:]:
                 side="buy_side" if p["kind"]=="high" else "sell_side"; price=float(p["price"])
@@ -2117,6 +2140,14 @@ class MarketStream:
                 pools.append({"side":side,"price":price,"degree":degree,"source":"structural_swing","start":p.get("start"),"age_bars":age,
                               "taken":taken,"state":"accepted_through" if accepted else "swept_or_touched" if taken else "untouched",
                               "distance_atr":None if not atr or close is None else round(abs(price-close)/atr,3)})
+        for ref in refs:
+            later=[r for r in rows if r.get("start",0)>ref.get("start",0)]
+            price=float(ref["price"]); side=ref["side"]
+            accepted=any(float(r["close"])>price for r in later) if side=="buy_side" else any(float(r["close"])<price for r in later)
+            taken=any(float(r["high"])>price for r in later) if side=="buy_side" else any(float(r["low"])<price for r in later)
+            pools.append({**ref,"age_bars":self._age_bars_v38(rows,ref.get("start")),"taken":taken,
+                          "state":"accepted_through" if accepted else "swept_or_touched" if taken else "untouched",
+                          "distance_atr":None if not atr or close is None else round(abs(price-close)/atr,3)})
         for key,side in (("equal_highs","buy_side"),("equal_lows","sell_side")):
             z=base.get(key)
             if z: pools.append({"side":side,"price":float(z["price"]),"degree":"internal","source":key,"start":z.get("second_start"),
@@ -2144,7 +2175,8 @@ class MarketStream:
         event=events[-1] if events else (base.get("sweep") if isinstance(base.get("sweep"),dict) else None)
         life=self._event_lifecycle_v381(rows,event,ttl) if event else None
         if event and life: event={**event,"lifecycle":life}
-        return {**base,"pools":pools[-40:],"external_above":above[:6],"external_below":below[:6],
+        reference_levels={p["source"]:p for p in pools if p.get("source") in ("PDH","PDL","PWH","PWL")}
+        return {**base,"pools":pools[-44:],"reference_levels":reference_levels,"external_above":above[:6],"external_below":below[:6],
                 "nearest_buy_side":above[0] if above else None,"nearest_sell_side":below[0] if below else None,
                 "events":events[-8:],"event":event}
 
