@@ -103,3 +103,19 @@ Live external-market degradation remained fail-closed: unavailable/stale xStock 
 
 Block 5 contract is frozen. Later changes to scenario selection or opportunity-state authority require Block 5 regression and affected downstream reruns.
 
+
+
+## Block 6 closure record
+Status: PASS (production regression + runtime)
+Final runtime job: f2dfcbb9917d494e, state DONE.
+Deterministic audit: 66 tests, 0 failures, 0 errors; release gates PASS.
+Trade geometry is directional and complete before authorization: bullish requires stop < entry < target; bearish requires target < entry < stop.
+Opportunity Funnel no longer treats limit_plan.eligible alone as sufficient geometry; entry, stop and target must form a valid directional construction before TRADE authorization.
+Execution-cost validation rejects wrong-side stop/target geometry instead of turning it into positive RR via absolute distances.
+Execution friction (spread/slippage/commission/funding) is included in net RR and can only reduce gross RR.
+Limit construction keeps target structurally independent from entry and retains the absolute RR floor 1.5; RR 1.5-1.99 requires elevated setup quality.
+Core leverage remains capped at x10. The x25 profile is isolated to pump_exhaustion_x25 and risk is capped at 1%; leverage never increases fixed money risk.
+Execution contract remains analysis-first and broker-independent: missing broker execution cannot fabricate an order and does not destroy valid analysis.
+Production runtime completed 8/8 crypto deep-scan candidates, including a futures-only perp_only path, with telemetry error_count=0 and all live invariants PASS.
+
+Block 6 contract is frozen. Later changes to trigger, entry/target geometry, execution cost, RR or risk/leverage semantics require Block 6 regression and affected downstream reruns.
