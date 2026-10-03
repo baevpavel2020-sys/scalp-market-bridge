@@ -19,6 +19,10 @@ TF={"1m":"1min","5m":"5min","15m":"15min","1h":"1h","4h":"4h","1D":"1day"}
 FOREX=("EUR/USD","GBP/USD","USD/JPY","USD/CHF","AUD/USD","NZD/USD","USD/CAD","EUR/GBP","EUR/JPY","GBP/JPY")
 COMMODITIES=("XAU/USD","XAG/USD","WTI/USD","BRENT/USD","HG1")
 STOCKS=("AAPLXUSDT","NVDAXUSDT","TSLAXUSDT","GOOGLXUSDT","AMZNXUSDT","METAXUSDT","COINXUSDT","HOODXUSDT","CRCLXUSDT","MSTRXUSDT","SPCXXUSDT","NFLXXUSDT","AVGOXUSDT","MSFTXUSDT","JPMXUSDT")
+RU_STOCKS=("SBER","GAZP","LKOH","YDEX","T","ROSN","NVTK","GMKN","PLZL","SIBN","TATN","MOEX","MGNT","X5","VTBR")
+MOEX_BASE="https://iss.moex.com/iss"
+MOEX_BOARD="TQBR"
+MOEX_TF={"1h":60,"1D":24}
 _XSTOCKS_CACHE={"expires":0.0,"symbols":None}
 _XSTOCKS_CACHE_LOCK=threading.Lock()
 _XSTOCKS_CACHE_TTL=60.0
@@ -78,6 +82,54 @@ def _yahoo_quote(symbol):
     if price is None: raise RuntimeError("yahoo_quote_missing_price")
     return {"symbol":symbol,"price":float(price),"source":"yahoo_finance"}
 
+def _moex_get(path, params=None):
+    q={"iss.meta":"off","iss.only":"candles","candles.columns":"begin,open,high,low,close,volume,value"}; q.update(params or {})
+    req=urllib.request.Request(MOEX_BASE+path+"?"+urllib.parse.urlencode(q),headers={"User-Agent":"scalp-market-bridge/1.0","Accept":"application/json"})
+    with urllib.request.urlopen(req,timeout=12) as r: return json.loads(r.read().decode("utf-8"))
+
+def _moex_native(symbol, interval, from_date, start=0):
+    data=_moex_get(f"/engines/stock/markets/shares/boards/{MOEX_BOARD}/securities/{urllib.parse.quote(symbol)}/candles.json",{"interval":1 if interval=="1m" else MOEX_TF[interval],"from":from_date,"start":int(start)})
+    block=data.get("candles") or {}; cols=block.get("columns") or []; out=[]; tf_ms={"1m":60000,"1h":3600000,"1D":86400000}[interval]; now_ms=int(time.time()*1000)
+    for vals in block.get("data") or []:
+        try:
+            row=dict(zip(cols,vals)); dt=datetime.fromisoformat(str(row["begin"]).replace("Z","+00:00"))
+            if dt.tzinfo is None: dt=dt.replace(tzinfo=ZoneInfo("Europe/Moscow") if ZoneInfo else timezone.utc)
+            ms=int(dt.timestamp()*1000)
+            out.append({"start":ms,"open":float(row["open"]),"high":float(row["high"]),"low":float(row["low"]),"close":float(row["close"]),"volume":float(row.get("volume") or 0),"value":float(row.get("value") or 0),"source":"moex_iss","confirm":bool(ms+tf_ms<=now_ms)})
+        except (TypeError,ValueError,KeyError): pass
+    return out
+
+def moex_candles(symbol, interval, target=500):
+    days={"1m":14,"5m":30,"15m":90,"1h":365,"4h":1460,"1D":3650}.get(interval,365); from_date=datetime.fromtimestamp(time.time()-days*86400,timezone.utc).date().isoformat()
+    base="1m" if interval in ("1m","5m","15m") else "1h" if interval=="4h" else interval; raw=[]; start=0
+    needed=max(target*(15 if interval=="15m" else 5 if interval=="5m" else 4 if interval=="4h" else 1),target)
+    while len(raw)<needed:
+        page=_moex_native(symbol,base,from_date,start)
+        if not page: break
+        raw.extend(page); start+=len(page)
+        if start>100000: break
+    rows=_resample_ohlcv(raw,300000) if interval=="5m" else _resample_ohlcv(raw,900000) if interval=="15m" else _resample_ohlcv(raw,14400000) if interval=="4h" else raw
+    return rows[-target:]
+
+def _moex_fresh(rows, interval):
+    confirmed=[r for r in rows or [] if r.get("confirm",True)]
+    if not confirmed: return False
+    max_age={"5m":7*86400,"15m":7*86400,"1h":7*86400,"4h":10*86400,"1D":10*86400}.get(interval,10*86400)
+    return time.time()*1000-int(confirmed[-1]["start"]) <= max_age*1000
+
+def moex_quote(symbol):
+    path=f"/engines/stock/markets/shares/boards/{MOEX_BOARD}/securities/{urllib.parse.quote(symbol)}.json"
+    q={"iss.meta":"off","iss.only":"marketdata","marketdata.columns":"SECID,LAST,MARKETPRICE,UPDATETIME"}
+    req=urllib.request.Request(MOEX_BASE+path+"?"+urllib.parse.urlencode(q),headers={"User-Agent":"scalp-market-bridge/1.0","Accept":"application/json"})
+    with urllib.request.urlopen(req,timeout=12) as r: data=json.loads(r.read().decode("utf-8"))
+    block=data.get("marketdata") or {}; cols=block.get("columns") or []
+    for vals in block.get("data") or []:
+        row=dict(zip(cols,vals)); price=row.get("LAST") or row.get("MARKETPRICE")
+        if price is not None: return {"symbol":symbol,"price":float(price),"source":"moex_iss_marketdata","delayed":True}
+    rows=moex_candles(symbol,"5m",target=2)
+    if not rows: raise RuntimeError("moex_quote_missing_price")
+    return {"symbol":symbol,"price":float(rows[-1]["close"]),"source":"moex_iss_candle_fallback","delayed":True}
+
 BYBIT_BASE="https://api.bybit.com"
 def _bybit_get(path,params):
     q=urllib.parse.urlencode(params); req=urllib.request.Request(BYBIT_BASE+path+"?"+q,headers={"User-Agent":"scalp-market-bridge/1.0"})
@@ -125,6 +177,7 @@ def bybit_xstock_candles(symbol,interval="15",limit=500):
 
 MARKET_PROFILES = {
     "crypto": {"session_model":"24_7","volume_model":"exchange_volume","oi":True,"funding":True,"liquidations":True,"orderbook":True,"cvd":True,"execution":"exchange_perpetual_or_spot","special_events":["pump_exhaustion","short_squeeze","long_liquidation_cascade","liquidity_sweep"]},
+    "ru_stocks": {"session_model":"moex_equities_session","volume_model":"exchange_volume","oi":False,"funding":False,"liquidations":False,"orderbook":False,"cvd":False,"execution":"moex_spot_long_only","direction_policy":"long_only","special_events":["gap","opening_range","session_liquidity","failed_breakout"]},
     "stocks": {"session_model":"secondary_market_24_7","volume_model":"exchange_volume","oi":False,"funding":False,"liquidations":False,"orderbook":True,"cvd":False,"execution":"bybit_xstock_spot","special_events":["gap","opening_range","session_liquidity","failed_breakout"]},
     "forex": {"session_model":"asia_london_newyork","volume_model":"tick_or_provider_volume","oi":False,"funding":False,"liquidations":False,"orderbook":False,"cvd":False,"execution":"external_fx_broker_required","special_events":["session_liquidity","london_breakout","ny_reversal","failed_breakout"]},
     "commodities": {"session_model":"instrument_session","volume_model":"provider_volume","oi":False,"funding":False,"liquidations":False,"orderbook":False,"cvd":False,"execution":"external_commodity_broker_required","special_events":["session_liquidity","inventory_event","contract_rollover","failed_breakout"]},
@@ -147,6 +200,7 @@ def session_context(market, now_epoch=None):
         elif 8 <= nh < 17: session="NEW_YORK"
         elif 0 <= utc_dt.hour < 8: session="ASIA"
         else: session="ROLLOVER"
+    elif market=="ru_stocks": session="MOEX_EQUITIES"
     elif market=="stocks": session="GLOBAL_XSTOCKS_24_7"
     elif market=="commodities": session="INSTRUMENT_SESSION"
     else: session="24_7"
@@ -289,7 +343,7 @@ class ExternalMarketAdapter:
         symbols=list(dict.fromkeys(str(s) for s in symbols if str(s)))
         if not symbols:
             return {}
-        if market=="stocks":
+        if market in ("stocks","ru_stocks"):
             with concurrent.futures.ThreadPoolExecutor(max_workers=min(3,len(symbols))) as pool:
                 vals=list(pool.map(lambda s:self.scan(market,s),symbols))
             return {v.get("symbol"):v for v in vals}
@@ -343,7 +397,19 @@ class ExternalMarketAdapter:
     def scan(self,market,symbol):
         frames={}; errors={}
         provider="twelve_data"
-        if market=="stocks":
+        if market=="ru_stocks":
+            provider="moex_iss"
+            def fetch_ru(tf):
+                try: return tf, moex_candles(symbol,tf,target=500), None
+                except Exception as exc: return tf, [], f"{type(exc).__name__}:{exc}"
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+                for tf, rows, err in pool.map(fetch_ru, ("1D","4h","1h","15m","5m")):
+                    frames[tf]=rows
+                    if err: errors[tf]=err
+            try: quote=moex_quote(symbol)
+            except Exception as exc: quote={"error":f"{type(exc).__name__}:{exc}"}
+            configured=True
+        elif market=="stocks":
             provider="bybit_xstocks+yahoo_fallback"
             tf_intervals={"1D":"D","4h":"240","1h":"60","15m":"15","5m":"5"}
             yahoo_symbol=YAHOO_STOCK_MAP.get(symbol)
@@ -385,12 +451,22 @@ class ExternalMarketAdapter:
                     except Exception as exc: quote={"error":f"{type(exc).__name__}:{exc}"}
                     configured=True
         ready=all(sum(1 for row in frames.get(tf,[]) if row.get("confirm",True))>=50 for tf in ("1D","4h","1h","15m","5m"))
+        if market=="ru_stocks": ready=ready and all(_moex_fresh(frames.get(tf,[]),tf) for tf in ("1D","4h","1h","15m","5m"))
         event_frames={tf:frames[tf] for tf in ("1D","4h","1h","15m","5m") if frames.get(tf)}
         events={tf:detect_events(market,symbol,rows) for tf,rows in event_frames.items()}
         analysis_core=MarketProfileRouter.analyze(market,symbol,frames)
         setup={tf:build_setup_plan(market,symbol,rows,events[tf],analysis_core=analysis_core) for tf,rows in event_frames.items()}
         result={"market":market,"symbol":symbol,"adapter_version":self.VERSION,"provider":provider,"configured":configured,"analysis_ready":ready,"execution_ready":False,"execution_reason":"external_market_execution_connector_not_configured","frames":frames,"quote":quote,"analysis_core":analysis_core,"events":events,"setup_plans":setup,"errors":errors,"capabilities":{"ohlcv":True,"realtime_quote":True,"orderbook":False,"open_interest":False,"funding":False,"spot_cvd":False},"market_profile":market_profile(market),"session_context":session_context(market),"data_quality":{"state":"READY" if ready else "PARTIAL","missing_timeframes":[tf for tf in ("1D","4h","1h","15m","5m") if sum(1 for row in frames.get(tf,[]) if row.get("confirm",True))<50]}}
         enriched=enrich_external_result(result,market)
+        if market=="ru_stocks":
+            enriched["direction_policy"]="long_only"
+            def block_short(obj):
+                if not isinstance(obj,dict): return
+                direction=str(obj.get("direction") or obj.get("side") or "").lower()
+                if direction in ("short","sell","bearish"):
+                    obj["tradeable"]=False; obj["execution_ready"]=False; obj["status"]="WATCH"; obj["block_reason"]="ru_stocks_spot_long_only"
+            block_short(enriched); block_short(enriched.get("setup"))
+            for plan in (enriched.get("setup_plans") or {}).values(): block_short(plan)
         # Raw OHLCV is an internal input, not part of the public unified payload.
         enriched.pop("frames",None)
         if isinstance(enriched.get("analysis_core"),dict):
@@ -408,5 +484,6 @@ def external_universe():
         "forex": list(FOREX),
         "commodities": list(COMMODITIES),
         "stocks": stocks,
+        "ru_stocks": list(RU_STOCKS),
         "_meta": {"stocks_source": source},
     }
