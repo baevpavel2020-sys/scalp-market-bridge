@@ -198,14 +198,12 @@ def scan_markets():
             market=market.strip().lower()
             if market not in universe: continue
             symbols=universe[market]
-            market_ready=adapter.configured or market=="stocks"
-            if market_ready:
-                workers=min(3,len(symbols)) or 1
-                with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-                    out["markets"][market]=list(pool.map(lambda s: adapter.scan(market,s), symbols))
-            else:
-                out["markets"][market]={
-                    "status":"DATA_BLOCK","reason":"TWELVE_DATA_API_KEY_not_configured","symbols":symbols}
+            # ExternalMarketAdapter owns provider fallback semantics. Forex and
+            # commodities can use public Yahoo data when Twelve Data is absent;
+            # readiness must be decided per symbol/timeframe, never by API-key presence.
+            workers=min(3,len(symbols)) or 1
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+                out["markets"][market]=list(pool.map(lambda s: adapter.scan(market,s), symbols))
         return jsonify(out)
     except Exception as exc:
         return jsonify({"status":"FAIL","error":f"{type(exc).__name__}:{exc}"}),500
