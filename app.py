@@ -437,6 +437,20 @@ def diagnostics_dynamic(symbol):
         return jsonify({"error": str(exc)}), 400
 
 
+def _start_scan_on_boot_if_enabled():
+    """Transport hook: lets an authenticated deployment trigger one canonical Scan job."""
+    if str(os.environ.get("SCAN_ON_BOOT","0")).strip().lower() not in ("1","true","yes","on"): return
+    def _boot_scan():
+        try:
+            time.sleep(2)
+            job=start_scan_auto_job(top_n=8,shortlist=30)
+            print("SCAN_BOOT_TRIGGER "+json.dumps({"job_id":job.get("job_id"),"state":job.get("state")},separators=(",",":")),flush=True)
+        except Exception as exc:
+            print("SCAN_BOOT_TRIGGER "+json.dumps({"status":"FAIL","error":f"{type(exc).__name__}:{exc}"},separators=(",",":")),flush=True)
+    threading.Thread(target=_boot_scan,name="scan-boot-trigger",daemon=True).start()
+
+_start_scan_on_boot_if_enabled()
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
