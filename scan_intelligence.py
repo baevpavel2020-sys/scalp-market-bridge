@@ -15,8 +15,9 @@ from scan_architecture import market_block_policy
 from risk_engine import execution_cost, mae_mfe
 from scenario_engine import scenario_snapshot
 from context_engine import build_context
+from v4_core import opportunity_funnel as v4_funnel, execution_contract as v4_execution, explainability, shadow_record
 
-INTELLIGENCE_VERSION = "intelligence_v3_opportunity_funnel"
+INTELLIGENCE_VERSION = "intelligence_v4_blocks5_14"
 WATCHLIST_TTL = 6 * 3600
 OUTCOME_PATH = os.environ.get("SCAN_OUTCOME_PATH", "/tmp/scalp-market-bridge/outcomes.jsonl")
 PERFORMANCE_BARS = {"5m": 2, "15m": 2, "1h": 2, "4h": 2}
@@ -368,46 +369,15 @@ def data_provenance(frames):
     return out
 
 def opportunity_funnel(setup, analysis_ready=True, broker_execution_ready=None):
-    """Discovery may be permissive; TRADE remains gated by hard validation."""
-    setup = setup or {}
-    hard = setup.get("hard_invalidations") or []
-    state = setup.get("trade_state") or setup.get("state")
-    direction = setup.get("direction") or setup.get("side")
-    rr = _num(setup.get("risk_reward") or (setup.get("limit_plan") or {}).get("rr"))
-    trigger = bool(setup.get("trigger_confirmed") or setup.get("trigger_state") == "aligned")
-    if hard or state in ("INVALID", "DATA_BLOCK"):
-        stage = "EARLY" if analysis_ready else "UNAVAILABLE"
-    elif state == "SETUP" and trigger:
-        stage = "TRADE"
-    elif direction and (rr is None or rr >= 1.0):
-        stage = "READY" if trigger or (setup.get("limit_plan") or {}).get("eligible") else "DEVELOPING"
-    else:
-        stage = "EARLY"
-    return {
-        "stage": stage,
-        "analysis_ready": bool(analysis_ready),
-        "broker_execution_ready": broker_execution_ready,
-        "trade_authorized": bool(stage == "TRADE"),
-        "rr": rr,
-        "hard_invalidations": len(hard),
-        "rule": "discovery_is_permissive_trade_validation_is_strict",
-    }
-
+    out=v4_funnel(setup)
+    out["analysis_ready"]=bool(analysis_ready)
+    out["broker_execution_ready"]=broker_execution_ready
+    return out
 
 def execution_contract(market, analysis_ready, broker_execution_ready, reason=None):
-    return {
-        "market": market,
-        "analysis_execution_ready": bool(analysis_ready),
-        "broker_execution_ready": bool(broker_execution_ready),
-        "status": (
-            "EXECUTABLE" if analysis_ready and broker_execution_ready
-            else "TRADE_READY_ANALYSIS_EXECUTION_UNAVAILABLE" if analysis_ready
-            else "ANALYSIS_NOT_READY"
-        ),
-        "reason": reason,
-        "order_sent": False,
-    }
-
+    out=v4_execution(market,analysis_ready,market_data_ready=analysis_ready,broker_ready=broker_execution_ready,order_submission=False)
+    out["reason"]=reason
+    return out
 
 def _setup_cost(setup,market):
     lp=(setup or {}).get("limit_plan") or {}
@@ -457,6 +427,8 @@ def enrich_external_result(result, market):
     out["opportunity_funnel"] = opportunity_funnel(out["setup"], result.get("analysis_ready"), result.get("execution_ready"))
     out["execution_contract"] = execution_contract(market, out["opportunity_funnel"]["stage"] in ("READY","TRADE"), result.get("execution_ready"), result.get("execution_reason"))
     out["intelligence_version"] = INTELLIGENCE_VERSION
+    out["explainability"] = explainability(out)
+    out["shadow_record"] = shadow_record(out)
     depth_evidence = []
     for tf_name, item in (analysis or {}).items():
         for source, key in (("structure","structure"),("elliott","elliott"),("fibonacci","fibonacci"),("harmonics","harmonics"),("divergence","divergence"),("liquidity","liquidity"),("smc","smc"),("flow","flow")):
@@ -503,6 +475,8 @@ def enrich_scan(scan, market="crypto"):
     out["scenario"] = out["setup"].get("scenario") or scenario_snapshot({"analysis":out.get("timeframes") or {}}, out["setup"].get("event_basis") or [])
     out["execution_cost"] = _setup_cost(out["setup"],market)
     out["intelligence_version"] = INTELLIGENCE_VERSION
+    out["explainability"] = explainability(out)
+    out["shadow_record"] = shadow_record(out)
     out["opportunity_state"] = out["setup"].get("opportunity_state") or "WATCH"
     out["setup"]["opportunity_state"] = out["opportunity_state"]
     out["opportunity_funnel"] = opportunity_funnel(out["setup"], True, (out.get("status") or {}).get("execution_ready"))
