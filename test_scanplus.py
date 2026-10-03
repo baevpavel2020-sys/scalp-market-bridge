@@ -659,6 +659,43 @@ class TestScanPlus(unittest.TestCase):
         self.assertLessEqual(x25["risk_pct"],.01)
         self.assertAlmostEqual(x25["money_risk"],10.0)
 
+
+    def test_v4_block7_outcome_dedupe_survives_logger_restart(self):
+        import tempfile, os
+        from scan_intelligence import OutcomeLogger
+        fd,path=tempfile.mkstemp(); os.close(fd)
+        try:
+            scan={"market":"crypto","symbol":"BTCUSDT","opportunity_funnel":{"stage":"READY"},
+                  "setup":{"market":"crypto","symbol":"BTCUSDT","direction":"bullish",
+                           "limit_plan":{"entry":100,"stop":95,"take_profit":110,"rr":2.0}}}
+            first=OutcomeLogger(path)
+            self.assertTrue(first.record(scan))
+            second=OutcomeLogger(path)
+            self.assertFalse(second.record(scan))
+            with open(path,"r",encoding="utf-8") as fh:
+                self.assertEqual(sum(1 for line in fh if line.strip()),1)
+        finally:
+            try: os.remove(path)
+            except OSError: pass
+
+    def test_v4_block7_scan_check_is_strictly_read_only(self):
+        import inspect, app as app_module
+        src=inspect.getsource(app_module.scan_check)
+        self.assertIn("get_latest_unified_scan_job",src)
+        self.assertNotIn("start_scan",src)
+        self.assertNotIn("_new_job",src)
+
+    def test_v4_block7_edge_discovery_uses_only_resolved_outcomes(self):
+        from scan_intelligence import edge_summary
+        out=edge_summary([
+            {"market":"crypto","direction":"bullish","outcome":"TP","realized_r":2.0},
+            {"market":"crypto","direction":"bullish","outcome":"UNRESOLVED","realized_r":99.0},
+            {"market":"crypto","direction":"bullish","outcome":"SL","realized_r":-1.0},
+        ])
+        self.assertEqual(out["samples"],2)
+        self.assertEqual(out["tp"],1)
+        self.assertEqual(out["sl"],1)
+
 if __name__=="__main__":
     unittest.main()
 
