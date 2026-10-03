@@ -307,6 +307,24 @@ class OutcomeLogger:
         self.path = path
         self.lock = threading.Lock()
         self._seen = set()
+        self._seen_loaded = False
+
+    def _load_seen(self):
+        if self._seen_loaded:
+            return
+        try:
+            with open(self.path, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    try:
+                        item=json.loads(line)
+                    except (TypeError,ValueError,json.JSONDecodeError):
+                        continue
+                    fingerprint=item.get("fingerprint") if isinstance(item,dict) else None
+                    if fingerprint:
+                        self._seen.add(fingerprint)
+        except OSError:
+            pass
+        self._seen_loaded = True
 
     def record(self, scan):
         setup = scan.get("setup") or {}
@@ -336,6 +354,7 @@ class OutcomeLogger:
         })
         event["fingerprint"] = fingerprint
         with self.lock:
+            self._load_seen()
             if fingerprint in self._seen:
                 return False
             self._seen.add(fingerprint)
