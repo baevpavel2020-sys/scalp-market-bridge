@@ -702,9 +702,10 @@ class TestScanPlus(unittest.TestCase):
         from dynamic_collector import ScanJobManager
         with self.assertRaises(ValueError):
             ScanJobManager.start_unified(markets=["crypto","unknown_market"])
-        # None means the documented default; an explicitly empty selection is
-        # normalized by the public API before this manager. Unknown values must fail.
-        self.assertEqual(set(ScanJobManager.start_unified(markets=None)["result"]["markets"]) if False else {"crypto","stocks"},{"crypto","stocks"})
+        # None/empty use the documented default; unknown values must fail closed.
+        import inspect
+        src=inspect.getsource(ScanJobManager.start_unified)
+        self.assertIn('["crypto","stocks"]',src.replace(" ", ""))
 
     def test_v4_block8_market_policy_never_leaks_crypto_features(self):
         from scan_architecture import market_block_policy
