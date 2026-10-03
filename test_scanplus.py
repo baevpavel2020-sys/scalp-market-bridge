@@ -745,3 +745,10 @@ if __name__=="__main__":
         src=inspect.getsource(dynamic_collector.DynamicMarketManager)
         self.assertIn('SPOT_SPARSE_DEGRADE_SECONDS","90"',src)
         self.assertLessEqual(90,dynamic_collector.ScanJobManager.AUTO_WARMUP_MAX_SECONDS)
+
+    def test_combat_audit_live_flow_oi_coverage_can_mature_inside_warmup(self):
+        import inspect,dynamic_collector
+        src=inspect.getsource(dynamic_collector.DynamicCollector)
+        self.assertIn('FLOW_LIVE_COVERAGE_CAP_MS","60000"',src)
+        self.assertIn('OI_LIVE_COVERAGE_CAP_MS","60000"',src)
+        self.assertLess(60,dynamic_collector.ScanJobManager.AUTO_WARMUP_MAX_SECONDS)
