@@ -2831,7 +2831,10 @@ class MarketStream:
             WINDOWS["1h"]: 8,
         }
         min_count = min_counts.get(duration, 3)
-        min_coverage = max(10_000, int(duration * 0.50))
+        # Execution only needs a genuinely observed short horizon; do not pretend 5m/15m/1h
+        # coverage exists after a two-minute warmup.  Require bounded live coverage and
+        # expose longer horizons as unavailable until they actually mature.
+        min_coverage = max(10_000, min(int(duration * 0.50), int(os.environ.get("FLOW_LIVE_COVERAGE_CAP_MS","60000"))))
         cutoff = now_ms - duration
         valid=[]
         for timestamp_ms, side, price, qty in reversed(self.trades):
@@ -3017,7 +3020,7 @@ class MarketStream:
             oldest_ts=inside[0][0] if inside else None
             newest_ts=inside[-1][0] if inside else None
             coverage=max(0,newest_ts-oldest_ts) if oldest_ts is not None and newest_ts is not None else 0
-            required=max(10_000, int(duration * 0.50))
+            required=max(10_000, min(int(duration * 0.50), int(os.environ.get("OI_LIVE_COVERAGE_CAP_MS","60000"))))
             usable=bool(current is not None and base not in (None,0) and len(inside)>=2 and coverage>=required)
             change=(current-base) if usable else None
             change_pct=(change/base*100) if usable else None
