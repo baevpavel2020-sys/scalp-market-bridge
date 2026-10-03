@@ -95,9 +95,9 @@ class TestScanPlus(unittest.TestCase):
     def test_history_gate(self):
         self.assertFalse(detect_events("forex","EUR/USD",[])["ready"])
     def test_minimum_rr_policy_is_v4_absolute_1_5_preferred_2(self):
-        from scan_architecture import PREFERRED_RR
+        from scan_architecture import PREFERRED_MIN_RR
         self.assertEqual(MIN_RR, 1.5)
-        self.assertEqual(PREFERRED_RR, 2.0)
+        self.assertEqual(PREFERRED_MIN_RR, 2.0)
 
     def test_external_limit_plan_is_two_r(self):
         rows=[]
