@@ -383,11 +383,17 @@ def _compact_scan_result(job):
                 "failed_requirements":setup.get("failed_requirements") or funnel.get("missing") or []})
     rank={"TRADE":0,"READY":1,"WATCH":2,"DEVELOPING":3,"EARLY":4}
     items.sort(key=lambda x:(rank.get(x.get("state"),9), -(x.get("risk_reward") or 0)))
+    manipulation=[]
+    for row in (result.get("crypto") or {}).get("scan_plus_results") or []:
+        m=row.get("manipulation") or {}
+        if isinstance(m,dict):
+            manipulation.append({"symbol":row.get("symbol"),"status":m.get("status"),
+                "signal":m.get("signal"),"score":m.get("score"),"classification":m.get("classification")})
     telemetry=result.get("telemetry") or {}
     return {"job_id":job.get("job_id"),"state":job.get("state"),"markets":result.get("markets") or [],
         "summary":{"trade":sum(x["state"]=="TRADE" for x in items),"ready":sum(x["state"]=="READY" for x in items),
                    "watch":sum(x["state"] in ("WATCH","DEVELOPING","EARLY") for x in items)},
-        "opportunities":items,"health":{"error_count":telemetry.get("error_count",len(result.get("errors") or {})),
+        "opportunities":items,"manipulation":manipulation,"health":{"error_count":telemetry.get("error_count",len(result.get("errors") or {})),
         "provider_degraded":telemetry.get("provider_degraded",0)},"error":job.get("error")}
 
 @app.get("/scan-check")
