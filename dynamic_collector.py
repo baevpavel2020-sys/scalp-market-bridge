@@ -7078,7 +7078,7 @@ class ScanJobManager:
                 started_unified=time.time()
                 top_n=max(1,min(int(payload.get("top_n",5)),ScanOrchestrator.MAX_AUTO_SCAN_PLUS))
                 shortlist=int(payload.get("shortlist",30))
-                markets=[str(x).strip().lower() for x in (payload.get("markets") or ["crypto","stocks","forex","commodities"]) if str(x).strip()]
+                markets=[str(x).strip().lower() for x in (payload.get("markets") or ["crypto","stocks","ru_stocks","forex","commodities"]) if str(x).strip()]
                 cls._progress(jid,done=0,total=None,current_symbol=None,stage="UNIFIED_PRESCAN")
                 prescan=run_prescan(top_n=top_n,shortlist=shortlist)
                 eligible=[]
@@ -7101,13 +7101,13 @@ class ScanJobManager:
                 errors=dict(activation_errors); errors.update({f"crypto:{k}":v for k,v in crypto_errors.items()})
                 external={}
                 adapter=ExternalMarketAdapter(); universe=external_universe()
-                for market in ("stocks","forex","commodities"):
+                for market in ("stocks","ru_stocks","forex","commodities"):
                     if market not in markets: continue
                     symbols=list(universe.get(market) or [])
                     cls._progress(jid,done=0,total=len(symbols),current_symbol=None,stage=f"EXTERNAL_{market.upper()}")
                     if not symbols:
                         external[market]={"status":"NO_SYMBOLS","results":[]}; continue
-                    if market!="stocks" and not adapter.configured:
+                    if market not in ("stocks","ru_stocks") and not adapter.configured:
                         external[market]={"status":"DATA_BLOCK","reason":"TWELVE_DATA_API_KEY_not_configured","symbols":symbols}; continue
                     # External providers are batch-oriented: one request per
                     # timeframe for the whole market is faster and avoids a request
@@ -7151,7 +7151,7 @@ class ScanJobManager:
         payload = {
             "top_n": int(top_n),
             "shortlist": int(shortlist),
-            "markets": list(markets or ["crypto", "stocks", "forex", "commodities"]),
+            "markets": list(markets or ["crypto", "stocks", "ru_stocks", "forex", "commodities"]),
         }
         with cls._lock:
             for existing in cls._jobs.values():
@@ -7234,7 +7234,7 @@ def start_scan_auto_job(top_n=6, shortlist=30):
     return ScanJobManager.start_unified(
         top_n=min(int(top_n), 5),
         shortlist=shortlist,
-        markets=["crypto", "stocks", "forex", "commodities"],
+        markets=["crypto", "stocks", "ru_stocks", "forex", "commodities"],
     )
 
 
