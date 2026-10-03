@@ -1020,6 +1020,20 @@ if __name__=="__main__":
         self.assertIn('state") in ("DONE","FAILED")',src)
 
 
+    def test_transport_job_done_log_is_compact(self):
+        import inspect,dynamic_collector
+        src=inspect.getsource(dynamic_collector.ScanJobManager._run_job)
+        self.assertNotIn('finished_at=finished_at, result=result',src)
+        self.assertIn('provider_degraded=telemetry.get',src)
+
+    def test_transport_scan_check_compacts_terminal_result(self):
+        import app as app_module
+        job={"job_id":"x","state":"DONE","error":None,"result":{"markets":["crypto"],"telemetry":{"error_count":0,"provider_degraded":0},"crypto":{"scan_plus_results":[{"symbol":"BTCUSDT","direction":"bullish","trigger_state":"confirmed","setup":{"side":"LONG","entry":100,"stop":95,"targets":{"t1":110},"risk_reward":2.0,"opportunity_state":"TRADE"}}]}}
+        out=app_module._compact_scan_result(job)
+        self.assertEqual(out["summary"]["trade"],1)
+        self.assertEqual(out["opportunities"][0]["symbol"],"BTCUSDT")
+        self.assertNotIn("crypto",out)
+
     def test_block3_harmonic_gartley_geometry_uses_ad_over_xa(self):
         from dynamic_collector import MarketStream
         s=MarketStream.__new__(MarketStream)
