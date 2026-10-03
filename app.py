@@ -32,6 +32,12 @@ def _ru_stocks_boot_selftest():
                     "setup":result.get("setup"),
                 }
             print("RU_STOCKS_SELFTEST "+json.dumps(summary,ensure_ascii=False,default=str),flush=True)
+            if os.environ.get("RU_STOCKS_UNIFIED_SELFTEST","0") == "1":
+                try:
+                    job=start_scan_unified_job(top_n=2,shortlist=6,markets=["crypto","stocks","ru_stocks","forex","commodities"])
+                    print("RU_STOCKS_UNIFIED_STARTED "+json.dumps(job,default=str),flush=True)
+                except Exception as unified_exc:
+                    print(f"RU_STOCKS_UNIFIED_FAIL {type(unified_exc).__name__}:{unified_exc}",flush=True)
         except Exception as exc:
             print(f"RU_STOCKS_SELFTEST_FAIL {type(exc).__name__}:{exc}",flush=True)
     threading.Thread(target=run,daemon=True,name="ru-stocks-selftest").start()
