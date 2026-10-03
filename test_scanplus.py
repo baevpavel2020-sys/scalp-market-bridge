@@ -728,6 +728,33 @@ class TestScanPlus(unittest.TestCase):
         self.assertNotIn('market_ready=adapter.configured',src)
         self.assertIn('adapter.scan(market,s)',src)
 
+    def test_v4_block8_unified_external_scan_uses_yahoo_without_twelve_data_key(self):
+        import os
+        import multi_market_adapters as mma
+        old_key=os.environ.pop("TWELVE_DATA_API_KEY",None)
+        old_candles=mma._yahoo_candles
+        old_quote=mma._yahoo_quote
+        try:
+            def fake_candles(symbol, interval):
+                base=int(time.time()*1000)-60*86400000
+                step={"1D":86400000,"4h":14400000,"1h":3600000,"15m":900000,"5m":300000}[interval]
+                return [{
+                    "start":base+i*step,"open":100.0,"high":101.0,"low":99.0,
+                    "close":100.5,"volume":100.0,"source":"yahoo_finance","confirm":True
+                } for i in range(60)]
+            mma._yahoo_candles=fake_candles
+            mma._yahoo_quote=lambda symbol: {"symbol":symbol,"price":100.5,"source":"yahoo_finance"}
+            out=mma.ExternalMarketAdapter().scan_many("forex",["EUR/USD"])
+            row=out["EUR/USD"]
+            self.assertEqual(row["provider"],"yahoo_finance")
+            self.assertTrue(row["configured"])
+            self.assertEqual(row["data_provenance"]["15m"]["provider"],"yahoo_finance")
+        finally:
+            mma._yahoo_candles=old_candles
+            mma._yahoo_quote=old_quote
+            if old_key is not None:
+                os.environ["TWELVE_DATA_API_KEY"]=old_key
+
     def test_v4_block8_unknown_market_policy_is_not_silently_crypto(self):
         from scan_architecture import market_block_policy
         with self.assertRaises(ValueError):
