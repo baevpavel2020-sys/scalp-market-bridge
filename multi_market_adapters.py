@@ -375,26 +375,33 @@ class ExternalMarketAdapter:
             except Exception as quote_exc: quote={"error":f"{type(quote_exc).__name__}:{quote_exc}"}
             configured=True
         else:
+            yahoo_symbol=YAHOO_FOREX_MAP.get(symbol) if market=="forex" else YAHOO_COMMODITY_MAP.get(symbol)
+            use_yahoo=not self.configured and bool(yahoo_symbol)
             def fetch_tf(tf):
-                try: return tf, self.candles(symbol,tf), None
-                except Exception as e: return tf, [], f"{type(e).__name__}:{e}"
+                try:
+                    rows=_yahoo_candles(yahoo_symbol,tf) if use_yahoo else self.candles(symbol,tf)
+                    return tf, rows, None
+                except Exception as e:
+                    return tf, [], f"{type(e).__name__}:{e}"
             with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
                 for tf, rows, err in pool.map(fetch_tf, ("1D","4h","1h","15m","5m")):
                     frames[tf]=rows
                     if err: errors[tf]=err
-            try: quote=self.quote(symbol)
-            except Exception as e: quote={"error":f"{type(e).__name__}:{e}"}
-            configured=self.configured
-            if not self.configured:
-                yahoo_symbol=YAHOO_FOREX_MAP.get(symbol) if market=="forex" else YAHOO_COMMODITY_MAP.get(symbol)
-                if yahoo_symbol:
-                    provider="yahoo_finance"
-                    for tf in ("1D","4h","1h","15m","5m"):
-                        try: frames[tf]=_yahoo_candles(yahoo_symbol,tf)
-                        except Exception as exc: frames[tf]=[]; errors[tf]=f"{type(exc).__name__}:{exc}"
-                    try: quote=_yahoo_quote(yahoo_symbol)
-                    except Exception as exc: quote={"error":f"{type(exc).__name__}:{exc}"}
-                    configured=True
+            provider="yahoo_finance" if use_yahoo else "twelve_data"
+            configured=bool(self.configured or use_yahoo)
+            quote=None
+            if use_yahoo:
+                # Reuse already-fetched market data instead of a sixth Yahoo request.
+                for tf in ("5m","15m","1h","4h","1D"):
+                    rows=frames.get(tf) or []
+                    if rows and rows[-1].get("close") is not None:
+                        quote={"symbol":yahoo_symbol,"price":float(rows[-1]["close"]),"source":"yahoo_finance_candle"}
+                        break
+            if quote is None:
+                try:
+                    quote=self.quote(symbol) if self.configured else {"error":"external_quote_unavailable"}
+                except Exception as e:
+                    quote={"error":f"{type(e).__name__}:{e}"}
         ready=all(sum(1 for row in frames.get(tf,[]) if row.get("confirm",True))>=50 for tf in ("1D","4h","1h","15m","5m"))
         event_frames={tf:frames[tf] for tf in ("1D","4h","1h","15m","5m") if frames.get(tf)}
         events={tf:detect_events(market,symbol,rows) for tf,rows in event_frames.items()}
