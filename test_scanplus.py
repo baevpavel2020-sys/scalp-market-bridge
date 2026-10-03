@@ -1032,6 +1032,13 @@ if __name__=="__main__":
         self.assertIn('"manipulation"',stream_src)
         self.assertIn("detect_pump_exhaustion",stream_src)
 
+    def test_transport_compact_result_exposes_manipulation(self):
+        import app as app_module
+        job={"job_id":"m","state":"DONE","error":None,"result":{"markets":["crypto"],"crypto":{"scan_plus_results":[{"symbol":"BTCUSDT","manipulation":{"status":"READY","signal":"NONE","score":3}}]}}}
+        out=app_module._compact_scan_result(job)
+        self.assertEqual(out["manipulation"][0]["symbol"],"BTCUSDT")
+        self.assertEqual(out["manipulation"][0]["status"],"READY")
+
     def test_transport_job_done_log_is_compact(self):
         import inspect,dynamic_collector
         src=inspect.getsource(dynamic_collector.ScanJobManager._run_job)
