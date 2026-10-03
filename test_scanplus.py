@@ -630,6 +630,35 @@ class TestScanPlus(unittest.TestCase):
         self.assertFalse(out["trade_authorized"])
         self.assertIn("analysis_ready",out["missing"])
 
+
+    def test_v4_block6_funnel_requires_complete_directional_geometry(self):
+        from v4_core import opportunity_funnel
+        self.assertEqual(opportunity_funnel({"direction":"bullish","limit_plan":{"eligible":True}})["stage"],"DEVELOPING")
+        bad={"direction":"bullish","trigger_confirmed":True,"limit_plan":{"eligible":True,"entry":100,"stop":105,"take_profit":110}}
+        self.assertFalse(opportunity_funnel(bad)["trade_authorized"])
+        good={"direction":"bullish","trigger_confirmed":True,"limit_plan":{"eligible":True,"entry":100,"stop":95,"take_profit":110}}
+        self.assertTrue(opportunity_funnel(good)["trade_authorized"])
+
+    def test_v4_block6_execution_cost_rejects_wrong_side_target_or_stop(self):
+        from risk_engine import execution_cost
+        self.assertFalse(execution_cost("crypto",100,95,90,direction="bullish")["ready"])
+        self.assertFalse(execution_cost("crypto",100,95,110,direction="bearish")["ready"])
+        self.assertTrue(execution_cost("crypto",100,95,110,direction="bullish")["ready"])
+
+    def test_v4_block6_net_rr_includes_execution_friction(self):
+        from risk_engine import execution_cost
+        out=execution_cost("crypto",100,95,110,spread=0.2,slippage_bps=10,commission_bps=10,direction="bullish")
+        self.assertTrue(out["ready"])
+        self.assertLess(out["net_rr"],out["gross_rr"])
+
+    def test_v4_block6_core_and_x25_risk_caps_are_isolated(self):
+        from risk_engine import position_size
+        self.assertFalse(position_size(1000,.03,100,95,11,"core")["ready"])
+        x25=position_size(1000,.03,100,95,25,"pump_exhaustion_x25")
+        self.assertTrue(x25["ready"])
+        self.assertLessEqual(x25["risk_pct"],.01)
+        self.assertAlmostEqual(x25["money_risk"],10.0)
+
 if __name__=="__main__":
     unittest.main()
 
