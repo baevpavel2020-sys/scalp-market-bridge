@@ -39,7 +39,7 @@ def _regime(rows):
     return {"state":state,"direction":direction,"confidence":round(min(1.0,.45+min(.35,abs(slope)/4)+min(.2,abs(expansion-1)*.35)),3),
             "slope_atr":round(slope,3),"range_expansion":round(expansion,3),"atr_pct":round(atr/mean*100,4)}
 
-def regime_context(frames):
+def regime_context(frames, events=None):
     aliases={"1D":("1D","D"),"4h":("4h","240"),"1h":("1h","60"),"15m":("15m","15"),"5m":("5m","5")}
     by_tf={}
     for tf,keys in aliases.items():
@@ -49,14 +49,26 @@ def regime_context(frames):
         if rows: by_tf[tf]=_regime(rows)
     senior=[by_tf[x] for x in ("1D","4h","1h") if x in by_tf and by_tf[x]["state"]!="UNKNOWN"]
     states=[x["state"] for x in senior]; dirs=[x["direction"] for x in senior if x["direction"]!="neutral"]
-    if states.count("EXPANSION")>=2: composite="EXPANSION"
+    event_modes=[]
+    if isinstance(events,dict):
+        for bundle in events.values():
+            if not isinstance(bundle,dict): continue
+            for e in bundle.get("events",[]) or []:
+                name=str(e.get("event") or e.get("type") or "").lower()
+                if "price_discovery_up" in name or "breakout" in name: event_modes.append("PRICE_DISCOVERY_UP")
+                elif "price_discovery_down" in name or "breakdown" in name: event_modes.append("PRICE_DISCOVERY_DOWN")
+                elif "transition" in name or "choch" in name: event_modes.append("TRANSITION")
+    if "PRICE_DISCOVERY_UP" in event_modes and "PRICE_DISCOVERY_DOWN" not in event_modes: composite="PRICE_DISCOVERY"
+    elif "PRICE_DISCOVERY_DOWN" in event_modes and "PRICE_DISCOVERY_UP" not in event_modes: composite="PRICE_DISCOVERY"
+    elif "TRANSITION" in event_modes: composite="TRANSITION"
+    elif states.count("EXPANSION")>=2: composite="EXPANSION"
     elif states.count("COMPRESSION")>=2: composite="COMPRESSION"
     elif states.count("TREND")>=2 or (len(dirs)>=2 and len(set(dirs))==1): composite="TREND"
     elif senior: composite="RANGE_TRANSITION"
     else: composite="UNKNOWN"
     direction=dirs[0] if len(dirs)>=2 and len(set(dirs))==1 else "neutral"
     confidence=round(sum(x["confidence"] for x in senior)/len(senior),3) if senior else 0.0
-    return {"engine_version":VERSION,"state":composite,"direction":direction,"confidence":confidence,"timeframes":by_tf}
+    return {"engine_version":VERSION,"state":composite,"direction":direction,"confidence":confidence,"timeframes":by_tf,"event_modes":event_modes,"authority":"context_only_price_discovery_never_rewrites_confirmed_structure"}
 
 def session_profile(market, now_epoch=None):
     m=str(market).lower(); now=float(now_epoch or time.time()); utc=datetime.fromtimestamp(now,timezone.utc)
@@ -68,10 +80,16 @@ def session_profile(market, now_epoch=None):
         elif 8<=nh<17:s="NEW_YORK"
         elif 0<=utc.hour<8:s="ASIA"
         else:s="ROLLOVER"
-    elif m=="stocks":s="XSTOCKS_24_7"
+    elif m=="stocks":
+        s="XSTOCKS_24_7"
+        if ZoneInfo:
+            ny=utc.astimezone(ZoneInfo("America/New_York"))
+            nh=ny.hour+ny.minute/60
+            underlying="US_REGULAR" if (ny.weekday()<5 and 9.5<=nh<16) else "US_PREMARKET" if (ny.weekday()<5 and 4<=nh<9.5) else "US_AFTER_HOURS" if (ny.weekday()<5 and 16<=nh<20) else "US_CLOSED"
+        else: underlying="UNKNOWN"
     elif m=="commodities":s="INSTRUMENT_SESSION"
     else:s="24_7"
-    return {"session":s,"utc_hour":round(utc.hour+utc.minute/60,2),"model":PROFILES.get(m,{}).get("session_model","unknown")}
+    return {"session":s,"utc_hour":round(utc.hour+utc.minute/60,2),"model":PROFILES.get(m,{}).get("session_model","unknown"),"underlying_session":underlying if m=="stocks" else None}
 
 def event_risk(market, events=None, external_calendar=None):
     """Price events are observable. Calendar/news risk is UNKNOWN unless explicitly supplied."""
@@ -88,7 +106,7 @@ def event_risk(market, events=None, external_calendar=None):
 
 def build_context(market,symbol,frames,events=None,relative_strength=None,external_calendar=None):
     m=str(market).lower()
-    return {"context_version":VERSION,"market":m,"symbol":symbol,"regime":regime_context(frames),
+    return {"context_version":VERSION,"market":m,"symbol":symbol,"regime":regime_context(frames,events),
             "instrument_profile":{**PROFILES.get(m,{}),"market":m},
             "session_profile":session_profile(m),
             "event_risk":event_risk(m,events,external_calendar),
