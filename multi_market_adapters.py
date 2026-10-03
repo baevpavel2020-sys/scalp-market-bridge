@@ -106,7 +106,7 @@ def moex_candles(symbol, interval, target=500):
     if interval in ("5m","15m"):
         factor=5 if interval=="5m" else 15
         rows=[]; start=0
-        while len(rows)<target*factor:
+        while len(rows)<min(target*factor, 1000):
             page=_moex_candles_native(symbol,"1m",start=start)
             if not page: break
             rows.extend(page)
