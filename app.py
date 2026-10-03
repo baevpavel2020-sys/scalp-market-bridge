@@ -1,5 +1,6 @@
 import concurrent.futures
 import os
+import hmac
 import requests
 from flask import Flask, jsonify, request
 
@@ -242,8 +243,21 @@ def scan_live():
         return jsonify({"status":"FAIL","error":f"{type(exc).__name__}:{exc}"}),500
 
 
+def _scan_write_authorized():
+    """Optional production auth. If SCAN_API_TOKEN is configured, starts require it."""
+    token=os.environ.get("SCAN_API_TOKEN")
+    if not token: return True
+    supplied=request.headers.get("X-Scan-Token") or request.args.get("token")
+    return bool(supplied and hmac.compare_digest(str(supplied),str(token)))
+
+def _require_scan_write_auth():
+    if _scan_write_authorized(): return None
+    return jsonify({"status":"UNAUTHORIZED","error":"scan start authorization required"}),401
+
 @app.get("/scan")
 def scan_command():
+    denied=_require_scan_write_auth()
+    if denied: return denied
     """Canonical user-facing Scan command: Prescan -> eligible candidates -> Scan+.
     Non-blocking: returns a job handle; poll /scan-job/<job_id> for the final result.
     """
@@ -258,6 +272,8 @@ def scan_command():
 
 @app.get("/scan-auto")
 def scan_auto():
+    denied=_require_scan_write_auth()
+    if denied: return denied
     """Compatibility route: now STARTS a background job instead of blocking."""
     try:
         top_n = int(request.args.get("top", "8"))
@@ -271,6 +287,8 @@ def scan_auto():
 
 @app.get("/scan-auto/start")
 def scan_auto_start():
+    denied=_require_scan_write_auth()
+    if denied: return denied
     try:
         top_n = int(request.args.get("top", "8"))
         shortlist = int(request.args.get("shortlist", "30"))
@@ -283,6 +301,8 @@ def scan_auto_start():
 
 @app.get("/scan-batch")
 def scan_batch():
+    denied=_require_scan_write_auth()
+    if denied: return denied
     """Compatibility route: now STARTS a background job instead of blocking."""
     try:
         raw = request.args.get("symbols", "")
@@ -296,6 +316,8 @@ def scan_batch():
 
 @app.get("/scan-batch/start")
 def scan_batch_start():
+    denied=_require_scan_write_auth()
+    if denied: return denied
     try:
         raw = request.args.get("symbols", "")
         symbols = [s.strip() for s in raw.split(",") if s.strip()]
