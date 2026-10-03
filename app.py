@@ -57,10 +57,17 @@ def audit_v4():
         from release_gate import run_gates
         gates=run_gates()
         passed=bool(result.wasSuccessful() and gates.get("passed"))
-        return jsonify({"status":"PASS" if passed else "FAIL","tests":{"run":result.testsRun,"failures":len(result.failures),"errors":len(result.errors),
-                        "failed":[{"test":str(t),"traceback":tb[-4000:]} for t,tb in (result.failures+result.errors)],"details":stream.getvalue()[-12000:]},"release_gates":gates}),200 if passed else 503
+        payload={"status":"PASS" if passed else "FAIL","tests":{"run":result.testsRun,"failures":len(result.failures),"errors":len(result.errors),
+                        "failed":[{"test":str(t),"traceback":tb[-4000:]} for t,tb in (result.failures+result.errors)],"details":stream.getvalue()[-12000:]},"release_gates":gates}
+        app._last_v4_audit=payload
+        return jsonify(payload),200 if passed else 503
     except Exception as exc:
         return jsonify({"status":"FAIL","error":f"{type(exc).__name__}:{exc}"}),500
+
+@app.get("/audit/v4/last")
+def audit_v4_last():
+    """Read the latest in-process audit result without re-running tests."""
+    return jsonify(getattr(app,"_last_v4_audit",{"status":"NOT_RUN"})),200
 
 @app.get("/health")
 def health():
