@@ -446,7 +446,19 @@ def _start_scan_on_boot_if_enabled():
         try:
             time.sleep(2)
             job=start_scan_auto_job(top_n=8,shortlist=30)
-            print("SCAN_BOOT_TRIGGER "+json.dumps({"job_id":job.get("job_id"),"state":job.get("state")},separators=(",",":")),flush=True)
+            job_id=job.get("job_id") if isinstance(job,dict) else str(job)
+            state=job.get("state") if isinstance(job,dict) else "STARTED"
+            print("SCAN_BOOT_TRIGGER "+json.dumps({"job_id":job_id,"state":state},separators=(",",":")),flush=True)
+            # Operator transport: wait for this exact job and emit only the compact
+            # user-facing projection. Trading decisions are never recomputed here.
+            deadline=time.time()+1200
+            while time.time()<deadline:
+                current=get_scan_job(job_id)
+                if isinstance(current,dict) and current.get("state") not in ("QUEUED","RUNNING"):
+                    print("SCAN_BOOT_RESULT "+json.dumps(_compact_scan_result(current),separators=(",",":"),default=str),flush=True)
+                    return
+                time.sleep(5)
+            print("SCAN_BOOT_RESULT "+json.dumps({"job_id":job_id,"status":"TIMEOUT"},separators=(",",":")),flush=True)
         except Exception as exc:
             print("SCAN_BOOT_TRIGGER "+json.dumps({"status":"FAIL","error":f"{type(exc).__name__}:{exc}"},separators=(",",":")),flush=True)
     threading.Thread(target=_boot_scan,name="scan-boot-trigger",daemon=True).start()
