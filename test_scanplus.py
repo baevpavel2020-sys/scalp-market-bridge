@@ -193,7 +193,7 @@ class TestScanPlus(unittest.TestCase):
         self.assertFalse(out["broker_execution_ready"])
 
     def test_alert_duplicate_suppression(self):
-        scan={"symbol":f"REPEAT{time.time_ns()}USDT","direction":"bearish","setup":{"direction":"bearish","opportunity_state":"READY","trade_state":"SETUP","trigger_confirmed":True,"limit_plan":{"eligible":True,"entry":100,"stop":105,"take_profit":90,"rr":2.0},"event_basis":[{"event":"failed_breakout","direction":"bearish","level":100}]}}
+        scan={"symbol":f"REPEAT{time.time_ns()}USDT","direction":"bearish","setup":{"direction":"bearish","opportunity_state":"READY","trade_state":"SETUP","trigger_confirmed":True,"limit_plan":{"eligible":True,"entry":100,"stop":105,"take_profit":90,"rr":2.0},"event_basis":[{"event":"failed_breakout","direction":"bearish","level":100}],"scenario":{"primary":{"direction":"bearish","state":"READY"},"neutral":False}}}
         first=enrich_scan(scan)
         second=enrich_scan(scan)
         self.assertTrue(first["alert"]["eligible"])
