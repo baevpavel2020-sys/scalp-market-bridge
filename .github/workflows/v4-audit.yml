@@ -6,8 +6,8 @@ on:
       - runtime/v4_audit_trigger.json
       - .github/workflows/v4-audit.yml
 concurrency:
-  group: v4-production-audit
-  cancel-in-progress: false
+  group: v4-production-audit-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   audit:
     runs-on: ubuntu-latest
