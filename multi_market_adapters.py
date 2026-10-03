@@ -430,6 +430,7 @@ class ExternalMarketAdapter:
             if quote is None and "quote_error" in locals():
                 quote={"error":quote_error}
             ready=all(sum(1 for row in frames.get(tf,[]) if row.get("confirm",True))>=50 for tf in ("1D","4h","1h","15m","5m"))
+        if market=="ru_stocks": ready=ready and all(_moex_fresh(frames.get(tf,[]),tf) for tf in ("1D","4h","1h","15m","5m"))
             event_frames={tf:frames[tf] for tf in ("1D","4h","1h","15m","5m") if frames.get(tf)}
             events={tf:detect_events(market,symbol,rows) for tf,rows in event_frames.items()}
             analysis_core=MarketProfileRouter.analyze(market,symbol,frames)
@@ -454,7 +455,19 @@ class ExternalMarketAdapter:
     def scan(self,market,symbol):
         frames={}; errors={}
         provider="twelve_data"
-        if market=="stocks":
+        if market=="ru_stocks":
+            provider="moex_iss"
+            def fetch_ru(tf):
+                try: return tf, moex_candles(symbol,tf,target=500), None
+                except Exception as exc: return tf, [], f"{type(exc).__name__}:{exc}"
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+                for tf, rows, err in pool.map(fetch_ru, ("1D","4h","1h","15m","5m")):
+                    frames[tf]=rows
+                    if err: errors[tf]=err
+            try: quote=moex_quote(symbol)
+            except Exception as exc: quote={"error":f"{type(exc).__name__}:{exc}"}
+            configured=True
+        elif market=="stocks":
             provider="bybit_xstocks+yahoo_fallback"
             tf_intervals={"1D":"D","4h":"240","1h":"60","15m":"15","5m":"5"}
             yahoo_symbol=YAHOO_STOCK_MAP.get(symbol)
@@ -502,6 +515,15 @@ class ExternalMarketAdapter:
         setup={tf:build_setup_plan(market,symbol,rows,events[tf],analysis_core=analysis_core) for tf,rows in event_frames.items()}
         result={"market":market,"symbol":symbol,"adapter_version":self.VERSION,"provider":provider,"configured":configured,"analysis_ready":ready,"execution_ready":False,"execution_reason":"external_market_execution_connector_not_configured","frames":frames,"quote":quote,"analysis_core":analysis_core,"events":events,"setup_plans":setup,"errors":errors,"capabilities":{"ohlcv":True,"realtime_quote":True,"orderbook":False,"open_interest":False,"funding":False,"spot_cvd":False},"market_profile":market_profile(market),"session_context":session_context(market),"data_quality":{"state":"READY" if ready else "PARTIAL","missing_timeframes":[tf for tf in ("1D","4h","1h","15m","5m") if sum(1 for row in frames.get(tf,[]) if row.get("confirm",True))<50]}}
         enriched=enrich_external_result(result,market)
+        if market=="ru_stocks":
+            enriched["direction_policy"]="long_only"
+            def block_short(obj):
+                if not isinstance(obj,dict): return
+                direction=str(obj.get("direction") or obj.get("side") or "").lower()
+                if direction in ("short","sell","bearish"):
+                    obj["tradeable"]=False; obj["execution_ready"]=False; obj["status"]="WATCH"; obj["block_reason"]="ru_stocks_spot_long_only"
+            block_short(enriched); block_short(enriched.get("setup"))
+            for plan in (enriched.get("setup_plans") or {}).values(): block_short(plan)
         # Raw OHLCV is an internal input, not part of the public unified payload.
         enriched.pop("frames",None)
         if isinstance(enriched.get("analysis_core"),dict):
