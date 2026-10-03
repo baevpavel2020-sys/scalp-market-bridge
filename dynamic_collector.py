@@ -2769,18 +2769,15 @@ class MarketStream:
 
                 if oi is not None:
 
+                    # OI coverage measures observed time, not only value changes.
+                    # Keep a heartbeat sample even when OI is unchanged; otherwise a flat
+                    # market can never become OI-ready.
                     if (
                         not self.oi_samples
-                        or oi
-                        != self.oi_samples[-1][1]
+                        or oi != self.oi_samples[-1][1]
+                        or now_ms - self.oi_samples[-1][0] >= 5_000
                     ):
-
-                        self.oi_samples.append(
-                            (
-                                now_ms,
-                                oi,
-                            )
-                        )
+                        self.oi_samples.append((now_ms, oi))
 
                     self._cleanup(
                         now_ms
