@@ -158,9 +158,13 @@ def moex_candles(symbol, interval, target=500):
         for row in raw:
             dt=datetime.fromtimestamp(int(row["start"])/1000,tz)
             # 4H windows anchored at 07:00 MSK cover morning/main/evening trading consistently.
-            anchor=7
-            slot=max(0,(dt.hour-anchor)//4)
-            start_dt=dt.replace(hour=anchor+slot*4,minute=0,second=0,microsecond=0)
+            # MOEX equity trading can start at 06:50 MSK; align synthetic
+            # 4H bars to that session boundary instead of Unix-epoch buckets.
+            anchor_minutes=6*60+50
+            minute_of_day=dt.hour*60+dt.minute
+            slot=max(0,(minute_of_day-anchor_minutes)//240)
+            bucket_minutes=anchor_minutes+slot*240
+            start_dt=dt.replace(hour=bucket_minutes//60,minute=bucket_minutes%60,second=0,microsecond=0)
             key=int(start_dt.timestamp()*1000)
             b=buckets.get(key)
             if b is None: buckets[key]={"start":key,"open":row["open"],"high":row["high"],"low":row["low"],"close":row["close"],"volume":row.get("volume",0.0),"source":"moex_iss","confirm":row.get("confirm",True)}
