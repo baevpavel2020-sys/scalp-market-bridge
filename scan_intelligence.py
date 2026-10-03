@@ -252,7 +252,7 @@ class WatchlistStore:
         if not key:
             return None
         setup = scan.get("setup") or {}
-        state = setup.get("opportunity_state") or "WATCH"
+        state = (scan.get("opportunity_funnel") or {}).get("stage") or setup.get("opportunity_state") or "EARLY"
         fingerprint = _event_fingerprint(setup)
         with self.lock:
             previous = self.items.get(key)
@@ -292,8 +292,8 @@ class WatchlistStore:
         return sorted(
             values,
             key=lambda item: (
-                item["state"] != "MARKET_READY",
-                item["state"] != "LIMIT_READY",
+                item["state"] != "TRADE",
+                item["state"] != "READY",
                 -float(item.get("rr") or 0),
                 item["symbol"],
             ),
@@ -308,8 +308,8 @@ class OutcomeLogger:
 
     def record(self, scan):
         setup = scan.get("setup") or {}
-        state = setup.get("opportunity_state")
-        if state not in ("MARKET_READY", "LIMIT_READY"):
+        state = (scan.get("opportunity_funnel") or {}).get("stage") or setup.get("opportunity_state")
+        if state not in ("READY", "TRADE"):
             return False
         event = {
             "ts": time.time(),
@@ -427,8 +427,6 @@ def enrich_external_result(result, market):
     out["opportunity_funnel"] = opportunity_funnel(out["setup"], result.get("analysis_ready"), result.get("execution_ready"))
     out["execution_contract"] = execution_contract(market, out["opportunity_funnel"]["stage"] in ("READY","TRADE"), result.get("execution_ready"), result.get("execution_reason"))
     out["intelligence_version"] = INTELLIGENCE_VERSION
-    out["explainability"] = explainability(out)
-    out["shadow_record"] = shadow_record(out)
     depth_evidence = []
     for tf_name, item in (analysis or {}).items():
         for source, key in (("structure","structure"),("elliott","elliott"),("fibonacci","fibonacci"),("harmonics","harmonics"),("divergence","divergence"),("liquidity","liquidity"),("smc","smc"),("flow","flow")):
@@ -443,6 +441,8 @@ def enrich_external_result(result, market):
     # READY/TRADE label after analytical depth invalidates the thesis.
     out["opportunity_funnel"] = opportunity_funnel(out["setup"], result.get("analysis_ready"), result.get("execution_ready"))
     out["execution_contract"] = execution_contract(market, out["opportunity_funnel"]["stage"] in ("READY","TRADE"), result.get("execution_ready"), result.get("execution_reason"))
+    out["explainability"] = explainability(out)
+    out["shadow_record"] = shadow_record(out)
     watch = WATCHLIST.upsert(out)
     out["watchlist"] = watch
     out["alert"] = alert_payload(out)
@@ -475,9 +475,7 @@ def enrich_scan(scan, market="crypto"):
     out["scenario"] = out["setup"].get("scenario") or scenario_snapshot({"analysis":out.get("timeframes") or {}}, out["setup"].get("event_basis") or [])
     out["execution_cost"] = _setup_cost(out["setup"],market)
     out["intelligence_version"] = INTELLIGENCE_VERSION
-    out["explainability"] = explainability(out)
-    out["shadow_record"] = shadow_record(out)
-    out["opportunity_state"] = out["setup"].get("opportunity_state") or "WATCH"
+    out["opportunity_state"] = out["setup"].get("opportunity_state") or "EARLY"
     out["setup"]["opportunity_state"] = out["opportunity_state"]
     out["opportunity_funnel"] = opportunity_funnel(out["setup"], True, (out.get("status") or {}).get("execution_ready"))
     out["execution_contract"] = execution_contract(market, out["opportunity_funnel"]["stage"] in ("READY","TRADE"), (out.get("status") or {}).get("execution_ready"), None)
