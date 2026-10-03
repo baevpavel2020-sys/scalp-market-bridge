@@ -5358,7 +5358,7 @@ prescan_engine = PreScanEngine()
 # ============================================================
 
 dynamic_manager = DynamicMarketManager(
-    max_symbols=6,
+    max_symbols=max(8, int(os.environ.get("SCAN_MAX_ACTIVE_SYMBOLS","8"))),
     idle_timeout=3600,
 )
 
