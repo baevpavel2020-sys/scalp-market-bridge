@@ -532,6 +532,41 @@ class TestScanPlus(unittest.TestCase):
         self.assertEqual(confirmed["15"]["effective_direction"],"bullish")
 
 
+
+    def test_v4_block3_corrective_elliott_uses_canonical_direction(self):
+        s=MarketStream.__new__(MarketStream)
+        pts=[{"start":1,"price":100.0,"kind":"high","label":"H"},
+             {"start":2,"price":90.0,"kind":"low","label":"L"},
+             {"start":3,"price":95.0,"kind":"high","label":"LH"},
+             {"start":4,"price":85.0,"kind":"low","label":"LL"}]
+        ctx={"base":{"working_degree":"intermediate"},"degrees":{"intermediate":{"points":pts}}}
+        out=s._elliott_engine_v2([],ctx,{"clusters":[]})
+        dirs={x["direction"] for x in ([out.get("primary")]+out.get("alternatives",[])) if x}
+        self.assertTrue(dirs)
+        self.assertTrue(dirs.issubset({"bullish","bearish"}))
+
+    def test_v4_block3_fib_confluence_needs_independent_anchors(self):
+        s=MarketStream.__new__(MarketStream)
+        rows=[{"start":i*60000,"open":100.0,"high":150.0,"low":50.0,"close":100.0,"confirm":True} for i in range(20)]
+        pts=[{"start":1,"price":100.0,"kind":"low","label":"L"},{"start":2,"price":110.0,"kind":"high","label":"H"}]
+        out=s._fib_depth_v38(rows,{"degrees":{"intermediate":{"points":pts}}},{"ready":True})
+        self.assertEqual(out["depth_clusters"],[])
+
+    def test_v4_block3_higher_tf_freshness_uses_own_cadence(self):
+        import time
+        s=MarketStream.__new__(MarketStream)
+        now=int(time.time()*1000); end=now-20*60*1000
+        rows=[]
+        for i in range(40):
+            start=end-(39-i)*3600000-3599999
+            price=100.0+i*0.2+(1.0 if i%4<2 else -1.0)
+            rows.append({"start":start,"end":start+3599999,"open":price,"high":price+1.0,
+                         "low":price-1.0,"close":price+0.2,"volume":100.0,"confirm":True})
+        out=s._analysis_bundle(rows)
+        self.assertEqual(out["signal_freshness"]["timeframe"],"60")
+        self.assertEqual(out["signal_freshness"]["state"],"FRESH")
+        self.assertGreater(out["signal_freshness"]["stale_limit_seconds"],900)
+
 if __name__=="__main__":
     unittest.main()
 
