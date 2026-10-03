@@ -361,6 +361,33 @@ def scan_batch_start():
         return jsonify({"status":"FAIL","error":f"{type(exc).__name__}: {exc}"}), 500
 
 
+def _compact_scan_result(job):
+    """Small user-facing projection; never recomputes trading decisions."""
+    result=(job or {}).get("result") or {}
+    items=[]
+    buckets=[("crypto",(result.get("crypto") or {}).get("scan_plus_results") or [])]
+    for market,bucket in (result.get("external") or {}).items():
+        if isinstance(bucket,dict): buckets.append((market,bucket.get("results") or bucket.get("scan_plus_results") or []))
+    for market,rows in buckets:
+        for row in rows:
+            funnel=row.get("opportunity_funnel") or {}
+            setup=row.get("setup") or {}
+            stage=funnel.get("stage") or setup.get("opportunity_state") or row.get("trade_state")
+            if stage not in ("TRADE","READY","WATCH","DEVELOPING","EARLY"): continue
+            items.append({"market":market,"symbol":row.get("symbol"),"state":stage,
+                "direction":setup.get("side") or row.get("direction"),"entry":setup.get("entry"),
+                "entry_zone":setup.get("entry_zone"),"stop":setup.get("stop"),"targets":setup.get("targets"),
+                "risk_reward":setup.get("risk_reward"),"trigger_state":row.get("trigger_state"),
+                "failed_requirements":setup.get("failed_requirements") or funnel.get("missing") or []})
+    rank={"TRADE":0,"READY":1,"WATCH":2,"DEVELOPING":3,"EARLY":4}
+    items.sort(key=lambda x:(rank.get(x.get("state"),9), -(x.get("risk_reward") or 0)))
+    telemetry=result.get("telemetry") or {}
+    return {"job_id":job.get("job_id"),"state":job.get("state"),"markets":result.get("markets") or [],
+        "summary":{"trade":sum(x["state"]=="TRADE" for x in items),"ready":sum(x["state"]=="READY" for x in items),
+                   "watch":sum(x["state"] in ("WATCH","DEVELOPING","EARLY") for x in items)},
+        "opportunities":items,"health":{"error_count":telemetry.get("error_count",len(result.get("errors") or {})),
+        "provider_degraded":telemetry.get("provider_degraded",0)},"error":job.get("error")}
+
 @app.get("/scan-check")
 def scan_check():
     """Read-only canonical check: never starts a job."""
@@ -372,11 +399,10 @@ def scan_check():
                 "message": "No unified Scan job exists in the current process.",
             }), 404
         active = job.get("state") in ("QUEUED", "RUNNING")
-        return jsonify({
-            "status": "RUNNING" if active else job.get("state"),
-            "active": active,
-            "job": job,
-        }), 200
+        payload={"status":"RUNNING" if active else job.get("state"),"active":active,
+                 "job_id":job.get("job_id"),"progress":job.get("progress") or {}}
+        if not active: payload["result"]=_compact_scan_result(job)
+        return jsonify(payload), 200
     except Exception as exc:
         return jsonify({"status":"FAIL","error":f"{type(exc).__name__}:{exc}"}),500
 
