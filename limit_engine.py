@@ -81,17 +81,19 @@ def _dedupe(candidates, tolerance):
     return out
 
 def _freshness_ok(analysis):
-    ages=[]
+    seen=False
     for tf in ("1h","15m","5m"):
         item=analysis.get(tf) or {}
         fresh=item.get("signal_freshness")
         if isinstance(fresh,dict):
             age=_finite(fresh.get("age_seconds"))
-            if age is not None: ages.append(age)
+            limit=_finite(fresh.get("stale_limit_seconds"))
+            if age is not None: seen=True
             if fresh.get("state") in ("STALE","INVALID"): return False
+            if age is not None and limit is not None and age > limit: return False
         elif isinstance(fresh,str) and fresh.upper() in ("STALE","INVALID"):
             return False
-    return not ages or max(ages)<=900
+    return True
 
 def generate_candidates(market,symbol,analysis_core,direction,max_candidates=3):
     analysis=_analysis(analysis_core)
