@@ -1,9 +1,9 @@
 import hashlib
-from scan_architecture import MIN_RR
+from scan_architecture import MIN_RR, pipeline_contract
 
-SCAN_ARCHITECTURE_VERSION = "scan_architecture_v2"
+SCAN_ARCHITECTURE_VERSION = "scan_architecture_v4"
 SCAN_PIPELINE = ("market","data_quality","regime_structure","event","evidence","setup","execution")
-OPPORTUNITY_STATES = ("MARKET_READY","LIMIT_READY","WATCH")
+OPPORTUNITY_STATES = ("EARLY","DEVELOPING","READY","TRADE")
 
 import csv
 import concurrent.futures
