@@ -593,6 +593,42 @@ class TestScanPlus(unittest.TestCase):
         out=_structure_confirmation(analysis,"bearish")
         self.assertTrue(out["confirmed"])
 
+
+    def test_v4_block5_neutral_scenario_cannot_reach_ready_or_trade(self):
+        from scan_intelligence import opportunity_funnel
+        setup={"direction":"bullish","entry":100.0,"stop":99.0,"trigger_confirmed":True}
+        scenario={"primary":None,"neutral":True}
+        out=opportunity_funnel(setup,True,True,scenario)
+        self.assertEqual(out["stage"],"EARLY")
+        self.assertFalse(out["trade_authorized"])
+        self.assertIn("scenario_authority",out["missing"])
+
+    def test_v4_block5_setup_direction_must_match_primary_scenario(self):
+        from scan_intelligence import opportunity_funnel
+        setup={"direction":"bullish","entry":100.0,"stop":99.0,"trigger_confirmed":True}
+        scenario={"primary":{"direction":"bearish","state":"READY"},"neutral":False}
+        out=opportunity_funnel(setup,True,True,scenario)
+        self.assertFalse(out["scenario_authorized"])
+        self.assertFalse(out["trade_authorized"])
+
+    def test_v4_block5_authorized_primary_scenario_can_advance_funnel(self):
+        from scan_intelligence import opportunity_funnel
+        setup={"direction":"bullish","entry":100.0,"stop":99.0,"trigger_confirmed":True}
+        scenario={"primary":{"direction":"bullish","state":"READY"},"neutral":False}
+        out=opportunity_funnel(setup,True,True,scenario)
+        self.assertTrue(out["scenario_authorized"])
+        self.assertEqual(out["stage"],"TRADE")
+        self.assertTrue(out["trade_authorized"])
+
+    def test_v4_block5_analysis_not_ready_is_fail_closed(self):
+        from scan_intelligence import opportunity_funnel
+        setup={"direction":"bullish","entry":100.0,"stop":99.0,"trigger_confirmed":True}
+        scenario={"primary":{"direction":"bullish","state":"READY"},"neutral":False}
+        out=opportunity_funnel(setup,False,True,scenario)
+        self.assertEqual(out["stage"],"EARLY")
+        self.assertFalse(out["trade_authorized"])
+        self.assertIn("analysis_ready",out["missing"])
+
 if __name__=="__main__":
     unittest.main()
 
