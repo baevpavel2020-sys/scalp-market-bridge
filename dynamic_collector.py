@@ -7028,12 +7028,39 @@ class ScanJobManager:
             "result": None,
             "error": None,
         }
+        if client is not None:
+            try:
+                won=client.set(lease_key,jid,nx=True,ex=max(cls.JOB_TTL_SECONDS,3600))
+                if not won:
+                    winner=client.get(lease_key)
+                    if winner:
+                        persisted=cls._load_persisted(winner)
+                        if persisted and persisted.get("state") in ("QUEUED","RUNNING"):
+                            return winner
+                    # Stale terminal/missing owner: atomically replace only the
+                    # value we just observed, then continue with this jid.
+                    pipe=client.pipeline()
+                    while True:
+                        try:
+                            pipe.watch(lease_key)
+                            current=pipe.get(lease_key)
+                            if current != winner:
+                                pipe.unwatch()
+                                return cls._new_job(mode,payload)
+                            pipe.multi()
+                            pipe.set(lease_key,jid,ex=max(cls.JOB_TTL_SECONDS,3600))
+                            pipe.execute()
+                            break
+                        except Exception as lease_exc:
+                            try: pipe.reset()
+                            except Exception: pass
+                            _scan_log("JOB_LEASE_TAKEOVER_FAILED",job_id=jid,error=f"{type(lease_exc).__name__}:{lease_exc}")
+                            return winner or jid
+            except Exception as exc:
+                _scan_log("JOB_LEASE_WRITE_FAILED",job_id=jid,error=f"{type(exc).__name__}:{exc}")
         with cls._lock:
             cls._jobs[jid] = job
         cls._persist(job)
-        if client is not None:
-            try: client.set(lease_key,jid,nx=True,ex=max(cls.JOB_TTL_SECONDS,3600))
-            except Exception as exc: _scan_log("JOB_LEASE_WRITE_FAILED",job_id=jid,error=f"{type(exc).__name__}:{exc}")
         return jid
 
     @classmethod
