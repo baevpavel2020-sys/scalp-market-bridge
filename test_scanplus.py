@@ -768,3 +768,36 @@ if __name__=="__main__":
         src=inspect.getsource(dynamic_collector.ScanJobManager._persist)
         self.assertIn("persisted_compact",src)
         self.assertIn('state") in ("DONE","FAILED")',src)
+
+
+    def test_block3_harmonic_gartley_geometry_uses_ad_over_xa(self):
+        from dynamic_collector import MarketStream
+        s=MarketStream.__new__(MarketStream)
+        pts=[{"kind":"low","price":0.0,"start":1},{"kind":"high","price":100.0,"start":2},{"kind":"low","price":38.2,"start":3},{"kind":"high","price":69.1,"start":4},{"kind":"low","price":21.4,"start":5}]
+        ctx={"base":{"working_degree":"intermediate"},"degrees":{"intermediate":{"points":pts}}}
+        out=s._harmonic_engine_v2(ctx)
+        g=[x for x in out["confirmed"] if x["name"]=="Gartley"]
+        self.assertTrue(g)
+        self.assertAlmostEqual(g[0]["ratios"]["xd"],0.786,places=3)
+
+    def test_block3_liquidity_map_has_previous_day_week_references(self):
+        from dynamic_collector import MarketStream
+        s=MarketStream.__new__(MarketStream)
+        base=1790000000000; rows=[]
+        for i in range(24*16):
+            p=100+i*.01
+            rows.append({"start":base+i*3600000,"end":base+(i+1)*3600000-1,"open":p,"high":p+1,"low":p-1,"close":p+.1,"confirm":True})
+        out=s._liquidity_depth_v38(rows,{"degrees":{}},{"equal_highs":None,"equal_lows":None,"sweep":None})
+        refs=out["reference_levels"]
+        for name in ("PDH","PDL","PWH","PWL"): self.assertIn(name,refs)
+
+    def test_block3_higher_degree_elliott_memory_survives_missing_recount(self):
+        from dynamic_collector import MarketStream
+        s=MarketStream.__new__(MarketStream); s._elliott_memory={}
+        s._elliott_memory["major"]={"type":"impulse","direction":"bullish","invalidation":90.0,"evidence_count":5}
+        e={"recursive":{"degrees":{"major":{"ready":True,"primary":None}}}}
+        out=s._preserve_elliott_major(e,[{"close":100.0}])
+        self.assertTrue(out["recursive"]["degrees"]["major"]["preserved_from_prior_scan"])
+        e2={"recursive":{"degrees":{"major":{"ready":True,"primary":None}}}}
+        s._preserve_elliott_major(e2,[{"close":89.0}])
+        self.assertNotIn("major",s._elliott_memory)
