@@ -2362,6 +2362,31 @@ class MarketStream:
                 "conflict_policy":"later_blocks_interpret_but_never_rewrite_upstream_facts","vote_counting":False}
 
 
+    def _preserve_elliott_major(self, elliott, rows):
+        """Keep the last valid higher-degree count across repeated scans of this stream."""
+        rec=(elliott.get("recursive") or {}).get("degrees") or {}
+        current=rec.get("major") or {}
+        primary=current.get("primary") if isinstance(current,dict) else None
+        close=float(rows[-1]["close"]) if rows else None
+        old=self._elliott_memory.get("major")
+        def invalidated(candidate):
+            if not candidate or close is None: return False
+            inv=fnum(candidate.get("invalidation")); direction=candidate.get("direction")
+            if inv is None: return False
+            return (direction=="bullish" and close<=inv) or (direction=="bearish" and close>=inv)
+        if old and invalidated(old):
+            self._elliott_memory.pop("major",None); old=None
+        if primary and not invalidated(primary):
+            # A new higher-degree interpretation replaces the old one only when
+            # it is at least as well evidenced; lower-degree recounts never do.
+            if old is None or int(primary.get("evidence_count") or 0)>=int(old.get("evidence_count") or 0):
+                self._elliott_memory["major"]=dict(primary); old=self._elliott_memory["major"]
+        if old and not primary:
+            rec["major"]={**current,"primary":dict(old),"preserved_from_prior_scan":True}
+        elliott["higher_degree_memory"]={"major_preserved":bool(old),"invalidation_checked":True,
+                                          "rule":"survives_lower_degree_recount_until_own_hard_invalidation"}
+        return elliott
+
     def _analysis_bundle(self, candles):
         raw_rows=list(candles)
         rows=[r for r in raw_rows if r.get("confirm", True)]
@@ -2386,6 +2411,7 @@ class MarketStream:
             local0=self._elliott_engine_v2(rows,local_ctx,fib)
             ell_by_degree[degree]=self._elliott_depth_v38(rows,local_ctx,fib,local0)
         elliott["recursive"]=elliott_degree_contract(ell_by_degree,original_degree)
+        elliott=self._preserve_elliott_major(elliott,rows)
         harm0=self._harmonic_engine_v2(ctx)
         harmonics=harmonic_contract(self._harmonic_depth_v38(rows,harm0))
         div0=self._divergence_engine_v2(rows,ctx)
