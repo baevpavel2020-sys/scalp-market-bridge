@@ -370,10 +370,25 @@ def data_provenance(frames):
                  "quality":"HIGH" if age is not None and age<120 else "MEDIUM" if age is not None else "UNKNOWN"}
     return out
 
-def opportunity_funnel(setup, analysis_ready=True, broker_execution_ready=None):
-    out=v4_funnel(setup)
+def opportunity_funnel(setup, analysis_ready=True, broker_execution_ready=None, scenario=None):
+    """Fail closed unless the setup direction is authorized by the primary scenario."""
+    setup=dict(setup or {})
+    scenario=scenario or setup.get("scenario")
+    primary=(scenario or {}).get("primary") if isinstance(scenario,dict) else None
+    direction=setup.get("direction") or setup.get("side")
+    scenario_direction=(primary or {}).get("direction") if isinstance(primary,dict) else None
+    scenario_authorized=bool(direction and scenario_direction==direction and (scenario or {}).get("neutral") is not True)
+    if direction and not scenario_authorized:
+        out={"stage":"EARLY","trade_authorized":False,"missing":["scenario_authority"]}
+    else:
+        out=v4_funnel(setup)
+    out["scenario_authorized"]=scenario_authorized
     out["analysis_ready"]=bool(analysis_ready)
     out["broker_execution_ready"]=broker_execution_ready
+    if not analysis_ready:
+        out["trade_authorized"]=False
+        out["stage"]="EARLY"
+        out["missing"]=list(dict.fromkeys(["analysis_ready"]+list(out.get("missing") or [])))
     return out
 
 def execution_contract(market, analysis_ready, broker_execution_ready, reason=None):
@@ -426,7 +441,7 @@ def enrich_external_result(result, market):
     out["execution_cost"] = _setup_cost(setup,market)
     out["setup"] = {**setup, "opportunity_state": opportunity_state}
     out["opportunity_state"] = opportunity_state
-    out["opportunity_funnel"] = opportunity_funnel(out["setup"], result.get("analysis_ready"), result.get("execution_ready"))
+    out["opportunity_funnel"] = opportunity_funnel(out["setup"], result.get("analysis_ready"), result.get("execution_ready"), out.get("scenario"))
     out["execution_contract"] = execution_contract(market, out["opportunity_funnel"]["stage"] in ("READY","TRADE"), result.get("execution_ready"), result.get("execution_reason"))
     out["intelligence_version"] = INTELLIGENCE_VERSION
     depth_evidence = []
@@ -441,7 +456,7 @@ def enrich_external_result(result, market):
     out["opportunity_state"] = out["setup"].get("opportunity_state", opportunity_state)
     # Funnel/execution are downstream of hard invalidations. Never leave a stale
     # READY/TRADE label after analytical depth invalidates the thesis.
-    out["opportunity_funnel"] = opportunity_funnel(out["setup"], result.get("analysis_ready"), result.get("execution_ready"))
+    out["opportunity_funnel"] = opportunity_funnel(out["setup"], result.get("analysis_ready"), result.get("execution_ready"), out.get("scenario"))
     out["execution_contract"] = execution_contract(market, out["opportunity_funnel"]["stage"] in ("READY","TRADE"), result.get("execution_ready"), result.get("execution_reason"))
     out["explainability"] = explainability(out)
     out["shadow_record"] = shadow_record(out)
@@ -479,7 +494,7 @@ def enrich_scan(scan, market="crypto"):
     out["intelligence_version"] = INTELLIGENCE_VERSION
     out["opportunity_state"] = out["setup"].get("opportunity_state") or "EARLY"
     out["setup"]["opportunity_state"] = out["opportunity_state"]
-    out["opportunity_funnel"] = opportunity_funnel(out["setup"], True, (out.get("status") or {}).get("execution_ready"))
+    out["opportunity_funnel"] = opportunity_funnel(out["setup"], True, (out.get("status") or {}).get("execution_ready"), out.get("scenario"))
     out["execution_contract"] = execution_contract(market, out["opportunity_funnel"]["stage"] in ("READY","TRADE"), (out.get("status") or {}).get("execution_ready"), None)
     depth_evidence = []
     for tf_name, item in (out.get("timeframes") or {}).items():
@@ -491,7 +506,7 @@ def enrich_scan(scan, market="crypto"):
     out["analytical_depth"] = depth
     out["setup"] = apply_hard_invalidations(out["setup"], depth["hard_invalidations"])
     out["opportunity_state"] = out["setup"].get("opportunity_state", out["opportunity_state"])
-    out["opportunity_funnel"] = opportunity_funnel(out["setup"], True, (out.get("status") or {}).get("execution_ready"))
+    out["opportunity_funnel"] = opportunity_funnel(out["setup"], True, (out.get("status") or {}).get("execution_ready"), out.get("scenario"))
     out["execution_contract"] = execution_contract(market, out["opportunity_funnel"]["stage"] in ("READY","TRADE"), (out.get("status") or {}).get("execution_ready"), None)
     watch = WATCHLIST.upsert(out)
     out["watchlist"] = watch
