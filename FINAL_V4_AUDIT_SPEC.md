@@ -88,3 +88,18 @@ The first runtime attempt remained QUEUED behind an occupied single worker; the 
 
 Block 4 contract is frozen. Later changes to liquidity/leverage event semantics require Block 4 regression and affected downstream reruns.
 
+## Block 5 closure record
+Status: PASS (production regression + runtime)
+Final runtime job: 44091587b3fd4dc0, state DONE.
+Deterministic audit: 66 tests, 0 failures, 0 errors; release gates PASS.
+Scenario Engine always evaluates both LONG and SHORT hypotheses before selecting a primary direction; neutral/ambiguous structure remains neutral instead of being forced into a side.
+Opportunity Funnel is now explicitly downstream of scenario authority: a setup direction cannot reach DEVELOPING/READY/TRADE unless it matches the authoritative primary scenario.
+A neutral scenario, missing primary scenario, or primary scenario in the opposite direction fails closed with scenario_authority missing.
+analysis_ready=false also fails closed to EARLY and cannot retain stale trade authorization.
+Hard invalidations remain absolute and downstream scenario/funnel logic cannot override them.
+Legacy alert regression fixtures were updated to include an explicitly authorized primary scenario, so alerts cannot bypass the same scenario gate.
+The production runtime preserved the same Redis-backed job_id across the worker recovery and completed 8/8 crypto deep-scan candidates with live invariants PASS.
+Live external-market degradation remained fail-closed: unavailable/stale xStock frames produced analysis_ready=false, EARLY funnel state and trade_authorized=false rather than fabricated readiness.
+
+Block 5 contract is frozen. Later changes to scenario selection or opportunity-state authority require Block 5 regression and affected downstream reruns.
+
