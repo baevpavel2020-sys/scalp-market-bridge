@@ -171,7 +171,7 @@ class TestScanPlus(unittest.TestCase):
 
     def test_intelligence_version_and_funnel(self):
         out=enrich_scan({"symbol":"V3","market":"crypto","setup":{"direction":"bullish","risk_reward":1.4,"trade_state":"WAIT_TRIGGER"}})
-        self.assertEqual(out["intelligence_version"], "intelligence_v3_opportunity_funnel")
+        self.assertEqual(out["intelligence_version"], "intelligence_v4_blocks5_14")
         self.assertEqual(out["opportunity_funnel"]["stage"], "DEVELOPING")
         self.assertFalse(out["opportunity_funnel"]["trade_authorized"])
 
@@ -439,8 +439,8 @@ class TestScanPlus(unittest.TestCase):
 
     def test_stage10_release_contract_is_explicit(self):
         from release_gate import RELEASE_VERSION, RELEASE_STAGES
-        self.assertEqual(RELEASE_VERSION,"scanplus_v3_9_stage7_10")
-        self.assertEqual(RELEASE_STAGES,(7,8,9,10))
+        self.assertEqual(RELEASE_VERSION,"scanplus_v4_blocks1_14")
+        self.assertEqual(RELEASE_STAGES,tuple(range(1,15)))
 
     def test_stage5_prescan_status_contract(self):
         from app import app
@@ -655,3 +655,43 @@ if __name__=="__main__":
         from liquidity_leverage_engine import detect
         out=detect({"flow":{}},{},{})
         self.assertFalse(out["x25_profile"]["allowed"])
+
+    def test_v4_block5_always_builds_both_sides(self):
+        from v4_core import dual_scenarios
+        a={"1h":{"structure":{"state":"uptrend"}},"15m":{"structure":{"state":"uptrend"}}}
+        out=dual_scenarios(a,[])
+        self.assertIn("long",out); self.assertIn("short",out)
+        self.assertEqual(out["rule"],"both_sides_before_direction")
+
+    def test_v4_block6_funnel_trade_requires_trigger_and_geometry(self):
+        from v4_core import opportunity_funnel
+        self.assertEqual(opportunity_funnel({"direction":"bullish"})["stage"],"DEVELOPING")
+        self.assertEqual(opportunity_funnel({"direction":"bullish","limit_plan":{"eligible":True}})["stage"],"READY")
+        self.assertTrue(opportunity_funnel({"direction":"bullish","limit_plan":{"eligible":True},"trigger_confirmed":True})["trade_authorized"])
+
+    def test_v4_block8_broker_missing_does_not_kill_analysis(self):
+        from v4_core import execution_contract
+        out=execution_contract("forex",True,True,False,False)
+        self.assertTrue(out["analysis_execution_ready"])
+        self.assertEqual(out["status"],"EXECUTION_UNAVAILABLE")
+        self.assertFalse(out["order_sent"])
+
+    def test_v4_block9_leverage_does_not_increase_money_risk(self):
+        from v4_core import risk_contract
+        a=risk_contract(1000,.03,100,95,5); b=risk_contract(1000,.03,100,95,10)
+        self.assertEqual(a["money_risk"],b["money_risk"])
+        self.assertGreater(a["margin"],b["margin"])
+
+    def test_v4_blocks10_12_fingerprint_shadow_explainability(self):
+        from v4_core import setup_fingerprint,shadow_record,explainability
+        self.assertEqual(setup_fingerprint("crypto","BTC","bullish",1,0.9,1.2),setup_fingerprint("crypto","BTC","bullish",1,0.9,1.2))
+        scan={"market":"crypto","symbol":"BTC","setup":{"direction":"bullish"},"opportunity_funnel":{"stage":"DEVELOPING","missing":["trigger"]},"scenario":{}}
+        self.assertEqual(shadow_record(scan)["symbol"],"BTC")
+        self.assertEqual(explainability(scan)["score_role"],"ranking_only")
+
+    def test_v4_zero_audit_contract_has_full_pipeline(self):
+        from v4_core import zero_audit_contract
+        out=zero_audit_contract()
+        self.assertEqual(out["pipeline"][0],"DATA")
+        self.assertEqual(out["pipeline"][-1],"LEARNING")
+        self.assertIn("no_real_order_by_default",out["invariants"])
