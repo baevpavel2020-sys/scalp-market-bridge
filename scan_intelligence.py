@@ -460,8 +460,8 @@ def enrich_external_result(result, market):
     out["execution_cost"] = _setup_cost(setup,market)
     out["setup"] = {**setup, "opportunity_state": opportunity_state}
     out["opportunity_state"] = opportunity_state
-    out["opportunity_funnel"] = opportunity_funnel(out["setup"], result.get("analysis_ready"), result.get("execution_ready"), out.get("scenario"))
-    out["execution_contract"] = execution_contract(market, out["opportunity_funnel"]["stage"] in ("READY","TRADE"), result.get("execution_ready"), result.get("execution_reason"))
+    # Funnel/execution are finalized once, after analytical hard invalidations.
+    # Avoid doing the same downstream authorization work twice per external symbol.
     out["intelligence_version"] = INTELLIGENCE_VERSION
     depth_evidence = []
     for tf_name, item in (analysis or {}).items():
