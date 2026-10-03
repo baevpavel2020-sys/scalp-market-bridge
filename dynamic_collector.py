@@ -3356,7 +3356,7 @@ class DynamicMarketManager:
 
     def __init__(
         self,
-        max_symbols=6,
+        max_symbols=max(8, int(os.environ.get("SCAN_MAX_ACTIVE_SYMBOLS","8"))),
         idle_timeout=3600,
     ):
 
@@ -6687,7 +6687,7 @@ class ScanOrchestrator:
       batch  -> explicit symbol list -> full Scan+ (PreScan bypassed)
 
     Full Scan+ calls are intentionally sequential. DynamicMarketManager owns a
-    bounded six-symbol realtime pool; sequential orchestration avoids competing
+    bounded realtime pool sized to the deep-scan candidate cap; sequential orchestration avoids competing
     cold-start websocket activations and preserves the manager's eviction rules.
     """
 
