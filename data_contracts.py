@@ -54,13 +54,16 @@ def frame_quality(frames, required=("1D","4h","1h","15m","5m"), min_closed=50, n
         tf_ms=TF_MS.get(tf)
         stale=bool(age_ms is not None and tf_ms and age_ms > max(tf_ms*3, 15*60*1000))
         state="PASS"
-        if len(closed)<min_closed:
+        if not clean:
+            state="UNAVAILABLE"; hard.append(f"{tf}:unavailable")
+        elif len(closed)<min_closed:
             state="FAIL"; hard.append(f"{tf}:insufficient_history")
         elif stale:
             state="DEGRADED"; soft.append(f"{tf}:stale")
         details[tf]={"state":state,"rows":len(clean),"closed":len(closed),"last_start":last or None,
                      "age_ms":age_ms,"stale":stale}
-    state="FAIL" if hard else ("DEGRADED" if soft else "PASS")
+    states=[x["state"] for x in details.values()]
+    state="UNAVAILABLE" if states and all(x=="UNAVAILABLE" for x in states) else ("FAIL" if hard else ("DEGRADED" if soft else "PASS"))
     return {"contract_version":VERSION,"state":state,"timeframes":details,
             "hard_failures":hard,"soft_degradations":soft,"sources":sorted(sources),
             "evaluated_at":datetime.now(timezone.utc).isoformat()}
