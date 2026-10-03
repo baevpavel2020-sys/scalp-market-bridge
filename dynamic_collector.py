@@ -1671,7 +1671,7 @@ class MarketStream:
             x,a,b,c,d=[float(q["price"]) for q in s]
             xa=a-x; ab=b-a; bc=c-b; cd=d-c
             if min(abs(xa),abs(ab),abs(bc))<1e-12: continue
-            vals={"ab":abs(ab/xa),"bc":abs(bc/ab),"cd":abs(cd/bc),"xd":abs((d-x)/xa)}
+            vals={"ab":abs(ab/xa),"bc":abs(bc/ab),"cd":abs(cd/bc),"xd":abs((d-a)/xa)}
             # Harmonic completion direction is determined by the final CD leg.
             # Reject degenerate shapes where D fails to extend beyond B in CD direction.
             bullish = cd < 0
