@@ -12,6 +12,33 @@ from scan_intelligence import WATCHLIST, backtest_event_setups, walk_forward_bac
 
 app = Flask(__name__)
 
+def _ru_stocks_boot_selftest():
+    """Opt-in test-only probe. Never enabled in production."""
+    if os.environ.get("RU_STOCKS_SELFTEST","0") != "1":
+        return
+    import threading, json
+    def run():
+        try:
+            adapter=ExternalMarketAdapter()
+            summary={}
+            for symbol in ("SBER","GAZP","LKOH"):
+                result=adapter.scan("ru_stocks",symbol)
+                summary[symbol]={
+                    "provider":result.get("provider"),
+                    "analysis_ready":result.get("analysis_ready"),
+                    "data_quality":result.get("data_quality"),
+                    "direction_policy":result.get("direction_policy"),
+                    "errors":result.get("errors"),
+                    "setup":result.get("setup"),
+                }
+            print("RU_STOCKS_SELFTEST "+json.dumps(summary,ensure_ascii=False,default=str),flush=True)
+        except Exception as exc:
+            print(f"RU_STOCKS_SELFTEST_FAIL {type(exc).__name__}:{exc}",flush=True)
+    threading.Thread(target=run,daemon=True,name="ru-stocks-selftest").start()
+
+
+
+_ru_stocks_boot_selftest()
 
 def ensure_market_collectors():
     collector.ensure_running()
