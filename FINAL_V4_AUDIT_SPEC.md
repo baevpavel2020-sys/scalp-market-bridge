@@ -32,3 +32,20 @@ Data quality contract distinguishes PASS / DEGRADED / FAIL / UNAVAILABLE.
 Cross-provider history validation rejects stale and price-dislocated fallback data.
 
 Block 1 contract is frozen. Changes to Block 1 code from later blocks require Block 1 regression and affected downstream reruns.
+
+
+## Block 2 closure record
+Status: PASS (production regression + runtime)
+Production regression endpoint: HTTP 200 before final run.
+Final runtime job: 144b847d82ad484f, state DONE.
+Market context remains context-only and cannot authorize or rewrite a trade.
+Canonical regime supports TREND / RANGE_TRANSITION / COMPRESSION / EXPANSION plus explicit TRANSITION / PRICE_DISCOVERY event context.
+PRICE_DISCOVERY is context-only and never rewrites confirmed Structure direction.
+xStocks retain 24/7 secondary-market availability while exposing the underlying US session layer (regular/premarket/after-hours/closed).
+Calendar/news state is UNAVAILABLE unless an external feed is actually supplied; no news is fabricated.
+PreScan uses top-turnover ranking, closed/fresh history and market-quality gates.
+STRICT keeps the HOT/WARMING gate. RANKED_FALLBACK fills unused deep-analysis capacity only and explicitly remains eligible_for_scan_plus=false / trade_decision=false.
+Relative-strength ranking is downstream context/ranking only, not trade authority.
+Final production scan completed with 8 selected candidates; Block 1 realtime/data contract remained healthy, including spot_perp and perp_only paths.
+
+Block 2 contract is frozen. Later changes to context or PreScan require Block 2 regression plus all affected downstream blocks.
