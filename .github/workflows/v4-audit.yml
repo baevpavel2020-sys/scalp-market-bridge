@@ -1,0 +1,66 @@
+name: V4 Audit
+on:
+  push:
+    branches: [scan-plus-multimarket]
+    paths:
+      - runtime/v4_audit_trigger.json
+concurrency:
+  group: v4-production-audit
+  cancel-in-progress: false
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Deterministic production audit
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --show-error --silent --retry 4 --retry-delay 3 https://scalp-market-bridge.onrender.com/audit/v4 > audit.json
+          cat audit.json
+      - name: Start unified production Scan
+        id: start
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --show-error --silent --retry 4 --retry-delay 3 "https://scalp-market-bridge.onrender.com/scan-auto/start?top=8&shortlist=30" > start.json
+          cat start.json
+          JOB_ID=$(python -c 'import json; print(json.load(open("start.json"))["job_id"])')
+          echo "JOB_ID=$JOB_ID" >> "$GITHUB_OUTPUT"
+      - name: Poll same job
+        env:
+          JOB_ID: ${{ steps.start.outputs.JOB_ID }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 90); do
+            curl --fail-with-body --show-error --silent --retry 3 --retry-delay 3 "https://scalp-market-bridge.onrender.com/scan-job/$JOB_ID" > result.json
+            STATE=$(python -c 'import json; print(json.load(open("result.json")).get("state","UNKNOWN"))')
+            echo "poll=$i state=$STATE"
+            if [ "$STATE" = DONE ] || [ "$STATE" = FAILED ]; then break; fi
+            sleep 10
+          done
+          cat result.json
+          test "$(python -c 'import json; print(json.load(open("result.json")).get("state"))')" = DONE
+      - name: Audit live result invariants
+        run: |
+          python - <<'PY'
+          import json,sys
+          j=json.load(open("result.json")); r=j.get("result") or {}
+          cr=((r.get("crypto") or {}).get("scan_plus_results") or [])
+          violations=[]
+          for x in cr:
+              f=x.get("opportunity_funnel") or {}
+              if f.get("trade_authorized") and f.get("stage")!="TRADE": violations.append([x.get("symbol"),"trade_stage"])
+              if f.get("trade_authorized") and (x.get("hard_invalidations") or (x.get("analytical_depth") or {}).get("hard_invalidations")): violations.append([x.get("symbol"),"hard_invalidation_trade"])
+              ec=x.get("execution_contract") or {}
+              if ec.get("order_sent"): violations.append([x.get("symbol"),"real_order_sent"])
+          print(json.dumps({"crypto_count":len(cr),"violations":violations,"telemetry":r.get("telemetry")},indent=2))
+          if violations: sys.exit(1)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v4-combat-audit-${{ steps.start.outputs.JOB_ID }}
+          path: |
+            audit.json
+            start.json
+            result.json
+          retention-days: 7
