@@ -18,7 +18,7 @@ BASE="https://api.twelvedata.com"
 TF={"1m":"1min","5m":"5min","15m":"15min","1h":"1h","4h":"4h","1D":"1day"}
 FOREX=("EUR/USD","GBP/USD","USD/JPY","USD/CHF","AUD/USD","NZD/USD","USD/CAD","EUR/GBP","EUR/JPY","GBP/JPY")
 COMMODITIES=("XAU/USD","XAG/USD","WTI/USD","BRENT/USD","HG1")
-STOCKS=("AAPLXUSDT","NVDAXUSDT","TSLAXUSDT","GOOGLXUSDT","AMZNXUSDT","METAXUSDT","COINXUSDT","HOODXUSDT","CRCLXUSDT","MSTRXUSDT","SPCXXUSDT","NFLXXUSDT","AVGOXUSDT","MSFTXUSDT","JPMXUSDT")
+STOCKS=("AAPLXUSDT","NVDAXUSDT","TSLAXUSDT","GOOGLXUSDT","AMZNXUSDT","METAXUSDT","COINXUSDT","HOODXUSDT","CRCLXUSDT","MSTRXUSDT","SPCXXUSDT","NFLXXUSDT","AVGOXUSDT","MSFTXUSDT","JPMXUSDT")\nRU_STOCKS=("SBER","GAZP","LKOH","YDEX","T","ROSN","NVTK","GMKN","PLZL","SIBN","TATN","MOEX","MGNT","X5","VTBR")\nMOEX_BASE="https://iss.moex.com/iss"\nMOEX_BOARD="TQBR"\nMOEX_TF={"1h":60,"1D":24}
 _XSTOCKS_CACHE={"expires":0.0,"symbols":None}
 _XSTOCKS_CACHE_LOCK=threading.Lock()
 _XSTOCKS_CACHE_TTL=60.0
@@ -123,9 +123,120 @@ def bybit_xstock_candles(symbol,interval="15",limit=500):
         except (IndexError,TypeError,ValueError): pass
     return out
 
+def _moex_get(path, params=None):
+    q={"iss.meta":"off","iss.only":"candles","candles.columns":"begin,open,high,low,close,volume,value"}; q.update(params or {})
+    req=urllib.request.Request(MOEX_BASE+path+"?"+urllib.parse.urlencode(q),headers={"User-Agent":"scalp-market-bridge/1.0","Accept":"application/json"})
+    with urllib.request.urlopen(req,timeout=12) as r: return json.loads(r.read().decode("utf-8"))
+
+def _moex_native(symbol, interval, from_date, start=0):
+    data=_moex_get(f"/engines/stock/markets/shares/boards/{MOEX_BOARD}/securities/{urllib.parse.quote(symbol)}/candles.json",{"interval":1 if interval=="1m" else MOEX_TF[interval],"from":from_date,"start":int(start)})
+    block=data.get("candles") or {}; cols=block.get("columns") or []; out=[]; tf_ms={"1m":60000,"1h":3600000,"1D":86400000}[interval]; now_ms=int(time.time()*1000)
+    for vals in block.get("data") or []:
+        try:
+            row=dict(zip(cols,vals)); dt=datetime.fromisoformat(str(row["begin"]).replace("Z","+00:00"))
+            if dt.tzinfo is None: dt=dt.replace(tzinfo=ZoneInfo("Europe/Moscow") if ZoneInfo else timezone.utc)
+            ms=int(dt.timestamp()*1000)
+            out.append({"start":ms,"open":float(row["open"]),"high":float(row["high"]),"low":float(row["low"]),"close":float(row["close"]),"volume":float(row.get("volume") or 0),"value":float(row.get("value") or 0),"source":"moex_iss","confirm":bool(ms+tf_ms<=now_ms)})
+        except (TypeError,ValueError,KeyError): pass
+    return out
+
+def moex_candles(symbol, interval, target=500):
+    days={"1m":14,"5m":30,"15m":90,"1h":365,"4h":1460,"1D":3650}.get(interval,365); from_date=datetime.fromtimestamp(time.time()-days*86400,timezone.utc).date().isoformat()
+    base="1m" if interval in ("1m","5m","15m") else "1h" if interval=="4h" else interval; raw=[]; start=0
+    needed=max(target*(15 if interval=="15m" else 5 if interval=="5m" else 4 if interval=="4h" else 1),target)
+    while len(raw)<needed:
+        page=_moex_native(symbol,base,from_date,start)
+        if not page: break
+        raw.extend(page); start+=len(page)
+        if start>100000: break
+    if interval=="5m": rows=_resample_ohlcv(raw,300000)
+    elif interval=="15m": rows=_resample_ohlcv(raw,900000)
+    elif interval=="4h":
+        # Anchor 4H bars to the MOEX local trading day/session instead of Unix epoch.
+        rows=[]; buckets={}
+        tz=ZoneInfo("Europe/Moscow") if ZoneInfo else timezone.utc
+        for row in raw:
+            dt=datetime.fromtimestamp(int(row["start"])/1000,tz)
+            # 4H windows anchored at 07:00 MSK cover morning/main/evening trading consistently.
+            anchor=7
+            slot=max(0,(dt.hour-anchor)//4)
+            start_dt=dt.replace(hour=anchor+slot*4,minute=0,second=0,microsecond=0)
+            key=int(start_dt.timestamp()*1000)
+            b=buckets.get(key)
+            if b is None: buckets[key]={"start":key,"open":row["open"],"high":row["high"],"low":row["low"],"close":row["close"],"volume":row.get("volume",0.0),"source":"moex_iss","confirm":row.get("confirm",True)}
+            else:
+                b["high"]=max(b["high"],row["high"]); b["low"]=min(b["low"],row["low"]); b["close"]=row["close"]; b["volume"]+=row.get("volume",0.0); b["confirm"]=bool(b["confirm"] and row.get("confirm",True))
+        rows=[buckets[k] for k in sorted(buckets)]
+    else: rows=raw
+    return rows[-target:]
+
+def _moex_fresh(rows, interval):
+    confirmed=[r for r in rows or [] if r.get("confirm",True)]
+    if not confirmed: return False
+    max_age={"5m":7*86400,"15m":7*86400,"1h":7*86400,"4h":10*86400,"1D":10*86400}.get(interval,10*86400)
+    return time.time()*1000-int(confirmed[-1]["start"]) <= max_age*1000
+
+def moex_quote(symbol):
+    path=f"/engines/stock/markets/shares/boards/{MOEX_BOARD}/securities/{urllib.parse.quote(symbol)}.json"
+    q={"iss.meta":"off","iss.only":"marketdata","marketdata.columns":"SECID,LAST,MARKETPRICE,UPDATETIME"}
+    req=urllib.request.Request(MOEX_BASE+path+"?"+urllib.parse.urlencode(q),headers={"User-Agent":"scalp-market-bridge/1.0","Accept":"application/json"})
+    with urllib.request.urlopen(req,timeout=12) as r: data=json.loads(r.read().decode("utf-8"))
+    block=data.get("marketdata") or {}; cols=block.get("columns") or []
+    for vals in block.get("data") or []:
+        row=dict(zip(cols,vals)); price=row.get("LAST") or row.get("MARKETPRICE")
+        if price is not None: return {"symbol":symbol,"price":float(price),"source":"moex_iss_marketdata","delayed":True}
+    rows=moex_candles(symbol,"5m",target=2)
+    if not rows: raise RuntimeError("moex_quote_missing_price")
+    return {"symbol":symbol,"price":float(rows[-1]["close"]),"source":"moex_iss_candle_fallback","delayed":True}
+
+BYBIT_BASE="https://api.bybit.com"
+def _bybit_get(path,params):
+    q=urllib.parse.urlencode(params); req=urllib.request.Request(BYBIT_BASE+path+"?"+q,headers={"User-Agent":"scalp-market-bridge/1.0"})
+    with urllib.request.urlopen(req,timeout=12) as r: data=json.loads(r.read().decode("utf-8"))
+    if data.get("retCode") not in (0,None): raise RuntimeError(str(data))
+    return data
+
+def bybit_xstocks_top15():
+    now=time.time()
+    with _XSTOCKS_CACHE_LOCK:
+        if _XSTOCKS_CACHE["symbols"] and now < _XSTOCKS_CACHE["expires"]:
+            return list(_XSTOCKS_CACHE["symbols"])
+    data=_bybit_get("/v5/market/instruments-info",{"category":"spot","symbolType":"xstocks","limit":1000})
+    symbols=[x["symbol"] for x in data.get("result",{}).get("list",[]) if x.get("status")=="Trading"]
+    if not symbols: return []
+    tick=_bybit_get("/v5/market/tickers",{"category":"spot"})
+    rows={x.get("symbol"):x for x in tick.get("result",{}).get("list",[])}
+    top=sorted(symbols,key=lambda s:float(rows.get(s,{}).get("turnover24h") or 0),reverse=True)[:15]
+    with _XSTOCKS_CACHE_LOCK:
+        _XSTOCKS_CACHE["symbols"]=list(top)
+        _XSTOCKS_CACHE["expires"]=now+_XSTOCKS_CACHE_TTL
+    return top
+
+def _interval_ms(interval):
+    return {"1m":60000,"5m":300000,"15m":900000,"1h":3600000,"4h":14400000,"1D":86400000,
+            "1":"60000","5":"300000","15":"900000","60":"3600000","240":"14400000","D":"86400000"}.get(str(interval),900000)
+
+def _with_close_state(row, interval):
+    start=int(row["start"])
+    end=start+_interval_ms(interval)
+    return {**row,"end":end,"confirm":bool(end<=int(time.time()*1000))}
+
+def bybit_xstock_candles(symbol,interval="15",limit=500):
+    data=_bybit_get("/v5/market/kline",{"category":"spot","symbol":symbol,"interval":interval,"limit":min(int(limit),1000)})
+    out=[]
+    for row in reversed(data.get("result",{}).get("list",[]) or []):
+        try:
+            out.append(_with_close_state({
+                "start":int(row[0]),"open":float(row[1]),"high":float(row[2]),
+                "low":float(row[3]),"close":float(row[4]),"volume":float(row[5]),
+                "turnover":float(row[6]),"source":"bybit_xstocks"
+            }, interval))
+        except (IndexError,TypeError,ValueError): pass
+    return out
+
 MARKET_PROFILES = {
     "crypto": {"session_model":"24_7","volume_model":"exchange_volume","oi":True,"funding":True,"liquidations":True,"orderbook":True,"cvd":True,"execution":"exchange_perpetual_or_spot","special_events":["pump_exhaustion","short_squeeze","long_liquidation_cascade","liquidity_sweep"]},
-    "stocks": {"session_model":"secondary_market_24_7","volume_model":"exchange_volume","oi":False,"funding":False,"liquidations":False,"orderbook":True,"cvd":False,"execution":"bybit_xstock_spot","special_events":["gap","opening_range","session_liquidity","failed_breakout"]},
+    "ru_stocks": {"session_model":"moex_equities_session","volume_model":"exchange_volume","oi":False,"funding":False,"liquidations":False,"orderbook":False,"cvd":False,"execution":"moex_spot_long_only","direction_policy":"long_only","special_events":["gap","opening_range","session_liquidity","failed_breakout"]},\n    "stocks": {"session_model":"secondary_market_24_7","volume_model":"exchange_volume","oi":False,"funding":False,"liquidations":False,"orderbook":True,"cvd":False,"execution":"bybit_xstock_spot","special_events":["gap","opening_range","session_liquidity","failed_breakout"]},
     "forex": {"session_model":"asia_london_newyork","volume_model":"tick_or_provider_volume","oi":False,"funding":False,"liquidations":False,"orderbook":False,"cvd":False,"execution":"external_fx_broker_required","special_events":["session_liquidity","london_breakout","ny_reversal","failed_breakout"]},
     "commodities": {"session_model":"instrument_session","volume_model":"provider_volume","oi":False,"funding":False,"liquidations":False,"orderbook":False,"cvd":False,"execution":"external_commodity_broker_required","special_events":["session_liquidity","inventory_event","contract_rollover","failed_breakout"]},
 }
@@ -147,7 +258,7 @@ def session_context(market, now_epoch=None):
         elif 8 <= nh < 17: session="NEW_YORK"
         elif 0 <= utc_dt.hour < 8: session="ASIA"
         else: session="ROLLOVER"
-    elif market=="stocks": session="GLOBAL_XSTOCKS_24_7"
+    elif market=="ru_stocks": session="MOEX_EQUITIES"\n    elif market=="stocks": session="GLOBAL_XSTOCKS_24_7"
     elif market=="commodities": session="INSTRUMENT_SESSION"
     else: session="24_7"
     return {"market":market,"session":session,"utc_hour":round(utc_dt.hour+utc_dt.minute/60.0,2),"profile":market_profile(market)}
