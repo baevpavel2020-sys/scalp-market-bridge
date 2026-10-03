@@ -7377,7 +7377,7 @@ class ScanJobManager:
                 started_unified=time.time()
                 top_n=max(1,min(int(payload.get("top_n",8)),ScanOrchestrator.MAX_AUTO_SCAN_PLUS))
                 shortlist=int(payload.get("shortlist",30))
-                markets=[str(x).strip().lower() for x in (payload.get("markets") or ["crypto","stocks"]) if str(x).strip()]
+                markets=[str(x).strip().lower() for x in (payload.get("markets") or ["crypto","stocks","forex","commodities"]) if str(x).strip()]
                 cls._progress(jid,done=0,total=None,current_symbol=None,stage="UNIFIED_PRESCAN")
                 prescan=run_prescan(top_n=top_n,shortlist=shortlist)
                 # PreScan owns ranking/strict-vs-fallback selection. Do not
@@ -7467,7 +7467,7 @@ class ScanJobManager:
     @classmethod
     def start_unified(cls, top_n=8, shortlist=30, markets=None):
         allowed_markets=("crypto","stocks","forex","commodities")
-        requested=[str(x).strip().lower() for x in (markets or ["crypto","stocks"]) if str(x).strip()]
+        requested=[str(x).strip().lower() for x in (markets or ["crypto","stocks","forex","commodities"]) if str(x).strip()]
         unknown=[x for x in requested if x not in allowed_markets]
         if unknown:
             raise ValueError("unsupported market(s): "+",".join(sorted(set(unknown))))
@@ -7590,7 +7590,7 @@ def start_scan_auto_job(top_n=8, shortlist=30):
     return ScanJobManager.start_unified(
         top_n=min(max(int(top_n), 1), ScanOrchestrator.MAX_AUTO_SCAN_PLUS),
         shortlist=max(30, int(shortlist)),
-        markets=["crypto", "stocks"],
+        markets=["crypto", "stocks", "forex", "commodities"],
     )
 
 
