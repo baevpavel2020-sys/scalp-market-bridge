@@ -5,6 +5,7 @@ direction. Event lifecycle prevents the same causal event from being counted
 as a new signal on every scan tick.
 """
 import hashlib,json,time
+from v4_core import dual_scenarios
 
 def _direction(analysis,tf):
     item=(analysis or {}).get(tf) or {}
@@ -36,9 +37,13 @@ def build_scenarios(analysis_core,events):
     return scenarios
 
 def scenario_snapshot(analysis_core,events):
-    scenarios=build_scenarios(analysis_core,events)
-    primary=next((s for s in scenarios if s["state"]=="PRIMARY"),scenarios[0])
-    return {"primary":primary,"alternatives":scenarios[1:],"count":len(scenarios)}
+    analysis=(analysis_core or {}).get("analysis") or {}
+    dual=dual_scenarios(analysis,events)
+    legacy=build_scenarios(analysis_core,events)
+    primary=dual.get("primary")
+    return {**dual,"legacy":legacy,"count":2,
+            "primary":primary or {"type":"NO_TRADE","state":"NEUTRAL","direction":None,"authority":"NO_EDGE"},
+            "alternatives":[dual.get("alternative")] if dual.get("alternative") else []}
 
 def event_fingerprint(event):
     payload={k:event.get(k) for k in ("market","symbol","event","type","direction","level","timeframe","confirmed","confirmed_by_close")}
