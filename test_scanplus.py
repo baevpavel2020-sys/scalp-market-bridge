@@ -175,7 +175,8 @@ class TestScanPlus(unittest.TestCase):
     def test_intelligence_version_and_funnel(self):
         out=enrich_scan({"symbol":"V3","market":"crypto","setup":{"direction":"bullish","risk_reward":1.4,"trade_state":"WAIT_TRIGGER"}})
         self.assertEqual(out["intelligence_version"], "intelligence_v4_blocks5_14")
-        self.assertEqual(out["opportunity_funnel"]["stage"], "DEVELOPING")
+        self.assertEqual(out["opportunity_funnel"]["stage"], "EARLY")
+        self.assertIn("scenario_authority",out["opportunity_funnel"]["missing"])
         self.assertFalse(out["opportunity_funnel"]["trade_authorized"])
 
     def test_funnel_hard_invalidation_never_becomes_trade(self):
