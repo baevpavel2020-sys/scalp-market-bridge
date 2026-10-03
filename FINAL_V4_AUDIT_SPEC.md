@@ -71,3 +71,20 @@ SMC remains causal: liquidity -> displacement -> MSS -> POI, and cannot rewrite 
 Final production scan completed with 8 deep-scan candidates while frozen Blocks 1 and 2 remained operational.
 
 Block 3 contract is frozen. Later analytical-core changes require Block 3 regression and affected downstream reruns.
+
+## Block 4 closure record
+Status: PASS (production regression + runtime)
+Production regression endpoint: HTTP 200 after Block 4 event regressions.
+Final runtime job: 1a02231bf5e44e33, state DONE.
+Deterministic audit: 62 tests, 0 failures, 0 errors; release gates PASS.
+Unified Liquidity & Leverage Event Engine consumes pump exhaustion, crowded positioning, leverage fragility, liquidation cascades and Block-3 liquidity mechanics.
+Block-3 liquidity grabs are normalized into FAILED_BREAKOUT / FAILED_BREAKDOWN with LIQUIDITY_SWEEP attached as related evidence, preventing one causal episode from voting twice.
+Pump Exhaustion remains event context only: trade_authority=false and no immediate short is authorized.
+Causal reversal confirmation consumes the actual Block-3 smart_money.mss contract; UNKNOWN failed-retest state never becomes PASS.
+Only an explicit failed retest together with structural break/MSS can complete event confirmation.
+x25 remains disabled inside the event detector and can only be considered downstream by the risk/execution layer.
+Runtime showed the new unified event path on live crypto candidates (including FAILED_BREAKDOWN/FAILED_BREAKOUT with deduplicated LIQUIDITY_SWEEP evidence) while 8/8 deep-scan candidates completed and live invariants passed.
+The first runtime attempt remained QUEUED behind an occupied single worker; the service was restarted and the persisted Redis job 1a02231bf5e44e33 resumed under the same job_id, then completed successfully.
+
+Block 4 contract is frozen. Later changes to liquidity/leverage event semantics require Block 4 regression and affected downstream reruns.
+
