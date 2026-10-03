@@ -721,3 +721,19 @@ if __name__=="__main__":
         with app_module.app.test_request_context("/scan",headers={"X-Scan-Token":"secret"}):
             with patch.dict(os.environ,{"SCAN_API_TOKEN":"secret"}):
                 self.assertTrue(app_module._scan_write_authorized())
+
+    def test_zero_audit_block1_data_quality_has_unavailable(self):
+        from data_contracts import frame_quality
+        out=frame_quality({})
+        self.assertEqual(out["state"],"UNAVAILABLE")
+        self.assertTrue(all(x["state"]=="UNAVAILABLE" for x in out["timeframes"].values()))
+
+    def test_zero_audit_v4_explainability_is_after_final_funnel(self):
+        import inspect,scan_intelligence
+        src=inspect.getsource(scan_intelligence.enrich_scan)
+        self.assertLess(src.rfind('out["opportunity_funnel"]'),src.rfind('out["explainability"]'))
+
+    def test_zero_audit_v4_outcomes_accept_ready_trade(self):
+        import inspect,scan_intelligence
+        src=inspect.getsource(scan_intelligence.OutcomeLogger.record)
+        self.assertIn('("READY", "TRADE")',src)
