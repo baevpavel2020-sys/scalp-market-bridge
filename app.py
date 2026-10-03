@@ -162,7 +162,7 @@ def scan_markets():
             market=market.strip().lower()
             if market not in universe: continue
             symbols=universe[market]
-            market_ready=adapter.configured or market=="stocks"
+            market_ready=adapter.configured or market in ("stocks","ru_stocks")
             if market_ready:
                 workers=min(3,len(symbols)) or 1
                 with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
