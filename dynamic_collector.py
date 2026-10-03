@@ -7087,6 +7087,26 @@ class ScanJobManager:
                         symbol=candidate.get("symbol")
                         if symbol and symbol not in eligible: eligible.append(symbol)
                     if len(eligible)>=top_n: break
+                # Unified regression/production scan must not silently skip the
+                # crypto engine just because no symbol meets the lightweight
+                # PreScan setup threshold. Fall back to the highest-ranked
+                # analyzable candidates; this does not manufacture a trade —
+                # the full Scan+ core still decides TRADE/READY/WATCH.
+                crypto_selection_mode="eligible"
+                if "crypto" in markets and not eligible:
+                    for candidate in prescan.get("candidates") or []:
+                        symbol=candidate.get("symbol")
+                        reasons=candidate.get("reasons") or []
+                        analyzable=(
+                            symbol
+                            and "analysis_error" not in reasons
+                            and not any(str(r).startswith("history_unavailable:") for r in reasons)
+                        )
+                        if analyzable and symbol not in eligible:
+                            eligible.append(symbol)
+                        if len(eligible)>=top_n: break
+                    if eligible:
+                        crypto_selection_mode="ranked_analyzable_fallback"
                 activated,activation_errors,warm_elapsed=cls._activate_and_warm_auto(jid,eligible)
                 crypto_results,crypto_errors=cls._scan_symbols_progressive(jid,activated)
                 crypto_rankings=relative_strength(crypto_results,market_key="crypto")
@@ -7125,7 +7145,7 @@ class ScanJobManager:
                         item["exposure_buckets"]=exposure
                     external[market]={"status":"PASS","count":len(vals),"results":vals,"relative_strength_ranking":rankings}
                 result={"orchestrator_version":"scan_orchestrator_v3_unified_live","mode":"unified","prescan_used":True,"markets":markets,
-                        "crypto":{"selected_symbols":eligible,"activated_symbols":activated,"warmup_seconds":round(warm_elapsed,2),"scan_plus_count":len(crypto_results),"scan_plus_results":crypto_results},
+                        "crypto":{"selection_mode":crypto_selection_mode,"selected_symbols":eligible,"activated_symbols":activated,"warmup_seconds":round(warm_elapsed,2),"scan_plus_count":len(crypto_results),"scan_plus_results":crypto_results},
                         "external":external,"prescan":{"status":prescan.get("status"),"engine_version":prescan.get("engine_version"),"scan_plus_candidates":prescan.get("scan_plus_candidates") or [],"diagnostics":prescan.get("diagnostics") or {}},
                         "errors":errors,"elapsed_ms":round((time.time()-started_unified)*1000.0,2)}
             else:
