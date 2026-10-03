@@ -135,3 +135,16 @@ A regression exposed an outdated frozen Block-5 fixture after Block-6 tightened 
 Production runtime completed 8/8 crypto deep-scan candidates with telemetry error_count=0 and live invariants PASS.
 
 Block 7 contract is frozen. Later changes to state/watch, check endpoints, outcome logging, backtest/learning or production job persistence require Block 7 regression and affected downstream reruns.
+
+## Block 8 closure record
+Status: PASS (deterministic regression + four-market production runtime)
+Deterministic audit after the final Block-8 fix: 79 tests, 0 failures, 0 errors; release gates PASS.
+Final production job: 5a7da9c3228a4859, state DONE; the same job was retained through the queue delay and completed without replacement.
+Four-market runtime covered crypto, stocks, forex and commodities with production telemetry error_count=0.
+Crypto deep scan completed 6 candidates; external runtime completed stocks=15, forex=10, commodities=5.
+A Block-8 defect was found in the unified external batch path: Forex/Commodities bypassed the existing Yahoo fallback when Twelve Data was not configured. The fix routes those markets through the per-symbol Yahoo fallback when the Twelve Data key is absent, and a regression test now locks this contract.
+Post-fix production verification confirmed Forex provider=yahoo_finance for all 10 candidates and Commodities provider=yahoo_finance for all 5 candidates. Data-quality failures in external markets remained fail-closed: no trade authorization was produced from unavailable/degraded data.
+The production workflow wrapper reached its 15-minute CI timeout while the same Render job was still running; the job itself subsequently completed DONE and was read directly by a separate verification step. No replacement scan was started for the final verification.
+Temporary audit-only workflows used to execute and finalize the same production job were removed after verification.
+
+Block 8 contract is frozen. Later changes to multi-market provider fallback, four-market orchestration, production invariants or zero-chaos semantics require Block 8 regression and affected downstream reruns.
