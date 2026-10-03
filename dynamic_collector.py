@@ -1608,7 +1608,7 @@ class MarketStream:
                     "ratios":{"B_A":round(br,4),"C_A":round(cr,4)},"invalidation":p[0]}
             add({**common,"type":"zigzag","checks":{
                 "hard_B_below_A_origin":br < 1.0,
-                "hard_C_progresses": (p[3]<p[1]) if direction=="down" else (p[3]>p[1]),
+                "hard_C_progresses": (p[3]<p[1]) if direction=="bearish" else (p[3]>p[1]),
                 "B_typical":0.236 <= br <= 0.886,
                 "C_typical":0.5 <= cr <= 2.0,
             }})
