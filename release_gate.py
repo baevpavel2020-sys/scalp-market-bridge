@@ -1,10 +1,11 @@
-"""Deterministic Scan+ release gates for Stages 7-10."""
+"""Deterministic Scan+ V4 release gates and zero audit."""
 from scan_architecture import MARKETS, market_block_policy, pipeline_contract
 from analytical_depth import VERSION as ANALYTICAL_DEPTH_VERSION
 from dynamic_collector import ScanJobManager
+from v4_core import VERSION as V4_VERSION, zero_audit_contract
 
-RELEASE_VERSION = "scanplus_v3_9_stage7_10"
-RELEASE_STAGES = (7, 8, 9, 10)
+RELEASE_VERSION = "scanplus_v4_blocks1_14"
+RELEASE_STAGES = tuple(range(1,15))
 
 def acceptance_report():
     policies = {m: market_block_policy(m) for m in MARKETS}
@@ -22,6 +23,8 @@ def acceptance_report():
             "workers": getattr(ScanJobManager._executor, "_max_workers", None),
         },
         "network_free": True,
+        "v4_version":V4_VERSION,
+        "zero_audit":zero_audit_contract(),
     }
 
 def run_gates():
@@ -41,6 +44,9 @@ def run_gates():
         failures.append("job_worker_bound")
     if report["limits"]["max_jobs"] < 1 or report["limits"]["job_ttl_seconds"] < 60:
         failures.append("job_retention_policy")
+    audit=report["zero_audit"]
+    required={"both_sides_before_direction","hard_invalidation_absolute","event_has_no_trade_authority","net_rr_before_trade","no_real_order_by_default"}
+    if not required.issubset(set(audit.get("invariants") or [])): failures.append("zero_audit_invariants")
     report["passed"] = not failures
     report["failures"] = failures
     return report
