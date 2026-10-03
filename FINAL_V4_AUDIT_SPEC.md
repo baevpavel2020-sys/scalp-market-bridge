@@ -119,3 +119,19 @@ Execution contract remains analysis-first and broker-independent: missing broker
 Production runtime completed 8/8 crypto deep-scan candidates, including a futures-only perp_only path, with telemetry error_count=0 and all live invariants PASS.
 
 Block 6 contract is frozen. Later changes to trigger, entry/target geometry, execution cost, RR or risk/leverage semantics require Block 6 regression and affected downstream reruns.
+
+
+## Block 7 closure record
+Status: PASS (production regression + runtime)
+Final runtime job: 7666f81eb0614295, state DONE.
+Deterministic audit: 73 tests, 0 failures, 0 errors; release gates PASS.
+Watchlist state is keyed by market+symbol, fingerprinted by setup/event geometry, TTL-bounded and emits state_changed only for a real state/fingerprint transition.
+The canonical /scan-check endpoint is read-only and never starts or duplicates a scan; Redis-backed unified job state remains recoverable across process restart under the same job_id.
+Outcome logging accepts only READY/TRADE records and now reloads persisted fingerprints before append, preventing duplicate learning samples after a Render process restart.
+Backtest remains no-lookahead with explicit limit fill before TP/SL resolution; MAE/MFE are measured only over the post-fill evaluation interval.
+Edge discovery consumes only resolved TP/SL outcomes; unresolved and not-filled observations cannot inflate hit-rate or expectancy.
+Learning remains downstream observational evidence and does not rewrite historical Structure, Scenario, Opportunity or execution facts.
+A regression exposed an outdated frozen Block-5 fixture after Block-6 tightened geometry; the fixture was aligned to the frozen Block-6 requirement (entry+stop+target) and Blocks 5->6->7 were rerun together.
+Production runtime completed 8/8 crypto deep-scan candidates with telemetry error_count=0 and live invariants PASS.
+
+Block 7 contract is frozen. Later changes to state/watch, check endpoints, outcome logging, backtest/learning or production job persistence require Block 7 regression and affected downstream reruns.
