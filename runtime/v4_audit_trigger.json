@@ -1,7 +1,7 @@
 {
-  "requested_at": "2026-10-03T13:10:00Z",
-  "reason": "V4 Block 8 final multi-market zero chaos audit",
-  "top": 8,
+  "requested_at": "2026-10-03T13:25:00Z",
+  "reason": "V4 Block 8 final four-market production audit after chaos fixture correction",
+  "top": 6,
   "shortlist": 30,
   "markets": [
     "crypto",
