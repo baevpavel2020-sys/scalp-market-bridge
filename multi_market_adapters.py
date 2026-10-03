@@ -21,7 +21,7 @@ COMMODITIES=("XAU/USD","XAG/USD","WTI/USD","BRENT/USD","HG1")
 RU_STOCKS=("SBER","GAZP","LKOH","YDEX","T","ROSN","NVTK","GMKN","PLZL","SIBN","TATN","MOEX","MGNT","X5","VTBR")
 MOEX_BASE="https://iss.moex.com/iss"
 MOEX_BOARD="TQBR"
-MOEX_TF={"5m":5,"15m":15,"1h":60,"1D":24}
+MOEX_TF={"1h":60,"1D":24}
 STOCKS=("AAPLXUSDT","NVDAXUSDT","TSLAXUSDT","GOOGLXUSDT","AMZNXUSDT","METAXUSDT","COINXUSDT","HOODXUSDT","CRCLXUSDT","MSTRXUSDT","SPCXXUSDT","NFLXXUSDT","AVGOXUSDT","MSFTXUSDT","JPMXUSDT")
 _XSTOCKS_CACHE={"expires":0.0,"symbols":None}
 _XSTOCKS_CACHE_LOCK=threading.Lock()
@@ -89,7 +89,7 @@ def _moex_get(path, params=None):
     with urllib.request.urlopen(req,timeout=15) as r: return json.loads(r.read().decode("utf-8"))
 
 def _moex_candles_native(symbol, interval, start=0):
-    data=_moex_get(f"/engines/stock/markets/shares/boards/{MOEX_BOARD}/securities/{urllib.parse.quote(symbol)}/candles.json",{"interval":MOEX_TF[interval],"start":int(start)})
+    data=_moex_get(f"/engines/stock/markets/shares/boards/{MOEX_BOARD}/securities/{urllib.parse.quote(symbol)}/candles.json",{"interval":1 if interval=="1m" else MOEX_TF[interval],"start":int(start)})
     block=data.get("candles") or {}; cols=block.get("columns") or []; out=[]
     for values in block.get("data") or []:
         row=dict(zip(cols,values))
@@ -101,6 +101,18 @@ def _moex_candles_native(symbol, interval, start=0):
     return out
 
 def moex_candles(symbol, interval, target=500):
+    # MOEX ISS candle intervals do not provide native 5m/15m on this endpoint.
+    # Build intraday TFs from the native 1-minute stream to keep one authoritative source.
+    if interval in ("5m","15m"):
+        factor=5 if interval=="5m" else 15
+        rows=[]; start=0
+        while len(rows)<target*factor:
+            page=_moex_candles_native(symbol,"1m",start=start)
+            if not page: break
+            rows.extend(page)
+            if len(page)<500: break
+            start+=len(page)
+        return _resample_ohlcv(rows,factor*60000)[-target:]
     if interval=="4h": return _resample_ohlcv(moex_candles(symbol,"1h",target=max(target*4,500)),4*3600000)[-target:]
     rows=[]; start=0
     while len(rows)<target:
