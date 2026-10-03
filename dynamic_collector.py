@@ -7078,15 +7078,54 @@ class ScanJobManager:
                 started_unified=time.time()
                 top_n=max(1,min(int(payload.get("top_n",5)),ScanOrchestrator.MAX_AUTO_SCAN_PLUS))
                 shortlist=int(payload.get("shortlist",30))
-                markets=[str(x).strip().lower() for x in (payload.get("markets") or ["crypto","stocks","forex","commodities"]) if str(x).strip()]
+                markets=[str(x).strip().lower() for x in (payload.get("markets") or ["crypto","stocks","ru_stocks","forex","commodities"]) if str(x).strip()]
                 cls._progress(jid,done=0,total=None,current_symbol=None,stage="UNIFIED_PRESCAN")
-                prescan=run_prescan(top_n=top_n,shortlist=shortlist)
+                # Unified must have the same hard PreScan boundary as auto mode.
+                # A provider/network stall must fail this job explicitly instead
+                # of occupying the single scan worker forever.
+                prescan_executor=concurrent.futures.ThreadPoolExecutor(
+                    max_workers=1,thread_name_prefix="unified-prescan-job"
+                )
+                prescan_future=prescan_executor.submit(
+                    run_prescan,top_n=top_n,shortlist=shortlist
+                )
+                try:
+                    prescan=prescan_future.result(timeout=cls.JOB_PRESCAN_TIMEOUT)
+                except concurrent.futures.TimeoutError:
+                    prescan_future.cancel()
+                    cls._progress(jid,done=0,total=None,current_symbol=None,stage="UNIFIED_PRESCAN_TIMEOUT")
+                    raise TimeoutError(
+                        f"unified prescan exceeded {cls.JOB_PRESCAN_TIMEOUT:.0f}s hard timeout"
+                    )
+                finally:
+                    prescan_executor.shutdown(wait=False,cancel_futures=True)
+                cls._progress(jid,done=0,total=None,current_symbol=None,stage="UNIFIED_PRESCAN_DONE")
                 eligible=[]
                 for candidate in prescan.get("candidates") or []:
                     if candidate.get("eligible_for_scan_plus") is True:
                         symbol=candidate.get("symbol")
                         if symbol and symbol not in eligible: eligible.append(symbol)
                     if len(eligible)>=top_n: break
+                # Unified regression/production scan must not silently skip the
+                # crypto engine just because no symbol meets the lightweight
+                # PreScan setup threshold. Fall back to the highest-ranked
+                # analyzable candidates; this does not manufacture a trade —
+                # the full Scan+ core still decides TRADE/READY/WATCH.
+                crypto_selection_mode="eligible"
+                if "crypto" in markets and not eligible:
+                    for candidate in prescan.get("candidates") or []:
+                        symbol=candidate.get("symbol")
+                        reasons=candidate.get("reasons") or []
+                        analyzable=(
+                            symbol
+                            and "analysis_error" not in reasons
+                            and not any(str(r).startswith("history_unavailable:") for r in reasons)
+                        )
+                        if analyzable and symbol not in eligible:
+                            eligible.append(symbol)
+                        if len(eligible)>=top_n: break
+                    if eligible:
+                        crypto_selection_mode="ranked_analyzable_fallback"
                 activated,activation_errors,warm_elapsed=cls._activate_and_warm_auto(jid,eligible)
                 crypto_results,crypto_errors=cls._scan_symbols_progressive(jid,activated)
                 crypto_rankings=relative_strength(crypto_results,market_key="crypto")
@@ -7101,13 +7140,13 @@ class ScanJobManager:
                 errors=dict(activation_errors); errors.update({f"crypto:{k}":v for k,v in crypto_errors.items()})
                 external={}
                 adapter=ExternalMarketAdapter(); universe=external_universe()
-                for market in ("stocks","forex","commodities"):
+                for market in ("stocks","ru_stocks","forex","commodities"):
                     if market not in markets: continue
                     symbols=list(universe.get(market) or [])
                     cls._progress(jid,done=0,total=len(symbols),current_symbol=None,stage=f"EXTERNAL_{market.upper()}")
                     if not symbols:
                         external[market]={"status":"NO_SYMBOLS","results":[]}; continue
-                    if market!="stocks" and not adapter.configured:
+                    if market not in ("stocks","ru_stocks") and not adapter.configured:
                         external[market]={"status":"DATA_BLOCK","reason":"TWELVE_DATA_API_KEY_not_configured","symbols":symbols}; continue
                     # External providers are batch-oriented: one request per
                     # timeframe for the whole market is faster and avoids a request
@@ -7125,7 +7164,7 @@ class ScanJobManager:
                         item["exposure_buckets"]=exposure
                     external[market]={"status":"PASS","count":len(vals),"results":vals,"relative_strength_ranking":rankings}
                 result={"orchestrator_version":"scan_orchestrator_v3_unified_live","mode":"unified","prescan_used":True,"markets":markets,
-                        "crypto":{"selected_symbols":eligible,"activated_symbols":activated,"warmup_seconds":round(warm_elapsed,2),"scan_plus_count":len(crypto_results),"scan_plus_results":crypto_results},
+                        "crypto":{"selection_mode":crypto_selection_mode,"selected_symbols":eligible,"activated_symbols":activated,"warmup_seconds":round(warm_elapsed,2),"scan_plus_count":len(crypto_results),"scan_plus_results":crypto_results},
                         "external":external,"prescan":{"status":prescan.get("status"),"engine_version":prescan.get("engine_version"),"scan_plus_candidates":prescan.get("scan_plus_candidates") or [],"diagnostics":prescan.get("diagnostics") or {}},
                         "errors":errors,"elapsed_ms":round((time.time()-started_unified)*1000.0,2)}
             else:
@@ -7151,7 +7190,7 @@ class ScanJobManager:
         payload = {
             "top_n": int(top_n),
             "shortlist": int(shortlist),
-            "markets": list(markets or ["crypto", "stocks", "forex", "commodities"]),
+            "markets": list(markets or ["crypto", "stocks", "ru_stocks", "forex", "commodities"]),
         }
         with cls._lock:
             for existing in cls._jobs.values():
@@ -7234,7 +7273,7 @@ def start_scan_auto_job(top_n=6, shortlist=30):
     return ScanJobManager.start_unified(
         top_n=min(int(top_n), 5),
         shortlist=shortlist,
-        markets=["crypto", "stocks", "forex", "commodities"],
+        markets=["crypto", "stocks", "ru_stocks", "forex", "commodities"],
     )
 
 

@@ -12,6 +12,39 @@ from scan_intelligence import WATCHLIST, backtest_event_setups, walk_forward_bac
 
 app = Flask(__name__)
 
+def _ru_stocks_boot_selftest():
+    """Opt-in test-only probe. Never enabled in production."""
+    if os.environ.get("RU_STOCKS_SELFTEST","0") != "1":
+        return
+    import threading, json
+    def run():
+        try:
+            adapter=ExternalMarketAdapter()
+            summary={}
+            for symbol in ("SBER","GAZP","LKOH"):
+                result=adapter.scan("ru_stocks",symbol)
+                summary[symbol]={
+                    "provider":result.get("provider"),
+                    "analysis_ready":result.get("analysis_ready"),
+                    "data_quality":result.get("data_quality"),
+                    "direction_policy":result.get("direction_policy"),
+                    "errors":result.get("errors"),
+                    "setup":result.get("setup"),
+                }
+            print("RU_STOCKS_SELFTEST "+json.dumps(summary,ensure_ascii=False,default=str),flush=True)
+            if os.environ.get("RU_STOCKS_UNIFIED_SELFTEST","0") == "1":
+                try:
+                    job=start_scan_unified_job(top_n=2,shortlist=6,markets=["crypto","stocks","ru_stocks","forex","commodities"])
+                    print("RU_STOCKS_UNIFIED_STARTED "+json.dumps(job,default=str),flush=True)
+                except Exception as unified_exc:
+                    print(f"RU_STOCKS_UNIFIED_FAIL {type(unified_exc).__name__}:{unified_exc}",flush=True)
+        except Exception as exc:
+            print(f"RU_STOCKS_SELFTEST_FAIL {type(exc).__name__}:{exc}",flush=True)
+    threading.Thread(target=run,daemon=True,name="ru-stocks-selftest").start()
+
+
+
+_ru_stocks_boot_selftest()
 
 def ensure_market_collectors():
     collector.ensure_running()
@@ -155,14 +188,14 @@ def scan_markets():
     """Analysis-only scan for Forex, commodities and Bybit xStocks."""
     try:
         adapter=ExternalMarketAdapter()
-        requested=request.args.get("markets","forex,commodities,stocks").split(",")
+        requested=request.args.get("markets","forex,commodities,stocks,ru_stocks").split(",")
         universe=external_universe()
         out={"adapter_version":adapter.VERSION,"markets":{}}
         for market in requested:
             market=market.strip().lower()
             if market not in universe: continue
             symbols=universe[market]
-            market_ready=adapter.configured or market=="stocks"
+            market_ready=adapter.configured or market in ("stocks","ru_stocks")
             if market_ready:
                 workers=min(3,len(symbols)) or 1
                 with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
@@ -178,7 +211,7 @@ def scan_markets():
 def intelligence_backtest(symbol):
     try:
         market=request.args.get("market","crypto").strip().lower()
-        if market not in ("crypto","stocks","forex","commodities"):
+        if market not in ("crypto","stocks","ru_stocks","forex","commodities"):
             return jsonify({"error":"unsupported market"}),400
         limit=max(30,min(int(request.args.get("limit","500")),1000))
         if market=="crypto":
@@ -198,7 +231,7 @@ def intelligence_backtest(symbol):
 def intelligence_walkforward(symbol):
     try:
         market=request.args.get("market","crypto").strip().lower()
-        if market not in ("crypto","stocks","forex","commodities"):
+        if market not in ("crypto","stocks","ru_stocks","forex","commodities"):
             return jsonify({"error":"unsupported market"}),400
         limit=max(30,min(int(request.args.get("limit","1000")),5000))
         train=max(100,min(int(request.args.get("train","300")),2000))
@@ -229,11 +262,11 @@ def intelligence_edge():
 
 @app.get("/scan-live")
 def scan_live():
-    """Unified LIVE scan: Crypto + xStocks + Forex + Commodities."""
+    """Unified LIVE scan: Crypto + xStocks + RU Stocks SPOT + Forex + Commodities."""
     try:
         top_n=max(1,min(int(request.args.get("top","5")),6))
         shortlist=int(request.args.get("shortlist","30"))
-        raw=request.args.get("markets","crypto,stocks,forex,commodities")
+        raw=request.args.get("markets","crypto,stocks,ru_stocks,forex,commodities")
         markets=[x.strip().lower() for x in raw.split(",") if x.strip()]
         return jsonify(start_scan_unified_job(top_n=top_n,shortlist=shortlist,markets=markets)),202
     except ValueError as exc:

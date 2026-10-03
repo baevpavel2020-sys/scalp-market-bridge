@@ -27,7 +27,7 @@ def acceptance_report():
 def run_gates():
     report = acceptance_report()
     failures = []
-    if tuple(report["markets"]) != ("crypto", "stocks", "forex", "commodities"):
+    if tuple(report["markets"]) != ("crypto", "stocks", "ru_stocks", "forex", "commodities"):
         failures.append("market_registry")
     for market, policy in report["market_policies"].items():
         if not policy["enabled"] or not policy["priority"]:
