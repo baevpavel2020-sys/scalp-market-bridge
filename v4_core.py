@@ -31,7 +31,13 @@ def dual_scenarios(analysis,events=None):
 
 def opportunity_funnel(setup):
  s=setup or {}; hard=s.get("hard_invalidations") or []; trigger=bool(s.get("trigger_confirmed"))
- direction=s.get("direction") or s.get("side"); geometry=bool((s.get("limit_plan") or {}).get("eligible") or all(s.get(k) is not None for k in ("entry","stop")))
+ direction=s.get("direction") or s.get("side"); lp=s.get("limit_plan") or {}
+ entry=lp.get("entry",s.get("entry")); stop=lp.get("stop",s.get("stop")); target=lp.get("take_profit",lp.get("target"))
+ geometry=False
+ try:
+  e,st,t=map(float,(entry,stop,target))
+  geometry=(st<e<t) if direction=="bullish" else (t<e<st) if direction=="bearish" else False
+ except (TypeError,ValueError): pass
  if hard:return {"stage":"EARLY","trade_authorized":False,"missing":["hard_invalidation"]}
  if direction and trigger and geometry:return {"stage":"TRADE","trade_authorized":True,"missing":[]}
  if direction and geometry:return {"stage":"READY","trade_authorized":False,"missing":["trigger"]}
