@@ -7133,9 +7133,17 @@ class ScanJobManager:
                         item["risk_clusters"]=clusters
                         item["exposure_buckets"]=exposure
                     external[market]={"status":"PASS","count":len(vals),"results":vals,"relative_strength_ranking":rankings}
+                requested_external=[m for m in ("stocks","ru_stocks","forex","commodities") if m in markets]
+                market_health={"crypto":{"status":"PASS" if ("crypto" not in markets or not crypto_errors) else "DEGRADED","count":len(crypto_results)}}
+                for m in requested_external:
+                    block=external.get(m) or {}
+                    market_health[m]={"status":block.get("status","MISSING"),"count":int(block.get("count") or 0),"reason":block.get("reason")}
+                missing_markets=[m for m in markets if m!="crypto" and m not in external]
                 result={"orchestrator_version":"scan_orchestrator_v3_unified_live","mode":"unified","prescan_used":True,"markets":markets,
                         "crypto":{"selected_symbols":eligible,"activated_symbols":activated,"warmup_seconds":round(warm_elapsed,2),"scan_plus_count":len(crypto_results),"scan_plus_results":crypto_results},
-                        "external":external,"prescan":{"status":prescan.get("status"),"engine_version":prescan.get("engine_version"),"scan_plus_candidates":prescan.get("scan_plus_candidates") or [],"diagnostics":prescan.get("diagnostics") or {}},
+                        "external":external,"market_health":market_health,"missing_markets":missing_markets,
+                        "five_market_complete":not missing_markets and all(m in markets for m in ("crypto","stocks","ru_stocks","forex","commodities")),
+                        "prescan":{"status":prescan.get("status"),"engine_version":prescan.get("engine_version"),"scan_plus_candidates":prescan.get("scan_plus_candidates") or [],"diagnostics":prescan.get("diagnostics") or {}},
                         "errors":errors,"elapsed_ms":round((time.time()-started_unified)*1000.0,2)}
             else:
                 raise ValueError(f"unsupported job mode: {mode}")
