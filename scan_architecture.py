@@ -5,11 +5,13 @@ Market -> Data Quality -> Regime/Structure -> Event -> Evidence -> Setup -> Exec
 
 Modules may enrich downstream state, but may not rewrite upstream facts.
 """
-VERSION="scan_architecture_v1"
+VERSION="scan_architecture_v4"
 
 MARKETS=("crypto","stocks","forex","commodities")
-OPPORTUNITY_STATES=("MARKET_READY","LIMIT_READY","WATCH")
-MIN_RR=2.0
+OPPORTUNITY_STATES=("EARLY","DEVELOPING","READY","TRADE")
+ABSOLUTE_MIN_RR=1.5
+PREFERRED_MIN_RR=2.0
+MIN_RR=ABSOLUTE_MIN_RR
 
 # Market-specific analytical priorities. These are routing/weighting contracts,
 # not independent strategies: upstream structure remains authoritative and
@@ -109,4 +111,5 @@ def pipeline_contract():
         "authority":["market","data_quality","regime_structure","event","evidence","setup","execution"],
         "rule":"downstream blocks enrich upstream facts; they never rewrite them",
         "opportunity_states":list(OPPORTUNITY_STATES),
+        "rr_policy":{"absolute_minimum":ABSOLUTE_MIN_RR,"preferred":PREFERRED_MIN_RR,"rr_1_5_to_1_99_requires_elevated_quality":True},
     }
