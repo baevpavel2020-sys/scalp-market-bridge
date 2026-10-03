@@ -108,7 +108,25 @@ def moex_candles(symbol, interval, target=500):
         if not page: break
         raw.extend(page); start+=len(page)
         if start>100000: break
-    rows=_resample_ohlcv(raw,300000) if interval=="5m" else _resample_ohlcv(raw,900000) if interval=="15m" else _resample_ohlcv(raw,14400000) if interval=="4h" else raw
+    if interval=="5m": rows=_resample_ohlcv(raw,300000)
+    elif interval=="15m": rows=_resample_ohlcv(raw,900000)
+    elif interval=="4h":
+        # Anchor 4H bars to the MOEX local trading day/session instead of Unix epoch.
+        rows=[]; buckets={}
+        tz=ZoneInfo("Europe/Moscow") if ZoneInfo else timezone.utc
+        for row in raw:
+            dt=datetime.fromtimestamp(int(row["start"])/1000,tz)
+            # 4H windows anchored at 07:00 MSK cover morning/main/evening trading consistently.
+            anchor=7
+            slot=max(0,(dt.hour-anchor)//4)
+            start_dt=dt.replace(hour=anchor+slot*4,minute=0,second=0,microsecond=0)
+            key=int(start_dt.timestamp()*1000)
+            b=buckets.get(key)
+            if b is None: buckets[key]={"start":key,"open":row["open"],"high":row["high"],"low":row["low"],"close":row["close"],"volume":row.get("volume",0.0),"source":"moex_iss","confirm":row.get("confirm",True)}
+            else:
+                b["high"]=max(b["high"],row["high"]); b["low"]=min(b["low"],row["low"]); b["close"]=row["close"]; b["volume"]+=row.get("volume",0.0); b["confirm"]=bool(b["confirm"] and row.get("confirm",True))
+        rows=[buckets[k] for k in sorted(buckets)]
+    else: rows=raw
     return rows[-target:]
 
 def _moex_fresh(rows, interval):
