@@ -4156,7 +4156,7 @@ class DynamicMarketManager:
         if stop is None: market_reasons.append("invalidation_missing")
         if t1 is None: market_reasons.append("target_missing")
         if not order_ok: market_reasons.append("price_order_invalid")
-        if rr is None or rr<MIN_RR: market_reasons.append("rr_below_min_2_0")
+        if rr is None or rr<MIN_RR: market_reasons.append("rr_below_absolute_min_1_5")
         if not scale_ok: market_reasons.append(scale_reason or "scale_mismatch")
         if setup_state=="pullback": exec_reasons.append("setup_pullback_active")
         elif setup_state!="aligned": exec_reasons.append("setup_not_aligned")
@@ -4329,7 +4329,7 @@ class DynamicMarketManager:
             "trigger_confirmed":trigger_ok,
             "trade_style":mtf.get("trade_style"),
             "execution_regime":execution.get("execution_regime"),"dislocated_execution_timeframes":dislocated,
-            "required":{"direction_confirmed":bool(direction!="neutral" and (mtf.get("direction") or {}).get("state")=="confirmed"),"transport_ready":bool(execution.get("ready")),"trade_data_ready":bool(execution.get("trade_data_ready")),"price_order_valid":order_ok,"rr_min_2_0":rr is not None and rr>=MIN_RR,"trade_scale_valid":scale_ok,"setup_aligned":setup_state=="aligned","trigger_confirmed":trigger_ok,"flow_not_opposed":not flow_opposed,"execution_not_opposed":execution_ok,"no_upstream_hard_invalidation":not bool(hard_invalidations)}
+            "required":{"direction_confirmed":bool(direction!="neutral" and (mtf.get("direction") or {}).get("state")=="confirmed"),"transport_ready":bool(execution.get("ready")),"trade_data_ready":bool(execution.get("trade_data_ready")),"price_order_valid":order_ok,"rr_absolute_min_1_5":rr is not None and rr>=MIN_RR,"trade_scale_valid":scale_ok,"setup_aligned":setup_state=="aligned","trigger_confirmed":trigger_ok,"flow_not_opposed":not flow_opposed,"execution_not_opposed":execution_ok,"no_upstream_hard_invalidation":not bool(hard_invalidations)}
         }
 
     def realtime_readiness(self, symbol):
