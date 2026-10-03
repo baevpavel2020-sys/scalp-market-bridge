@@ -59,3 +59,21 @@ def exposure_buckets(setups):
             bucket["symbols"].append(setup.get("symbol"))
             bucket["size"]+=1
     return list(groups.values())
+
+def position_size(equity,risk_pct,entry,stop,leverage=5,strategy="core"):
+    """V4: money risk is fixed before leverage. x25 is isolated to pump profile."""
+    from v4_core import risk_contract
+    if strategy!="pump_exhaustion_x25" and float(leverage)>10:
+        return {"ready":False,"reason":"leverage_above_core_limit"}
+    if strategy=="pump_exhaustion_x25" and float(leverage)>25:
+        return {"ready":False,"reason":"leverage_above_pump_profile_limit"}
+    return risk_contract(equity,risk_pct,entry,stop,leverage,strategy)
+
+def portfolio_risk(setups,max_simultaneous_risk_pct=0.10,daily_loss_limit_pct=0.10,consecutive_losses=0):
+    total=sum(float(x.get("risk_pct") or 0) for x in setups or [])
+    blocked=[]
+    if total>max_simultaneous_risk_pct: blocked.append("max_simultaneous_risk")
+    if consecutive_losses>=3: blocked.append("consecutive_loss_protection")
+    return {"ready":not blocked,"gross_risk_pct":total,"max_simultaneous_risk_pct":max_simultaneous_risk_pct,
+            "daily_loss_limit_pct":daily_loss_limit_pct,"blocked_by":blocked,
+            "rule":"daily_profit_goal_never_forces_a_trade"}
